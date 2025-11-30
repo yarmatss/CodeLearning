@@ -1,0 +1,115 @@
+using CodeLearning.Application.DTOs.Auth;
+using CodeLearning.Application.Services;
+using CodeLearning.Core.Entities;
+using CodeLearning.Core.Enums;
+using Microsoft.AspNetCore.Identity;
+
+namespace CodeLearning.Infrastructure.Services;
+
+public class AuthService : IAuthService
+{
+    private readonly UserManager<User> _userManager;
+    private readonly SignInManager<User> _signInManager;
+    private readonly ITokenService _tokenService;
+
+    public AuthService(
+        UserManager<User> userManager,
+        SignInManager<User> signInManager,
+        ITokenService tokenService)
+    {
+        _userManager = userManager;
+        _signInManager = signInManager;
+        _tokenService = tokenService;
+    }
+
+    public async Task<AuthResponseDto> RegisterAsync(RegisterDto registerDto)
+    {
+        var existingUser = await _userManager.FindByEmailAsync(registerDto.Email);
+        if (existingUser != null)
+        {
+            throw new InvalidOperationException("User with this email already exists");
+        }
+
+        var user = new User
+        {
+            UserName = registerDto.Email,
+            Email = registerDto.Email,
+            FirstName = registerDto.FirstName,
+            LastName = registerDto.LastName,
+            Role = registerDto.Role == "Teacher" ? UserRole.Teacher : UserRole.Student,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        var result = await _userManager.CreateAsync(user, registerDto.Password);
+
+        if (!result.Succeeded)
+        {
+            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+            throw new InvalidOperationException($"Registration failed: {errors}");
+        }
+
+        await _signInManager.SignInAsync(user, isPersistent: false);
+
+        return new AuthResponseDto
+        {
+            UserId = user.Id.ToString(),
+            Email = user.Email ?? string.Empty,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Role = user.Role.ToString(),
+            Message = "Registration successful"
+        };
+    }
+
+    public async Task<AuthResponseDto> LoginAsync(LoginDto loginDto)
+    {
+        var user = await _userManager.FindByEmailAsync(loginDto.Email);
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("Invalid email or password");
+        }
+
+        var result = await _signInManager.CheckPasswordSignInAsync(user, loginDto.Password, lockoutOnFailure: true);
+
+        if (!result.Succeeded)
+        {
+            if (result.IsLockedOut)
+            {
+                throw new UnauthorizedAccessException("Account locked due to multiple failed login attempts");
+            }
+            throw new UnauthorizedAccessException("Invalid email or password");
+        }
+
+        return new AuthResponseDto
+        {
+            UserId = user.Id.ToString(),
+            Email = user.Email ?? string.Empty,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Role = user.Role.ToString(),
+            Message = "Login successful"
+        };
+    }
+
+    public async Task LogoutAsync(string refreshToken)
+    {
+        if (!string.IsNullOrEmpty(refreshToken))
+        {
+            _tokenService.RevokeRefreshToken(refreshToken);
+        }
+
+        await _signInManager.SignOutAsync();
+    }
+
+    public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken)
+    {
+        if (!_tokenService.ValidateRefreshToken(refreshToken))
+        {
+            throw new UnauthorizedAccessException("Invalid or expired refresh token");
+        }
+
+        // In production, you would decode the token and get user ID
+        // For now, this is a simplified implementation
+        throw new NotImplementedException("Refresh token not fully implemented yet");
+    }
+}

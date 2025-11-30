@@ -1,0 +1,7 @@
+namespace CodeLearning.Application.DTOs.Course;
+
+public class UpdateCourseDto
+{
+    public required string Title { get; set; }
+    public required string Description { get; set; }
+}

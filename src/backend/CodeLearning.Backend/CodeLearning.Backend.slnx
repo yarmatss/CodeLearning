@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="CodeLearning.Api/CodeLearning.Api.csproj" />
+  <Project Path="CodeLearning.Application/CodeLearning.Application.csproj" />
+  <Project Path="CodeLearning.Core/CodeLearning.Core.csproj" />
+  <Project Path="CodeLearning.Infrastructure/CodeLearning.Infrastructure.csproj" />
+  <Project Path="CodeLearning.Tests/CodeLearning.Tests.csproj" />
+</Solution>
