@@ -5,6 +5,7 @@ using CodeLearning.Core.Enums;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -178,11 +179,11 @@ public class AuthController : ControllerBase
     [Authorize]
     public IActionResult GetCurrentUser()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        var firstName = User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value;
-        var lastName = User.FindFirst(System.Security.Claims.ClaimTypes.Surname)?.Value;
-        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var email = User.FindFirst(ClaimTypes.Email)?.Value;
+        var firstName = User.FindFirst(ClaimTypes.GivenName)?.Value;
+        var lastName = User.FindFirst(ClaimTypes.Surname)?.Value;
+        var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
         return Ok(new 
         { 

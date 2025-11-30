@@ -79,6 +79,8 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ICourseService, CourseService>();
 builder.Services.AddScoped<IChapterService, ChapterService>();
 builder.Services.AddScoped<ISubchapterService, SubchapterService>();
+builder.Services.AddScoped<IBlockService, BlockService>();
+builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();
 

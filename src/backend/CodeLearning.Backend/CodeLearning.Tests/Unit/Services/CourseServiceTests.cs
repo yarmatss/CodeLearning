@@ -13,13 +13,15 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
 {
     private readonly DatabaseFixture _fixture;
     private readonly CourseService _courseService;
+    private readonly SanitizationService _sanitizationService;
     private readonly UserManager<User> _userManager;
     private User _testInstructor = null!;
 
     public CourseServiceTests(DatabaseFixture fixture)
     {
         _fixture = fixture;
-        _courseService = new CourseService(_fixture.DbContext);
+        _sanitizationService = new SanitizationService();
+        _courseService = new CourseService(_fixture.DbContext, _sanitizationService);
         
         var userStore = new UserStore<User, IdentityRole<Guid>, Infrastructure.Data.ApplicationDbContext, Guid>(_fixture.DbContext);
         

@@ -10,18 +10,22 @@ namespace CodeLearning.Infrastructure.Services;
 public class CourseService : ICourseService
 {
     private readonly ApplicationDbContext _context;
+    private readonly ISanitizationService _sanitizationService;
 
-    public CourseService(ApplicationDbContext context)
+    public CourseService(ApplicationDbContext context, ISanitizationService sanitizationService)
     {
         _context = context;
+        _sanitizationService = sanitizationService;
     }
 
     public async Task<CourseResponseDto> CreateCourseAsync(CreateCourseDto dto, Guid instructorId)
     {
+        var sanitizedDescription = _sanitizationService.SanitizeMarkdown(dto.Description);
+
         var course = new Course
         {
             Title = dto.Title,
-            Description = dto.Description,
+            Description = sanitizedDescription,
             Status = CourseStatus.Draft,
             InstructorId = instructorId,
             Instructor = await _context.Users.FindAsync(instructorId) 
@@ -103,7 +107,7 @@ public class CourseService : ICourseService
             throw new InvalidOperationException("Cannot update a published course");
 
         course.Title = dto.Title;
-        course.Description = dto.Description;
+        course.Description = _sanitizationService.SanitizeMarkdown(dto.Description);
 
         await _context.SaveChangesAsync();
 
@@ -128,7 +132,6 @@ public class CourseService : ICourseService
         if (course.Status == CourseStatus.Published)
             throw new InvalidOperationException("Course is already published");
 
-        // Validation: US-12
         var validationErrors = new List<string>();
 
         if (!course.Chapters.Any())
