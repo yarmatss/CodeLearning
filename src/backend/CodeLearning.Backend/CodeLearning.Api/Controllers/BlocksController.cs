@@ -10,220 +10,163 @@ namespace CodeLearning.Api.Controllers;
 [ApiController]
 [Route("api/subchapters/{subchapterId}/blocks")]
 [Authorize(Roles = "Teacher")]
-public class BlocksController : ControllerBase
+public class BlocksController(
+    IBlockService blockService,
+    IValidator<CreateTheoryBlockDto> createTheoryBlockValidator,
+    IValidator<CreateVideoBlockDto> createVideoBlockValidator,
+    IValidator<CreateQuizBlockDto> createQuizBlockValidator,
+    IValidator<CreateProblemBlockDto> problemBlockValidator,
+    IValidator<UpdateTheoryBlockDto> updateTheoryBlockValidator,
+    IValidator<UpdateVideoBlockDto> updateVideoBlockValidator,
+    IValidator<UpdateQuizBlockDto> updateQuizBlockValidator) : ControllerBase
 {
-    private readonly IBlockService _blockService;
-    private readonly IValidator<CreateTheoryBlockDto> _theoryBlockValidator;
-    private readonly IValidator<CreateVideoBlockDto> _videoBlockValidator;
-    private readonly IValidator<CreateQuizBlockDto> _quizBlockValidator;
-    private readonly IValidator<CreateProblemBlockDto> _problemBlockValidator;
-
-    public BlocksController(
-        IBlockService blockService,
-        IValidator<CreateTheoryBlockDto> theoryBlockValidator,
-        IValidator<CreateVideoBlockDto> videoBlockValidator,
-        IValidator<CreateQuizBlockDto> quizBlockValidator,
-        IValidator<CreateProblemBlockDto> problemBlockValidator)
-    {
-        _blockService = blockService;
-        _theoryBlockValidator = theoryBlockValidator;
-        _videoBlockValidator = videoBlockValidator;
-        _quizBlockValidator = quizBlockValidator;
-        _problemBlockValidator = problemBlockValidator;
-    }
+    #region Create Methods
 
     [HttpPost("theory")]
     public async Task<IActionResult> CreateTheoryBlock(Guid subchapterId, [FromBody] CreateTheoryBlockDto dto)
     {
-        var validationResult = await _theoryBlockValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await createTheoryBlockValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var instructorId = GetCurrentUserId();
-            var blockId = await _blockService.CreateTheoryBlockAsync(subchapterId, dto, instructorId);
+        var instructorId = GetCurrentUserId();
+        var blockId = await blockService.CreateTheoryBlockAsync(subchapterId, dto, instructorId);
 
-            return CreatedAtAction(nameof(CreateTheoryBlock), new { blockId }, new BlockCreatedResponseDto 
-            { 
-                Id = blockId, 
-                Message = "Theory block created successfully" 
+        return CreatedAtAction(nameof(GetBlockById), new { blockId },
+            new BlockCreatedResponseDto
+            {
+                Id = blockId,
+                Message = "Theory block created successfully"
             });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
     }
 
     [HttpPost("video")]
     public async Task<IActionResult> CreateVideoBlock(Guid subchapterId, [FromBody] CreateVideoBlockDto dto)
     {
-        var validationResult = await _videoBlockValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await createVideoBlockValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var instructorId = GetCurrentUserId();
-            var blockId = await _blockService.CreateVideoBlockAsync(subchapterId, dto, instructorId);
+        var instructorId = GetCurrentUserId();
+        var blockId = await blockService.CreateVideoBlockAsync(subchapterId, dto, instructorId);
 
-            return CreatedAtAction(nameof(CreateVideoBlock), new { blockId }, new BlockCreatedResponseDto 
-            { 
-                Id = blockId, 
-                Message = "Video block created successfully" 
+        return CreatedAtAction(nameof(GetBlockById), new { blockId },
+            new BlockCreatedResponseDto
+            {
+                Id = blockId,
+                Message = "Video block created successfully"
             });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
     }
 
     [HttpPost("quiz")]
     public async Task<IActionResult> CreateQuizBlock(Guid subchapterId, [FromBody] CreateQuizBlockDto dto)
     {
-        var validationResult = await _quizBlockValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await createQuizBlockValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var instructorId = GetCurrentUserId();
-            var blockId = await _blockService.CreateQuizBlockAsync(subchapterId, dto, instructorId);
+        var instructorId = GetCurrentUserId();
+        var blockId = await blockService.CreateQuizBlockAsync(subchapterId, dto, instructorId);
 
-            return CreatedAtAction(nameof(CreateQuizBlock), new { blockId }, new BlockCreatedResponseDto 
-            { 
-                Id = blockId, 
-                Message = "Quiz block created successfully" 
+        return CreatedAtAction(nameof(GetBlockById), new { blockId },
+            new BlockCreatedResponseDto
+            {
+                Id = blockId,
+                Message = "Quiz block created successfully"
             });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
     }
 
     [HttpPost("problem")]
     public async Task<IActionResult> CreateProblemBlock(Guid subchapterId, [FromBody] CreateProblemBlockDto dto)
     {
-        var validationResult = await _problemBlockValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await problemBlockValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var instructorId = GetCurrentUserId();
-            var blockId = await _blockService.CreateProblemBlockAsync(subchapterId, dto, instructorId);
+        var instructorId = GetCurrentUserId();
+        var blockId = await blockService.CreateProblemBlockAsync(subchapterId, dto, instructorId);
 
-            return CreatedAtAction(nameof(CreateProblemBlock), new { blockId }, new BlockCreatedResponseDto 
-            { 
-                Id = blockId, 
-                Message = "Problem block created successfully" 
+        return CreatedAtAction(nameof(GetBlockById), new { blockId },
+            new BlockCreatedResponseDto
+            {
+                Id = blockId,
+                Message = "Problem block created successfully"
             });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
     }
 
-    [HttpDelete("{blockId}")]
-    public async Task<IActionResult> DeleteBlock(Guid subchapterId, Guid blockId)
-    {
-        try
-        {
-            var instructorId = GetCurrentUserId();
-            await _blockService.DeleteBlockAsync(blockId, instructorId);
+    #endregion
 
-            return Ok(new { message = "Block deleted successfully" });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+    #region Update Methods
+
+    [HttpPut("{blockId}/theory")]
+    public async Task<IActionResult> UpdateTheoryBlock(Guid blockId, [FromBody] UpdateTheoryBlockDto dto)
+    {
+        await updateTheoryBlockValidator.ValidateAndThrowAsync(dto);
+
+        var instructorId = GetCurrentUserId();
+        await blockService.UpdateTheoryBlockAsync(blockId, dto, instructorId);
+
+        return Ok(new { message = "Theory block updated successfully" });
+    }
+
+    [HttpPut("{blockId}/video")]
+    public async Task<IActionResult> UpdateVideoBlock(Guid blockId, [FromBody] UpdateVideoBlockDto dto)
+    {
+        await updateVideoBlockValidator.ValidateAndThrowAsync(dto);
+
+        var instructorId = GetCurrentUserId();
+        await blockService.UpdateVideoBlockAsync(blockId, dto, instructorId);
+
+        return Ok(new { message = "Video block updated successfully" });
+    }
+
+    [HttpPut("{blockId}/quiz")]
+    public async Task<IActionResult> UpdateQuizBlock(Guid blockId, [FromBody] UpdateQuizBlockDto dto)
+    {
+        await updateQuizBlockValidator.ValidateAndThrowAsync(dto);
+
+        var instructorId = GetCurrentUserId();
+        await blockService.UpdateQuizBlockAsync(blockId, dto, instructorId);
+
+        return Ok(new { message = "Quiz block updated successfully" });
+    }
+
+    [HttpPatch("{blockId}/order")]
+    public async Task<IActionResult> UpdateBlockOrder(Guid blockId, [FromBody] UpdateBlockOrderDto dto)
+    {
+        var instructorId = GetCurrentUserId();
+        await blockService.UpdateBlockOrderAsync(blockId, dto.NewOrderIndex, instructorId);
+
+        return Ok(new { message = "Block order updated successfully" });
+    }
+
+    #endregion
+
+    #region Delete & Get Methods
+
+    [HttpDelete("{blockId}")]
+    public async Task<IActionResult> DeleteBlock(Guid blockId)
+    {
+        var instructorId = GetCurrentUserId();
+        await blockService.DeleteBlockAsync(blockId, instructorId);
+
+        return Ok(new { message = "Block deleted successfully" });
     }
 
     [HttpGet("/api/blocks/{blockId}")]
-    [AllowAnonymous] // Public for published courses
+    [AllowAnonymous]
     public async Task<IActionResult> GetBlockById(Guid blockId)
     {
-        try
-        {
-            var block = await _blockService.GetBlockByIdAsync(blockId);
-            return Ok(block);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
+        var block = await blockService.GetBlockByIdAsync(blockId);
+        return Ok(block);
     }
 
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetSubchapterBlocks(Guid subchapterId)
     {
-        var blocks = await _blockService.GetSubchapterBlocksAsync(subchapterId);
+        var blocks = await blockService.GetSubchapterBlocksAsync(subchapterId);
         return Ok(blocks);
     }
+
+    #endregion
 
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? throw new UnauthorizedAccessException("User not authenticated");
-
         return Guid.Parse(userIdClaim);
     }
 }

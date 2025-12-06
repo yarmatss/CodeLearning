@@ -9,34 +9,19 @@ namespace CodeLearning.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class CoursesController : ControllerBase
+public class CoursesController(
+    ICourseService courseService,
+    IValidator<CreateCourseDto> createCourseValidator,
+    IValidator<UpdateCourseDto> updateCourseValidator) : ControllerBase
 {
-    private readonly ICourseService _courseService;
-    private readonly IValidator<CreateCourseDto> _createCourseValidator;
-    private readonly IValidator<UpdateCourseDto> _updateCourseValidator;
-
-    public CoursesController(
-        ICourseService courseService,
-        IValidator<CreateCourseDto> createCourseValidator,
-        IValidator<UpdateCourseDto> updateCourseValidator)
-    {
-        _courseService = courseService;
-        _createCourseValidator = createCourseValidator;
-        _updateCourseValidator = updateCourseValidator;
-    }
-
     [HttpPost]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> CreateCourse([FromBody] CreateCourseDto dto)
     {
-        var validationResult = await _createCourseValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await createCourseValidator.ValidateAndThrowAsync(dto);
 
         var userId = GetCurrentUserId();
-        var course = await _courseService.CreateCourseAsync(dto, userId);
+        var course = await courseService.CreateCourseAsync(dto, userId);
 
         return CreatedAtAction(nameof(GetCourseById), new { id = course.Id }, course);
     }
@@ -45,15 +30,8 @@ public class CoursesController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseById(Guid id)
     {
-        try
-        {
-            var course = await _courseService.GetCourseByIdAsync(id);
-            return Ok(course);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
+        var course = await courseService.GetCourseByIdAsync(id);
+        return Ok(course);
     }
 
     [HttpGet("my-courses")]
@@ -61,7 +39,7 @@ public class CoursesController : ControllerBase
     public async Task<IActionResult> GetMyCourses()
     {
         var userId = GetCurrentUserId();
-        var courses = await _courseService.GetInstructorCoursesAsync(userId);
+        var courses = await courseService.GetInstructorCoursesAsync(userId);
         return Ok(courses);
     }
 
@@ -69,7 +47,7 @@ public class CoursesController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetPublishedCourses()
     {
-        var courses = await _courseService.GetPublishedCoursesAsync();
+        var courses = await courseService.GetPublishedCoursesAsync();
         return Ok(courses);
     }
 
@@ -77,78 +55,29 @@ public class CoursesController : ControllerBase
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> UpdateCourse(Guid id, [FromBody] UpdateCourseDto dto)
     {
-        var validationResult = await _updateCourseValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await updateCourseValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var userId = GetCurrentUserId();
-            var course = await _courseService.UpdateCourseAsync(id, dto, userId);
-            return Ok(course);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        var course = await courseService.UpdateCourseAsync(id, dto, userId);
+        return Ok(course);
     }
 
     [HttpPost("{id}/publish")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> PublishCourse(Guid id)
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            var course = await _courseService.PublishCourseAsync(id, userId);
-            return Ok(new { message = "Course published successfully", course });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        var course = await courseService.PublishCourseAsync(id, userId);
+        return Ok(new { message = "Course published successfully", course });
     }
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> DeleteCourse(Guid id)
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            await _courseService.DeleteCourseAsync(id, userId);
-            return Ok(new { message = "Course deleted successfully" });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        await courseService.DeleteCourseAsync(id, userId);
+        return Ok(new { message = "Course deleted successfully" });
     }
 
     private Guid GetCurrentUserId()

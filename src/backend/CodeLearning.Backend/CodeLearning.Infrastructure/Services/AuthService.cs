@@ -6,25 +6,14 @@ using Microsoft.AspNetCore.Identity;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class AuthService : IAuthService
+public class AuthService(
+    UserManager<User> userManager,
+    SignInManager<User> signInManager,
+    ITokenService tokenService) : IAuthService
 {
-    private readonly UserManager<User> _userManager;
-    private readonly SignInManager<User> _signInManager;
-    private readonly ITokenService _tokenService;
-
-    public AuthService(
-        UserManager<User> userManager,
-        SignInManager<User> signInManager,
-        ITokenService tokenService)
-    {
-        _userManager = userManager;
-        _signInManager = signInManager;
-        _tokenService = tokenService;
-    }
-
     public async Task<AuthResponseDto> RegisterAsync(RegisterDto registerDto)
     {
-        var existingUser = await _userManager.FindByEmailAsync(registerDto.Email);
+        var existingUser = await userManager.FindByEmailAsync(registerDto.Email);
         if (existingUser != null)
         {
             throw new InvalidOperationException("User with this email already exists");
@@ -40,7 +29,7 @@ public class AuthService : IAuthService
             CreatedAt = DateTimeOffset.UtcNow
         };
 
-        var result = await _userManager.CreateAsync(user, registerDto.Password);
+        var result = await userManager.CreateAsync(user, registerDto.Password);
 
         if (!result.Succeeded)
         {
@@ -48,68 +37,58 @@ public class AuthService : IAuthService
             throw new InvalidOperationException($"Registration failed: {errors}");
         }
 
-        await _signInManager.SignInAsync(user, isPersistent: false);
+        await signInManager.SignInAsync(user, isPersistent: false);
 
-        return new AuthResponseDto
-        {
-            UserId = user.Id.ToString(),
-            Email = user.Email ?? string.Empty,
-            FirstName = user.FirstName,
-            LastName = user.LastName,
-            Role = user.Role.ToString(),
-            Message = "Registration successful"
-        };
+        return MapToAuthResponse(user, "Registration successful");
     }
 
     public async Task<AuthResponseDto> LoginAsync(LoginDto loginDto)
     {
-        var user = await _userManager.FindByEmailAsync(loginDto.Email);
+        var user = await userManager.FindByEmailAsync(loginDto.Email);
         if (user == null)
         {
             throw new UnauthorizedAccessException("Invalid email or password");
         }
 
-        var result = await _signInManager.CheckPasswordSignInAsync(user, loginDto.Password, lockoutOnFailure: true);
+        var result = await signInManager.CheckPasswordSignInAsync(user, loginDto.Password, lockoutOnFailure: true);
 
         if (!result.Succeeded)
         {
-            if (result.IsLockedOut)
-            {
-                throw new UnauthorizedAccessException("Account locked due to multiple failed login attempts");
-            }
-            throw new UnauthorizedAccessException("Invalid email or password");
+            throw result.IsLockedOut
+                ? new UnauthorizedAccessException("Account locked due to multiple failed login attempts")
+                : new UnauthorizedAccessException("Invalid email or password");
         }
 
-        return new AuthResponseDto
-        {
-            UserId = user.Id.ToString(),
-            Email = user.Email ?? string.Empty,
-            FirstName = user.FirstName,
-            LastName = user.LastName,
-            Role = user.Role.ToString(),
-            Message = "Login successful"
-        };
+        return MapToAuthResponse(user, "Login successful");
     }
 
     public async Task LogoutAsync(string refreshToken)
     {
         if (!string.IsNullOrEmpty(refreshToken))
         {
-            _tokenService.RevokeRefreshToken(refreshToken);
+            tokenService.RevokeRefreshToken(refreshToken);
         }
 
-        await _signInManager.SignOutAsync();
+        await signInManager.SignOutAsync();
     }
 
-    public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken)
+    public Task<AuthResponseDto> RefreshTokenAsync(string refreshToken)
     {
-        if (!_tokenService.ValidateRefreshToken(refreshToken))
+        if (!tokenService.ValidateRefreshToken(refreshToken))
         {
             throw new UnauthorizedAccessException("Invalid or expired refresh token");
         }
 
-        // In production, you would decode the token and get user ID
-        // For now, this is a simplified implementation
         throw new NotImplementedException("Refresh token not fully implemented yet");
     }
+
+    private static AuthResponseDto MapToAuthResponse(User user, string message) => new()
+    {
+        UserId = user.Id.ToString(),
+        Email = user.Email ?? string.Empty,
+        FirstName = user.FirstName,
+        LastName = user.LastName,
+        Role = user.Role.ToString(),
+        Message = message
+    };
 }

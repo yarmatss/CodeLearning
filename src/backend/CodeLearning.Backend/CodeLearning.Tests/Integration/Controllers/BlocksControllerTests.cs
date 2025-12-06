@@ -743,6 +743,347 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
     #endregion
 
+    #region Update Block Tests
+
+    [Fact]
+    public async Task UpdateTheoryBlock_AsOwner_ShouldReturn200()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        // Create block first
+        var createDto = new CreateTheoryBlockDto
+        {
+            Title = "Original Title",
+            Content = "Original content"
+        };
+        var createResponse = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var blockId = created!.Id;
+
+        // Update
+        var updateDto = new UpdateTheoryBlockDto
+        {
+            Title = "Updated Title",
+            Content = "# Updated Content\n\nThis is **new** content."
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/theory", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Verify in database
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var block = await dbContext.CourseBlocks
+            .Include(b => b.TheoryContent)
+            .FirstOrDefaultAsync(b => b.Id == blockId);
+
+        block.Should().NotBeNull();
+        block!.Title.Should().Be("Updated Title");
+        block.TheoryContent!.Content.Should().Contain("Updated Content");
+        block.TheoryContent.Content.Should().Contain("new");
+    }
+
+    [Fact]
+    public async Task UpdateTheoryBlock_WithXSS_ShouldSanitize()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        var blockId = await CreateTheoryBlockAsync();
+
+        var updateDto = new UpdateTheoryBlockDto
+        {
+            Title = "Updated",
+            Content = "<script>alert('XSS')</script><p>Safe content</p>"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/theory", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var block = await dbContext.CourseBlocks
+            .Include(b => b.TheoryContent)
+            .FirstOrDefaultAsync(b => b.Id == blockId);
+
+        block!.TheoryContent!.Content.Should().NotContain("<script>");
+        block.TheoryContent.Content.Should().Contain("Safe content");
+    }
+
+    [Fact]
+    public async Task UpdateTheoryBlock_NonExisting_ShouldReturn404()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        var updateDto = new UpdateTheoryBlockDto
+        {
+            Title = "Test",
+            Content = "Content"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{Guid.NewGuid()}/theory", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task UpdateVideoBlock_AsOwner_ShouldReturn200()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        // Create video block
+        var createDto = new CreateVideoBlockDto
+        {
+            Title = "Original Video",
+            VideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        };
+        var createResponse = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var blockId = created!.Id;
+
+        // Update
+        var updateDto = new UpdateVideoBlockDto
+        {
+            Title = "Updated Video",
+            VideoUrl = "https://www.youtube.com/watch?v=ABC123DEF45"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/video", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var block = await dbContext.CourseBlocks
+            .Include(b => b.VideoContent)
+            .FirstOrDefaultAsync(b => b.Id == blockId);
+
+        block!.Title.Should().Be("Updated Video");
+        block.VideoContent!.VideoId.Should().Be("ABC123DEF45");
+        block.VideoContent.VideoUrl.Should().Be(updateDto.VideoUrl);
+    }
+
+    [Fact]
+    public async Task UpdateVideoBlock_InvalidUrl_ShouldReturn400()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        var createDto = new CreateVideoBlockDto
+        {
+            Title = "Video",
+            VideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        };
+        var createResponse = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var blockId = created!.Id;
+
+        var updateDto = new UpdateVideoBlockDto
+        {
+            Title = "Updated",
+            VideoUrl = "https://invalid-url.com/video"
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/video", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateQuizBlock_AsOwner_ShouldReturn200()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        
+        // Create quiz block
+        var createDto = new CreateQuizBlockDto
+        {
+            Title = "Original Quiz",
+            Questions = new List<CreateQuizQuestionDto>
+            {
+                new()
+                {
+                    QuestionText = "Old question?",
+                    Type = "SingleChoice",
+                    Points = 10,
+                    Answers = new List<CreateQuizAnswerDto>
+                    {
+                        new() { AnswerText = "A", IsCorrect = true },
+                        new() { AnswerText = "B", IsCorrect = false }
+                    }
+                }
+            }
+        };
+        var createResponse = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/quiz", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var blockId = created!.Id;
+
+        // Update with new question
+        var updateDto = new UpdateQuizBlockDto
+        {
+            Title = "Updated Quiz",
+            Questions = new List<CreateQuizQuestionDto>
+            {
+                new()
+                {
+                    QuestionText = "New question?",
+                    Type = "SingleChoice",
+                    Points = 15,
+                    Answers = new List<CreateQuizAnswerDto>
+                    {
+                        new() { AnswerText = "Answer 1", IsCorrect = true },
+                        new() { AnswerText = "Answer 2", IsCorrect = false }
+                    }
+                }
+            }
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/quiz", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var block = await dbContext.CourseBlocks
+            .Include(b => b.Quiz)
+                .ThenInclude(q => q!.Questions)
+                    .ThenInclude(qq => qq.Answers)
+            .FirstOrDefaultAsync(b => b.Id == blockId);
+
+        block!.Title.Should().Be("Updated Quiz");
+        block.Quiz!.Questions.Should().HaveCount(1);
+        block.Quiz.Questions.First().Content.Should().Contain("New question");
+        block.Quiz.Questions.First().Answers.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task UpdateBlockOrder_MoveDown_ShouldReorder()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        // Create 3 blocks
+        var block1 = await CreateTheoryBlockAsync(); // OrderIndex = 1
+        
+        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+            new CreateTheoryBlockDto { Title = "Block 2", Content = "C2" });
+        var block2Created = await block2Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var block2Id = block2Created!.Id; // OrderIndex = 2
+        
+        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+            new CreateTheoryBlockDto { Title = "Block 3", Content = "C3" });
+        var block3Created = await block3Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var block3Id = block3Created!.Id; // OrderIndex = 3
+
+        // Move block1 from position 1 to position 3
+        var updateDto = new UpdateBlockOrderDto { NewOrderIndex = 3 };
+
+        // Act
+        var response = await _client.PatchAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{block1}/order", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var blocks = await dbContext.CourseBlocks
+            .Where(b => b.SubchapterId == _subchapterId)
+            .OrderBy(b => b.OrderIndex)
+            .ToListAsync();
+
+        blocks.Should().HaveCount(3);
+        blocks[0].Id.Should().Be(block2Id); // Was 2, now 1
+        blocks[0].OrderIndex.Should().Be(1);
+        blocks[1].Id.Should().Be(block3Id); // Was 3, now 2
+        blocks[1].OrderIndex.Should().Be(2);
+        blocks[2].Id.Should().Be(block1); // Was 1, now 3
+        blocks[2].OrderIndex.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task UpdateBlockOrder_MoveUp_ShouldReorder()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        var block1Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+            new CreateTheoryBlockDto { Title = "Block 1", Content = "C1" });
+        var block1Created = await block1Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var block1Id = block1Created!.Id;
+        
+        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+            new CreateTheoryBlockDto { Title = "Block 2", Content = "C2" });
+        var block2Created = await block2Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var block2Id = block2Created!.Id;
+        
+        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+            new CreateTheoryBlockDto { Title = "Block 3", Content = "C3" });
+        var block3Created = await block3Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        var block3Id = block3Created!.Id;
+
+        // Move block3 from position 3 to position 1
+        var updateDto = new UpdateBlockOrderDto { NewOrderIndex = 1 };
+
+        // Act
+        var response = await _client.PatchAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{block3Id}/order", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        
+        var blocks = await dbContext.CourseBlocks
+            .Where(b => b.SubchapterId == _subchapterId)
+            .OrderBy(b => b.OrderIndex)
+            .ToListAsync();
+
+        blocks[0].Id.Should().Be(block3Id); // Was 3, now 1
+        blocks[0].OrderIndex.Should().Be(1);
+        blocks[1].Id.Should().Be(block1Id); // Was 1, now 2
+        blocks[1].OrderIndex.Should().Be(2);
+        blocks[2].Id.Should().Be(block2Id); // Was 2, now 3
+        blocks[2].OrderIndex.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task UpdateBlock_WithoutAuth_ShouldReturn401()
+    {
+        // Arrange
+        var blockId = Guid.NewGuid();
+        var updateDto = new UpdateTheoryBlockDto { Title = "Test", Content = "Content" };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/theory", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private async Task<string> GetTeacherTokenAsync()

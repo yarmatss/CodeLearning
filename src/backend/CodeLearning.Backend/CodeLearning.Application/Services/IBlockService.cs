@@ -8,8 +8,14 @@ public interface IBlockService
     Task<Guid> CreateVideoBlockAsync(Guid subchapterId, CreateVideoBlockDto dto, Guid instructorId);
     Task<Guid> CreateQuizBlockAsync(Guid subchapterId, CreateQuizBlockDto dto, Guid instructorId);
     Task<Guid> CreateProblemBlockAsync(Guid subchapterId, CreateProblemBlockDto dto, Guid instructorId);
-
-    Task DeleteBlockAsync(Guid blockId, Guid instructorId);
+    
     Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId);
     Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId);
+
+    Task UpdateTheoryBlockAsync(Guid blockId, UpdateTheoryBlockDto dto, Guid instructorId);
+    Task UpdateVideoBlockAsync(Guid blockId, UpdateVideoBlockDto dto, Guid instructorId);
+    Task UpdateQuizBlockAsync(Guid blockId, UpdateQuizBlockDto dto, Guid instructorId);
+    Task UpdateBlockOrderAsync(Guid blockId, int newOrderIndex, Guid instructorId);
+
+    Task DeleteBlockAsync(Guid blockId, Guid instructorId);
 }

@@ -11,114 +11,60 @@ namespace CodeLearning.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController : ControllerBase
+public class AuthController(
+    IAuthService authService,
+    ITokenService tokenService,
+    IValidator<RegisterDto> registerValidator,
+    IValidator<LoginDto> loginValidator) : ControllerBase
 {
-    private readonly IAuthService _authService;
-    private readonly ITokenService _tokenService;
-    private readonly IValidator<RegisterDto> _registerValidator;
-    private readonly IValidator<LoginDto> _loginValidator;
-
-    public AuthController(
-        IAuthService authService,
-        ITokenService tokenService,
-        IValidator<RegisterDto> registerValidator,
-        IValidator<LoginDto> loginValidator)
-    {
-        _authService = authService;
-        _tokenService = tokenService;
-        _registerValidator = registerValidator;
-        _loginValidator = loginValidator;
-    }
-
     [HttpPost("register")]
     [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
     {
-        var validationResult = await _registerValidator.ValidateAsync(registerDto);
-        if (!validationResult.IsValid)
+        await registerValidator.ValidateAndThrowAsync(registerDto);
+
+        var response = await authService.RegisterAsync(registerDto);
+        var user = MapToUser(response);
+        
+        var (accessToken, refreshToken) = GenerateTokens(user);
+        SetTokenCookies(accessToken, refreshToken);
+
+        return Ok(new 
         {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
-
-        try {
-            var response = await _authService.RegisterAsync(registerDto);
-            
-            var user = new User 
-            { 
-                Id = Guid.Parse(response.UserId),
-                Email = response.Email,
-                FirstName = response.FirstName,
-                LastName = response.LastName,
-                Role = Enum.Parse<UserRole>(response.Role)
-            };
-            
-            var accessToken = _tokenService.GenerateAccessToken(user);
-            var refreshToken = _tokenService.GenerateRefreshToken();
-
-            SetTokenCookies(accessToken, refreshToken);
-
-            return Ok(new 
-            {
-                response.UserId,
-                response.Email,
-                response.FirstName,
-                response.LastName,
-                response.Role,
-                response.Message,
-                accessToken,
-                refreshToken
-            });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+            response.UserId,
+            response.Email,
+            response.FirstName,
+            response.LastName,
+            response.Role,
+            response.Message,
+            accessToken,
+            refreshToken
+        });
     }
 
     [HttpPost("login")]
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
     {
-        var validationResult = await _loginValidator.ValidateAsync(loginDto);
-        if (!validationResult.IsValid)
+        await loginValidator.ValidateAndThrowAsync(loginDto);
+
+        var response = await authService.LoginAsync(loginDto);
+        var user = MapToUser(response);
+
+        var (accessToken, refreshToken) = GenerateTokens(user);
+        SetTokenCookies(accessToken, refreshToken);
+
+        return Ok(new 
         {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
-
-        try
-        {
-            var response = await _authService.LoginAsync(loginDto);
-
-            var user = new User 
-            { 
-                Id = Guid.Parse(response.UserId),
-                Email = response.Email,
-                FirstName = response.FirstName,
-                LastName = response.LastName,
-                Role = Enum.Parse<UserRole>(response.Role)
-            };
-            
-            var accessToken = _tokenService.GenerateAccessToken(user);
-            var refreshToken = _tokenService.GenerateRefreshToken();
-
-            SetTokenCookies(accessToken, refreshToken);
-
-            return Ok(new 
-            {
-                response.UserId,
-                response.Email,
-                response.FirstName,
-                response.LastName,
-                response.Role,
-                response.Message,
-                accessToken,
-                refreshToken
-            });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Unauthorized(new { message = ex.Message });
-        }
+            response.UserId,
+            response.Email,
+            response.FirstName,
+            response.LastName,
+            response.Role,
+            response.Message,
+            accessToken,
+            refreshToken
+        });
     }
 
     [HttpPost("logout")]
@@ -129,11 +75,10 @@ public class AuthController : ControllerBase
         
         if (!string.IsNullOrEmpty(refreshToken))
         {
-            await _authService.LogoutAsync(refreshToken);
+            await authService.LogoutAsync(refreshToken);
         }
 
-        Response.Cookies.Delete("access_token");
-        Response.Cookies.Delete("refresh_token");
+        ClearTokenCookies();
 
         return Ok(new { message = "Logout successful" });
     }
@@ -149,30 +94,13 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Refresh token not found" });
         }
 
-        try
-        {
-            var response = await _authService.RefreshTokenAsync(refreshToken);
+        var response = await authService.RefreshTokenAsync(refreshToken);
+        var user = MapToUser(response);
 
-            var accessToken = _tokenService.GenerateAccessToken(new User 
-            { 
-                Id = Guid.Parse(response.UserId),
-                Email = response.Email,
-                FirstName = response.FirstName,
-                LastName = response.LastName,
-                Role = Enum.Parse<UserRole>(response.Role)
-            });
-            var newRefreshToken = _tokenService.GenerateRefreshToken();
+        var (accessToken, newRefreshToken) = GenerateTokens(user);
+        SetTokenCookies(accessToken, newRefreshToken);
 
-            SetTokenCookies(accessToken, newRefreshToken);
-
-            return Ok(new { message = "Token refreshed successfully" });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            Response.Cookies.Delete("access_token");
-            Response.Cookies.Delete("refresh_token");
-            return Unauthorized(new { message = ex.Message });
-        }
+        return Ok(new { message = "Token refreshed successfully" });
     }
 
     [HttpGet("me")]
@@ -193,6 +121,22 @@ public class AuthController : ControllerBase
             lastName, 
             role 
         });
+    }
+
+    private static User MapToUser(AuthResponseDto response) => new()
+    {
+        Id = Guid.Parse(response.UserId),
+        Email = response.Email,
+        FirstName = response.FirstName,
+        LastName = response.LastName,
+        Role = Enum.Parse<UserRole>(response.Role)
+    };
+
+    private (string AccessToken, string RefreshToken) GenerateTokens(User user)
+    {
+        var accessToken = tokenService.GenerateAccessToken(user);
+        var refreshToken = tokenService.GenerateRefreshToken();
+        return (accessToken, refreshToken);
     }
 
     private void SetTokenCookies(string accessToken, string refreshToken)
@@ -216,5 +160,11 @@ public class AuthController : ControllerBase
         };
 
         Response.Cookies.Append("refresh_token", refreshToken, refreshCookieOptions);
+    }
+
+    private void ClearTokenCookies()
+    {
+        Response.Cookies.Delete("access_token");
+        Response.Cookies.Delete("refresh_token");
     }
 }

@@ -10,7 +10,6 @@ public class BlockResponseDto
     public required int OrderIndex { get; set; }
     public required Guid SubchapterId { get; set; }
     
-    // Content (only one will be populated based on Type)
     public TheoryContentDto? TheoryContent { get; set; }
     public VideoContentDto? VideoContent { get; set; }
     public QuizDto? Quiz { get; set; }

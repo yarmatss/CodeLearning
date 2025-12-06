@@ -9,103 +9,45 @@ namespace CodeLearning.Api.Controllers;
 
 [ApiController]
 [Route("api/chapters/{chapterId}/[controller]")]
-public class SubchaptersController : ControllerBase
+public class SubchaptersController(
+    ISubchapterService subchapterService,
+    IValidator<CreateSubchapterDto> createSubchapterValidator) : ControllerBase
 {
-    private readonly ISubchapterService _subchapterService;
-    private readonly IValidator<CreateSubchapterDto> _createSubchapterValidator;
-
-    public SubchaptersController(
-        ISubchapterService subchapterService,
-        IValidator<CreateSubchapterDto> createSubchapterValidator)
-    {
-        _subchapterService = subchapterService;
-        _createSubchapterValidator = createSubchapterValidator;
-    }
-
     [HttpPost]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> AddSubchapter(Guid chapterId, [FromBody] CreateSubchapterDto dto)
     {
-        var validationResult = await _createSubchapterValidator.ValidateAsync(dto);
-        if (!validationResult.IsValid)
-        {
-            return BadRequest(new { errors = validationResult.Errors.Select(e => e.ErrorMessage) });
-        }
+        await createSubchapterValidator.ValidateAndThrowAsync(dto);
 
-        try
-        {
-            var userId = GetCurrentUserId();
-            var subchapter = await _subchapterService.AddSubchapterAsync(chapterId, dto, userId);
-            return CreatedAtAction(nameof(GetChapterSubchapters), new { chapterId }, subchapter);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        var subchapter = await subchapterService.AddSubchapterAsync(chapterId, dto, userId);
+        return CreatedAtAction(nameof(GetChapterSubchapters), new { chapterId }, subchapter);
     }
 
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetChapterSubchapters(Guid chapterId)
     {
-        var subchapters = await _subchapterService.GetChapterSubchaptersAsync(chapterId);
+        var subchapters = await subchapterService.GetChapterSubchaptersAsync(chapterId);
         return Ok(subchapters);
     }
 
     [HttpPatch("{subchapterId}/order")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> UpdateSubchapterOrder(Guid chapterId, Guid subchapterId, [FromBody] int newOrderIndex)
+    public async Task<IActionResult> UpdateSubchapterOrder(Guid subchapterId, [FromBody] int newOrderIndex)
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            var subchapter = await _subchapterService.UpdateSubchapterOrderAsync(subchapterId, newOrderIndex, userId);
-            return Ok(subchapter);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        var subchapter = await subchapterService.UpdateSubchapterOrderAsync(subchapterId, newOrderIndex, userId);
+        return Ok(subchapter);
     }
 
     [HttpDelete("{subchapterId}")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> DeleteSubchapter(Guid chapterId, Guid subchapterId)
+    public async Task<IActionResult> DeleteSubchapter(Guid subchapterId)
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            await _subchapterService.DeleteSubchapterAsync(subchapterId, userId);
-            return Ok(new { message = "Subchapter deleted successfully" });
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Forbid(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        var userId = GetCurrentUserId();
+        await subchapterService.DeleteSubchapterAsync(subchapterId, userId);
+        return Ok(new { message = "Subchapter deleted successfully" });
     }
 
     private Guid GetCurrentUserId()
