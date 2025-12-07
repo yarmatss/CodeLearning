@@ -1,4 +1,4 @@
-using CodeLearning.Api.Extensions;
+using CodeLearning.Application.Extensions;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
