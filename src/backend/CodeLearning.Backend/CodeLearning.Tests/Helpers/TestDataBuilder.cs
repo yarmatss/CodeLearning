@@ -1,6 +1,7 @@
 using Bogus;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Course;
+using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 
@@ -40,6 +41,63 @@ public static class TestDataBuilder
         {
             Title = title ?? _faker.Lorem.Sentence(3, 5),
             Description = _faker.Lorem.Paragraph()
+        };
+    }
+
+    public static CreateProblemDto CreateValidCreateProblemDto(string? title = null, string difficulty = "Easy")
+    {
+        return new CreateProblemDto
+        {
+            Title = title ?? _faker.Lorem.Sentence(3, 5),
+            Description = _faker.Lorem.Paragraph(3),
+            Difficulty = difficulty,
+            TestCases =
+            [
+                new CreateTestCaseDto
+                {
+                    Input = "1 2",
+                    ExpectedOutput = "3",
+                    IsPublic = true
+                },
+                new CreateTestCaseDto
+                {
+                    Input = "5 10",
+                    ExpectedOutput = "15",
+                    IsPublic = false
+                }
+            ],
+            StarterCodes = [],
+            TagIds = []
+        };
+    }
+
+    public static UpdateProblemDto CreateValidUpdateProblemDto(string? title = null, string difficulty = "Medium")
+    {
+        return new UpdateProblemDto
+        {
+            Title = title ?? _faker.Lorem.Sentence(3, 5),
+            Description = _faker.Lorem.Paragraph(3),
+            Difficulty = difficulty,
+            TagIds = []
+        };
+    }
+
+    public static CreateTestCaseDto CreateValidCreateTestCaseDto(bool isPublic = true)
+    {
+        return new CreateTestCaseDto
+        {
+            Input = _faker.Random.Number(1, 100).ToString(),
+            ExpectedOutput = _faker.Random.Number(1, 100).ToString(),
+            IsPublic = isPublic
+        };
+    }
+
+    public static CreateStarterCodeDto CreateValidCreateStarterCodeDto(Guid languageId)
+    {
+        return new CreateStarterCodeDto
+        {
+            Code = "def solution():\n    pass",
+            LanguageId = languageId
         };
     }
 
@@ -104,6 +162,37 @@ public static class TestDataBuilder
             OrderIndex = orderIndex,
             ChapterId = chapter.Id,
             Chapter = chapter,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    public static Problem CreateValidProblem(User author, DifficultyLevel difficulty = DifficultyLevel.Easy)
+    {
+        return new Problem
+        {
+            Id = Guid.NewGuid(),
+            Title = _faker.Lorem.Sentence(3, 5),
+            Description = _faker.Lorem.Paragraph(3),
+            Difficulty = difficulty,
+            AuthorId = author.Id,
+            Author = author,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    public static TestCase CreateValidTestCase(Problem problem, int orderIndex = 1, bool isPublic = true)
+    {
+        return new TestCase
+        {
+            Id = Guid.NewGuid(),
+            Input = _faker.Random.Number(1, 100).ToString(),
+            ExpectedOutput = _faker.Random.Number(1, 100).ToString(),
+            IsPublic = isPublic,
+            OrderIndex = orderIndex,
+            ProblemId = problem.Id,
+            Problem = problem,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };

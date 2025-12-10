@@ -13,15 +13,16 @@ using Microsoft.OpenApi;
 using Serilog;
 using System.Text;
 
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
-    .CreateBootstrapLogger();
+var builder = WebApplication.CreateBuilder(args);
 
-Log.Information("Starting CodeLearning API...");
-
-try
+// Configure Serilog only in non-test environments
+if (builder.Environment.EnvironmentName != "Testing")
 {
-    var builder = WebApplication.CreateBuilder(args);
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console()
+        .CreateBootstrapLogger();
+
+    Log.Information("Starting CodeLearning API...");
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
@@ -29,122 +30,126 @@ try
         .Enrich.FromLogContext()
         .Enrich.WithMachineName()
         .Enrich.WithThreadId());
+}
 
-    builder.Services.AddDbContext<ApplicationDbContext>(options =>
-        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-    builder.Services.AddIdentity<User, IdentityRole<Guid>>(options =>
+builder.Services.AddIdentity<User, IdentityRole<Guid>>(options =>
+{
+    options.Password.RequireDigit = true;
+    options.Password.RequireLowercase = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireNonAlphanumeric = false;
+    options.Password.RequiredLength = 8;
+
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.AllowedForNewUsers = true;
+
+    options.User.RequireUniqueEmail = true;
+})
+.AddEntityFrameworkStores<ApplicationDbContext>()
+.AddDefaultTokenProviders();
+
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey not configured");
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.Password.RequireDigit = true;
-        options.Password.RequireLowercase = true;
-        options.Password.RequireUppercase = true;
-        options.Password.RequireNonAlphanumeric = false;
-        options.Password.RequiredLength = 8;
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+        ClockSkew = TimeSpan.Zero
+    };
 
-        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-        options.Lockout.MaxFailedAccessAttempts = 5;
-        options.Lockout.AllowedForNewUsers = true;
-
-        options.User.RequireUniqueEmail = true;
-    })
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddDefaultTokenProviders();
-
-    var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-    var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey not configured");
-
-    builder.Services.AddAuthentication(options =>
+    options.Events = new JwtBearerEvents
     {
-        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-    })
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
+        OnMessageReceived = context =>
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSettings["Issuer"],
-            ValidAudience = jwtSettings["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
-            ClockSkew = TimeSpan.Zero
-        };
-
-        options.Events = new JwtBearerEvents
-        {
-            OnMessageReceived = context =>
+            var authHeader = context.Request.Headers.Authorization.ToString();
+            if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
             {
-                var authHeader = context.Request.Headers.Authorization.ToString();
-                if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
-                {
-                    context.Token = authHeader.Substring("Bearer ".Length).Trim();
-                    return Task.CompletedTask;
-                }
-
-                context.Token = context.Request.Cookies["access_token"];
+                context.Token = authHeader.Substring("Bearer ".Length).Trim();
                 return Task.CompletedTask;
             }
-        };
-    });
 
-    builder.Services.AddAuthorization();
+            context.Token = context.Request.Cookies["access_token"];
+            return Task.CompletedTask;
+        }
+    };
+});
 
-    builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
-    builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
-    builder.Services.AddProblemDetails();
+builder.Services.AddAuthorization();
 
-    builder.Services.AddScoped<ITokenService, TokenService>();
-    builder.Services.AddScoped<IAuthService, AuthService>();
-    builder.Services.AddScoped<ICourseService, CourseService>();
-    builder.Services.AddScoped<IChapterService, ChapterService>();
-    builder.Services.AddScoped<ISubchapterService, SubchapterService>();
-    builder.Services.AddScoped<IBlockService, BlockService>();
-    builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
-    builder.Services.AddScoped<IProgressService, ProgressService>();
-    builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
+builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
-    builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ICourseService, CourseService>();
+builder.Services.AddScoped<IChapterService, ChapterService>();
+builder.Services.AddScoped<ISubchapterService, SubchapterService>();
+builder.Services.AddScoped<IBlockService, BlockService>();
+builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
+builder.Services.AddScoped<IProgressService, ProgressService>();
+builder.Services.AddScoped<IProblemService, ProblemService>();
+builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
 
-    builder.Services.AddCors(options =>
+builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
     {
-        options.AddPolicy("AllowFrontend", policy =>
-        {
-            policy.WithOrigins("http://localhost:4200")
-                  .AllowCredentials()
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
-        });
+        policy.WithOrigins("http://localhost:4200")
+              .AllowCredentials()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
     });
+});
 
-    builder.Services.AddControllers();
-    builder.Services.AddEndpointsApiExplorer();
-    builder.Services.AddSwaggerGen(options =>
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
     {
-        options.SwaggerDoc("v1", new OpenApiInfo
-        {
-            Title = "CodeLearning API",
-            Version = "v1",
-            Description = "Educational platform for learning programming with automatic code evaluation",
-        });
-
-        options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-        {
-            Type = SecuritySchemeType.Http,
-            Scheme = "Bearer",
-            BearerFormat = "JWT",
-            Description = "JWT Authorization header using the Bearer scheme."
-        });
-
-        options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-        {
-            [new OpenApiSecuritySchemeReference("Bearer", document)] = []
-        });
+        Title = "CodeLearning API",
+        Version = "v1",
+        Description = "Educational platform for learning programming with automatic code evaluation",
     });
 
-    var app = builder.Build();
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        Description = "JWT Authorization header using the Bearer scheme."
+    });
 
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+    });
+});
+
+var app = builder.Build();
+
+if (app.Environment.EnvironmentName != "Testing")
+{
     app.UseSerilogRequestLogging(options =>
     {
         options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
@@ -155,40 +160,53 @@ try
             diagnosticContext.Set("RemoteIP", httpContext.Connection.RemoteIpAddress);
         };
     });
+}
 
-    if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
     {
-        app.UseSwagger();
-        app.UseSwaggerUI(options =>
-        {
-            options.SwaggerEndpoint("/swagger/v1/swagger.json", "CodeLearning API v1");
-            options.RoutePrefix = "swagger";
-            options.DocumentTitle = "CodeLearning API Documentation";
-        });
-    }
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "CodeLearning API v1");
+        options.RoutePrefix = "swagger";
+        options.DocumentTitle = "CodeLearning API Documentation";
+    });
+}
 
-    app.UseExceptionHandler();
+app.UseExceptionHandler();
 
-    app.UseHttpsRedirection();
+app.UseHttpsRedirection();
 
-    app.UseCors("AllowFrontend");
+app.UseCors("AllowFrontend");
 
-    app.UseAuthentication();
-    app.UseAuthorization();
+app.UseAuthentication();
+app.UseAuthorization();
 
-    app.MapControllers();
+app.MapControllers();
 
+if (app.Environment.EnvironmentName != "Testing")
+{
     Log.Information("CodeLearning API started successfully");
+}
 
+try
+{
     app.Run();
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "Application terminated unexpectedly");
+    if (app.Environment.EnvironmentName != "Testing")
+    {
+        Log.Fatal(ex, "Application terminated unexpectedly");
+    }
+    throw;
 }
 finally
 {
-    Log.CloseAndFlush();
+    if (app.Environment.EnvironmentName != "Testing")
+    {
+        Log.CloseAndFlush();
+    }
 }
 
 // for integration tests
