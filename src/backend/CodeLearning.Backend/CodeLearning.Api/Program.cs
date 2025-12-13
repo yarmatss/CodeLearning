@@ -6,6 +6,7 @@ using CodeLearning.Infrastructure.Data;
 using CodeLearning.Infrastructure.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -15,7 +16,6 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog only in non-test environments
 if (builder.Environment.EnvironmentName != "Testing")
 {
     Log.Logger = new LoggerConfiguration()
@@ -121,6 +121,22 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
+    .SetApplicationName("CodeLearning.Api");
+
+builder.Services.AddHealthChecks()
+    .AddNpgSql(
+        builder.Configuration.GetConnectionString("DefaultConnection")!,
+        name: "postgres",
+        timeout: TimeSpan.FromSeconds(3),
+        tags: new[] { "db", "sql", "postgres" })
+    .AddRedis(
+        builder.Configuration.GetConnectionString("Redis")!,
+        name: "redis",
+        timeout: TimeSpan.FromSeconds(3),
+        tags: new[] { "cache", "redis" });
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -147,6 +163,42 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+
+var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate", app.Environment.IsDevelopment());
+if (autoMigrate)
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        
+        logger.LogInformation("Checking for pending database migrations...");
+        
+        var pendingMigrations = await dbContext.Database.GetPendingMigrationsAsync();
+        if (pendingMigrations.Any())
+        {
+            logger.LogInformation("Applying {Count} pending migration(s): {Migrations}", 
+                pendingMigrations.Count(), 
+                string.Join(", ", pendingMigrations));
+            
+            await dbContext.Database.MigrateAsync();
+            
+            logger.LogInformation("Database migrations applied successfully");
+        }
+        else
+        {
+            logger.LogInformation("Database is up to date. No pending migrations");
+        }
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while migrating the database");
+        
+        // allow app to start even if migrations fail
+    }
+}
 
 if (app.Environment.EnvironmentName != "Testing")
 {
@@ -175,12 +227,17 @@ if (app.Environment.IsDevelopment())
 
 app.UseExceptionHandler();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapHealthChecks("/health");
 
 app.MapControllers();
 
