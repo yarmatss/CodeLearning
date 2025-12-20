@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Serilog;
+using StackExchange.Redis;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,15 @@ if (builder.Environment.EnvironmentName != "Testing")
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var configuration = ConfigurationOptions.Parse(
+        builder.Configuration.GetConnectionString("Redis")
+            ?? throw new InvalidOperationException("Redis connection string not configured"));
+
+    return ConnectionMultiplexer.Connect(configuration);
+});
 
 builder.Services.AddIdentity<User, IdentityRole<Guid>>(options =>
 {
@@ -106,6 +116,7 @@ builder.Services.AddScoped<IBlockService, BlockService>();
 builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
 builder.Services.AddScoped<IProgressService, ProgressService>();
 builder.Services.AddScoped<IProblemService, ProblemService>();
+builder.Services.AddScoped<ISubmissionService, SubmissionService>();
 builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();

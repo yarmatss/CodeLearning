@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
-using FluentAssertions;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -34,15 +33,15 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var content = await response.Content.ReadFromJsonAsync<AuthResponseDto>();
-        content.Should().NotBeNull();
-        content!.Email.Should().Be(registerDto.Email);
-        content.Role.Should().Be("Student");
-        content.FirstName.Should().Be(registerDto.FirstName);
-        content.LastName.Should().Be(registerDto.LastName);
-        content.Message.Should().Be("Registration successful");
+        Assert.NotNull(content);
+        Assert.Equal(registerDto.Email, content.Email);
+        Assert.Equal("Student", content.Role);
+        Assert.Equal(registerDto.FirstName, content.FirstName);
+        Assert.Equal(registerDto.LastName, content.LastName);
+        Assert.Equal("Registration successful", content.Message);
     }
 
     [Fact]
@@ -55,10 +54,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var content = await response.Content.ReadFromJsonAsync<AuthResponseDto>();
-        content!.Role.Should().Be("Teacher");
+        Assert.Equal("Teacher", content!.Role);
     }
 
     [Theory]
@@ -78,10 +77,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().ContainEquivalentOf(expectedError);
+        Assert.Contains(expectedError, content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -98,10 +97,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/register", secondDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().ContainEquivalentOf("already exists");
+        Assert.Contains("already exists", content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -115,10 +114,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().ContainEquivalentOf("do not match");
+        Assert.Contains("do not match", content, StringComparison.OrdinalIgnoreCase);
     }
 
     #endregion
@@ -143,12 +142,12 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        content.Should().NotBeNull();
-        content!.AccessToken.Should().NotBeNullOrEmpty("response should contain access token");
-        content.RefreshToken.Should().NotBeNullOrEmpty("response should contain refresh token");
+        Assert.NotNull(content);
+        Assert.False(string.IsNullOrEmpty(content.AccessToken), "response should contain access token");
+        Assert.False(string.IsNullOrEmpty(content.RefreshToken), "response should contain refresh token");
     }
 
     [Fact]
@@ -165,10 +164,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().ContainEquivalentOf("Invalid email or password");
+        Assert.Contains("Invalid email or password", content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -181,7 +180,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginDto);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     #endregion
@@ -195,7 +194,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.GetAsync("/api/auth/me");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -220,14 +219,14 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.GetAsync("/api/auth/me");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var content = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
-        content.Should().NotBeNull();
-        content!.Email.Should().Be(email);
-        content.Role.Should().Be("Student");
-        content.FirstName.Should().Be(registerDto.FirstName);
-        content.LastName.Should().Be(registerDto.LastName);
+        Assert.NotNull(content);
+        Assert.Equal(email, content.Email);
+        Assert.Equal("Student", content.Role);
+        Assert.Equal(registerDto.FirstName, content.FirstName);
+        Assert.Equal(registerDto.LastName, content.LastName);
     }
 
     #endregion
@@ -241,7 +240,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsync("/api/auth/logout", null);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -264,10 +263,10 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var response = await _client.PostAsync("/api/auth/logout", null);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().ContainEquivalentOf("Logout successful");
+        Assert.Contains("Logout successful", content, StringComparison.OrdinalIgnoreCase);
     }
 
     #endregion

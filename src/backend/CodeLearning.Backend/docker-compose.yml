@@ -13,7 +13,7 @@ services:
     networks:
       - codelearning-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codelearning"]
+      test: ["CMD-SHELL", "pg_isready -U codelearning -d CodeLearningDb"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,6 +35,56 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+
+  # Docker Socket Proxy - Secure access to Docker API
+  # This service filters Docker API calls and prevents dangerous operations
+  # like mounting host volumes or running privileged containers
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: codelearning-docker-proxy
+    environment:
+      # Allow read-only operations (defaults to 1, but explicit is better)
+      PING: 1            # Health checks
+      VERSION: 1         # Docker version info
+      EVENTS: 0          # Disabled - not needed by Runner (fixes HAProxy warning)
+      
+      # Allow only necessary Docker operations for Runner
+      CONTAINERS: 1      # Container creation/management
+      IMAGES: 1          # Image pull/inspect
+      POST: 1            # POST requests (create containers, copy files)
+      DELETE: 1          # DELETE requests (cleanup containers)
+      
+      # Block dangerous operations (security-critical)
+      AUTH: 0            # Block Docker auth API
+      SECRETS: 0         # Block Docker secrets
+      VOLUMES: 0         # Block volume creation (containers still work)
+      
+      # Block unnecessary operations
+      BUILD: 0           # Block image building
+      COMMIT: 0          # Block container commits
+      CONFIGS: 0         # Block Docker configs
+      NETWORKS: 0        # Block network creation
+      SERVICES: 0        # Block service creation
+      SWARM: 0           # Block swarm operations
+      SYSTEM: 0          # Block system operations
+      EXEC: 0            # Block exec into containers
+      INFO: 0            # Block system info (exposes host details)
+      
+      # Granular container permissions
+      # Runner needs these for container lifecycle management
+      ALLOW_START: 1     # Required: Runner uses /containers/{id}/start
+      ALLOW_STOP: 1      # Required: Runner uses /containers/{id}/kill for timeout
+      ALLOW_RESTARTS: 0  # Not needed: Runner doesn't use /restart
+      
+      # Logging (optional)
+      LOG_LEVEL: info    # Logging level: debug, info, notice, warning, err, crit
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only access to host Docker
+    networks:
+      - codelearning-network
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true  # Prevent privilege escalation
 
   api:
     image: ${DOCKER_REGISTRY-}codelearningapi
@@ -72,6 +122,41 @@ services:
       retries: 3
       start_period: 40s
 
+  runner:
+    image: ${DOCKER_REGISTRY-}codelearningrunner
+    container_name: codelearning-runner
+    build:
+      context: .
+      dockerfile: CodeLearning.Runner/Dockerfile
+    volumes:
+      - runner-workspace:/tmp/submissions
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=CodeLearningDb;Username=codelearning;Password=dev123"
+      ConnectionStrings__Redis: "redis:6379"
+      ExecutionSettings__DockerHost: "tcp://docker-proxy:2375"
+      ExecutionSettings__WorkspaceBasePath: "/tmp/submissions"
+      ExecutionSettings__MaxConcurrentExecutions: "5"
+      ExecutionSettings__QueuePollIntervalMs: "1000"
+      Serilog__MinimumLevel__Default: "Debug"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    networks:
+      - codelearning-network
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true  # Prevent privilege escalation
+    deploy:
+      resources:
+        limits:
+          cpus: '2'      # Limit CPU usage
+          memory: 2G     # Limit memory usage
+
 networks:
   codelearning-network:
     driver: bridge
@@ -82,4 +167,6 @@ volumes:
   redis-data:
     driver: local
   dataprotection-keys:
+    driver: local
+  runner-workspace:
     driver: local
