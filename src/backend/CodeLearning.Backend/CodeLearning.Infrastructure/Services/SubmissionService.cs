@@ -95,6 +95,8 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             Score = submission.Score,
             ExecutionTimeMs = submission.ExecutionTimeMs,
             MemoryUsedKB = submission.MemoryUsedKB,
+            CompilationError = submission.CompilationError,
+            RuntimeError = submission.RuntimeError,
             CreatedAt = submission.CreatedAt,
             CompletedAt = submission.CompletedAt
         };

@@ -1,3 +1,4 @@
+using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Runner.Models;
 using Docker.DotNet;
@@ -27,6 +28,7 @@ public class DockerRunner : IDockerRunner
     {
         var startTime = DateTime.UtcNow;
         string? containerId = null;
+        ulong peakMemoryBytes = 0;
 
         try
         {
@@ -50,11 +52,41 @@ public class DockerRunner : IDockerRunner
                 containerId,
                 context.Submission.Id);
 
-            // Wait for completion with timeout
-            var completed = await WaitForContainerAsync(
-                containerId,
-                context.Language.TimeoutSeconds,
-                cancellationToken);
+            // Poll stats while waiting for container to complete
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(context.Language.TimeoutSeconds));
+
+            var waitTask = _client.Containers.WaitContainerAsync(containerId, cts.Token);
+
+            // Poll memory usage while container is running
+            while (!waitTask.IsCompleted)
+            {
+                try
+                {
+                    var memoryUsage = await GetCurrentMemoryUsageAsync(containerId, cancellationToken);
+                    if (memoryUsage > peakMemoryBytes)
+                    {
+                        peakMemoryBytes = memoryUsage;
+                    }
+                }
+                catch
+                {
+                    // Container might have stopped
+                }
+
+                await Task.Delay(100, cancellationToken); // Poll every 100ms
+            }
+
+            bool completed;
+            try
+            {
+                await waitTask;
+                completed = true;
+            }
+            catch (OperationCanceledException)
+            {
+                completed = false;
+            }
 
             if (!completed)
             {
@@ -71,7 +103,8 @@ public class DockerRunner : IDockerRunner
                 return new ExecutionResult
                 {
                     Status = SubmissionStatus.TimeLimitExceeded,
-                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000
+                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000,
+                    MaxMemoryUsedKB = peakMemoryBytes > 0 ? (int)(peakMemoryBytes / 1024) : null
                 };
             }
 
@@ -85,24 +118,18 @@ public class DockerRunner : IDockerRunner
             // Get logs (stdout + stderr)
             var logs = await GetContainerLogsAsync(containerId, cancellationToken);
 
-            // Get resource stats
-            var stats = await GetContainerStatsAsync(containerId, cancellationToken);
-
             // Parse results
-            var result = ParseExecutionOutput(
-                logs,
-                exitCode,
-                context.TestCases,
-                stats);
+            var result = ParseExecutionOutput(logs, exitCode, context.TestCases, peakMemoryBytes);
 
             var executionTime = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
             result.TotalExecutionTimeMs = executionTime;
 
             _logger.LogInformation(
-                "Container {ContainerId} completed with status {Status} in {Time}ms",
+                "Container {ContainerId} completed with status {Status} in {Time}ms, memory {MemoryKB}KB",
                 containerId,
                 result.Status,
-                executionTime);
+                executionTime,
+                result.MaxMemoryUsedKB ?? 0);
 
             return result;
         }
@@ -121,11 +148,55 @@ public class DockerRunner : IDockerRunner
         }
         finally
         {
-            // Always cleanup container
             if (containerId != null)
             {
                 await CleanupContainerAsync(containerId, cancellationToken);
             }
+        }
+    }
+
+    private async Task<ulong> GetCurrentMemoryUsageAsync(
+    string containerId,
+    CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tcs = new TaskCompletionSource<ulong>();
+
+            var statsParams = new ContainerStatsParameters
+            {
+                Stream = false,
+                OneShot = true
+            };
+
+            var progress = new Progress<ContainerStatsResponse>(stats =>
+            {
+                tcs.TrySetResult(stats.MemoryStats?.Usage ?? 0);
+            });
+
+            // Start stats request
+            var statsTask = _client.Containers.GetContainerStatsAsync(
+                containerId,
+                statsParams,
+                progress,
+                cancellationToken);
+
+            // Wait for either stats to arrive or timeout
+            var completedTask = await Task.WhenAny(
+                tcs.Task,
+                statsTask,
+                Task.Delay(500, cancellationToken));
+
+            if (completedTask == tcs.Task)
+            {
+                return await tcs.Task;
+            }
+
+            return 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -267,25 +338,6 @@ public class DockerRunner : IDockerRunner
             containerId);
     }
 
-    private async Task<bool> WaitForContainerAsync(
-        string containerId,
-        int timeoutSeconds,
-        CancellationToken cancellationToken)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-
-        try
-        {
-            await _client.Containers.WaitContainerAsync(containerId, cts.Token);
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
-    }
-
     private async Task<string> GetContainerLogsAsync(
     string containerId,
     CancellationToken cancellationToken)
@@ -342,46 +394,16 @@ public class DockerRunner : IDockerRunner
         return string.Concat(stdoutContent, stderrContent);
     }
 
-    private async Task<ContainerStatsResponse?> GetContainerStatsAsync(
-        string containerId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var statsParams = new ContainerStatsParameters
-            {
-                Stream = false
-            };
-
-            var progress = new Progress<ContainerStatsResponse>();
-            ContainerStatsResponse? result = null;
-
-            progress.ProgressChanged += (sender, stats) => result = stats;
-
-            await _client.Containers.GetContainerStatsAsync(
-                containerId,
-                statsParams,
-                progress,
-                cancellationToken);
-
-            return result;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to get container stats for {ContainerId}", containerId);
-            return null;
-        }
-    }
-
     private ExecutionResult ParseExecutionOutput(
         string output,
         long exitCode,
-        List<CodeLearning.Core.Entities.TestCase> testCases,
-        ContainerStatsResponse? stats)
+        List<TestCase> testCases,
+        ulong peakMemoryBytes)
     {
         var result = new ExecutionResult
         {
-            TotalTests = testCases.Count
+            TotalTests = testCases.Count,
+            MaxMemoryUsedKB = peakMemoryBytes > 0 ? (int)(peakMemoryBytes / 1024) : null
         };
 
         // Check for compilation error (exit code != 0 and no JSON output)
@@ -443,12 +465,6 @@ public class DockerRunner : IDockerRunner
             else
             {
                 result.Status = SubmissionStatus.Completed;  // Some tests failed but no errors
-            }
-
-            // Set memory usage
-            if (stats?.MemoryStats?.Usage != null)
-            {
-                result.MaxMemoryUsedKB = (int)(stats.MemoryStats.Usage / 1024);
             }
         }
         catch (JsonException ex)

@@ -13,6 +13,8 @@ public class SubmissionResponseDto
     public int Score { get; set; }
     public int? ExecutionTimeMs { get; set; }
     public int? MemoryUsedKB { get; set; }
+    public string? CompilationError { get; set; }
+    public string? RuntimeError { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public List<TestResultDto>? TestResults { get; set; }

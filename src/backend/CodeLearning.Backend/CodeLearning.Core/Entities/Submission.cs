@@ -13,6 +13,8 @@ public class Submission : BaseEntity
     public int? ExecutionTimeMs { get; set; }
     public int? MemoryUsedKB { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public string? CompilationError { get; set; }
+    public string? RuntimeError { get; set; }
 
     public required Problem Problem { get; set; }
     public required User Student { get; set; }

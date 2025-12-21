@@ -178,6 +178,8 @@ public class ExecutionWorker : BackgroundService
         submission.ExecutionTimeMs = result.TotalExecutionTimeMs;
         submission.MemoryUsedKB = result.MaxMemoryUsedKB;
         submission.CompletedAt = DateTimeOffset.UtcNow;
+        submission.CompilationError = result.CompilationError;
+        submission.RuntimeError = result.RuntimeError;
 
         foreach (var testResult in result.TestResults)
         {
