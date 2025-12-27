@@ -3,13 +3,15 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
 
 namespace CodeLearning.Infrastructure.Services;
 
 public class AuthService(
     UserManager<User> userManager,
     SignInManager<User> signInManager,
-    ITokenService tokenService) : IAuthService
+    ITokenService tokenService,
+    IConfiguration configuration) : IAuthService
 {
     public async Task<AuthResponseDto> RegisterAsync(RegisterDto registerDto)
     {
@@ -62,24 +64,42 @@ public class AuthService(
         return MapToAuthResponse(user, "Login successful");
     }
 
-    public async Task LogoutAsync(string refreshToken)
+    public async Task LogoutAsync(string refreshToken, Guid userId, string jti, TimeSpan accessTokenExpiration)
     {
+        // Revoke refresh token
         if (!string.IsNullOrEmpty(refreshToken))
         {
-            tokenService.RevokeRefreshToken(refreshToken);
+            await tokenService.RevokeRefreshTokenAsync(refreshToken, userId);
+        }
+
+        // Blacklist current access token
+        if (!string.IsNullOrEmpty(jti))
+        {
+            await tokenService.RevokeAccessTokenAsync(jti, accessTokenExpiration);
         }
 
         await signInManager.SignOutAsync();
     }
 
-    public Task<AuthResponseDto> RefreshTokenAsync(string refreshToken)
+    public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken, Guid userId)
     {
-        if (!tokenService.ValidateRefreshToken(refreshToken))
+        var isValid = await tokenService.ValidateRefreshTokenAsync(refreshToken, userId);
+        if (!isValid)
         {
             throw new UnauthorizedAccessException("Invalid or expired refresh token");
         }
 
-        throw new NotImplementedException("Refresh token not fully implemented yet");
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("User not found");
+        }
+
+        // Revoke old refresh token
+        await tokenService.RevokeRefreshTokenAsync(refreshToken, userId);
+
+        // Generate new tokens (will be stored by controller)
+        return MapToAuthResponse(user, "Token refreshed successfully");
     }
 
     private static AuthResponseDto MapToAuthResponse(User user, string message) => new()

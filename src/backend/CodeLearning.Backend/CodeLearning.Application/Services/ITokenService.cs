@@ -6,6 +6,11 @@ public interface ITokenService
 {
     string GenerateAccessToken(User user);
     string GenerateRefreshToken();
-    bool ValidateRefreshToken(string refreshToken);
-    void RevokeRefreshToken(string refreshToken);
+    
+    Task<bool> ValidateRefreshTokenAsync(string refreshToken, Guid userId);
+    Task StoreRefreshTokenAsync(string refreshToken, Guid userId, TimeSpan expiration);
+    Task RevokeRefreshTokenAsync(string refreshToken, Guid userId);
+    
+    Task RevokeAccessTokenAsync(string jti, TimeSpan expiration);
+    Task<bool> IsAccessTokenRevokedAsync(string jti);
 }
