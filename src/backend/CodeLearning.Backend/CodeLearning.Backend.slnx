@@ -3,7 +3,6 @@
   <Project Path="CodeLearning.Application/CodeLearning.Application.csproj" />
   <Project Path="CodeLearning.Core/CodeLearning.Core.csproj" />
   <Project Path="CodeLearning.Infrastructure/CodeLearning.Infrastructure.csproj" />
-  <Project Path="CodeLearning.Runner.Tests/CodeLearning.Runner.Tests.csproj" />
   <Project Path="CodeLearning.Runner/CodeLearning.Runner.csproj" />
   <Project Path="CodeLearning.Tests/CodeLearning.Tests.csproj" />
   <Project Path="docker-compose.dcproj">

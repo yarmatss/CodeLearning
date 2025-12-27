@@ -109,7 +109,11 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
         // StudentQuizAttempt - JSON column for Answers
         modelBuilder.Entity<StudentQuizAttempt>()
             .Property(e => e.Answers)
-            .HasColumnType("jsonb");
+            .HasColumnType("jsonb")
+            .HasConversion(
+                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions)null),
+                v => System.Text.Json.JsonSerializer.Deserialize<List<QuizAnswerData>>(v, (System.Text.Json.JsonSerializerOptions)null) ?? new List<QuizAnswerData>()
+            );
 
         // Language unique constraint
         modelBuilder.Entity<Language>()

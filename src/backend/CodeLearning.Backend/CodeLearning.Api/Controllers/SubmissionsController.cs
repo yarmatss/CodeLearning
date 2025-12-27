@@ -1,5 +1,6 @@
 using CodeLearning.Application.DTOs.Submission;
 using CodeLearning.Application.Services;
+using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -11,6 +12,7 @@ namespace CodeLearning.Api.Controllers;
 [Authorize]
 public class SubmissionsController(
     ISubmissionService submissionService,
+    IValidator<SubmitCodeDto> submitValidator,
     ILogger<SubmissionsController> logger) : ControllerBase
 {
     [HttpPost]
@@ -19,6 +21,8 @@ public class SubmissionsController(
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> SubmitCode([FromBody] SubmitCodeDto dto)
     {
+        await submitValidator.ValidateAndThrowAsync(dto);
+        
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var studentId))
