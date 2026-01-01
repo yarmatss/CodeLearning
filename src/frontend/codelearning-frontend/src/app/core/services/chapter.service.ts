@@ -18,12 +18,12 @@ export class ChapterService {
     return this.http.post<Chapter>(`/api/courses/${courseId}/chapters`, data);
   }
 
-  updateChapterOrder(chapterId: string, newOrderIndex: number): Observable<Chapter> {
-    return this.http.patch<Chapter>(`/api/courses/chapters/${chapterId}/order`, newOrderIndex);
+  updateChapterOrder(courseId: string, chapterId: string, newOrderIndex: number): Observable<Chapter> {
+    return this.http.patch<Chapter>(`/api/courses/${courseId}/chapters/${chapterId}/order`, newOrderIndex);
   }
 
-  deleteChapter(chapterId: string): Observable<{ message: string }> {
-    return this.http.delete<{ message: string }>(`/api/courses/chapters/${chapterId}`);
+  deleteChapter(courseId: string, chapterId: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`/api/courses/${courseId}/chapters/${chapterId}`);
   }
 
   // Subchapters
@@ -35,11 +35,11 @@ export class ChapterService {
     return this.http.post<Subchapter>(`/api/chapters/${chapterId}/subchapters`, data);
   }
 
-  updateSubchapterOrder(subchapterId: string, newOrderIndex: number): Observable<Subchapter> {
-    return this.http.patch<Subchapter>(`/api/chapters/subchapters/${subchapterId}/order`, newOrderIndex);
+  updateSubchapterOrder(chapterId: string, subchapterId: string, newOrderIndex: number): Observable<Subchapter> {
+    return this.http.patch<Subchapter>(`/api/chapters/${chapterId}/subchapters/${subchapterId}/order`, newOrderIndex);
   }
 
-  deleteSubchapter(subchapterId: string): Observable<{ message: string }> {
-    return this.http.delete<{ message: string }>(`/api/chapters/subchapters/${subchapterId}`);
+  deleteSubchapter(chapterId: string, subchapterId: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`/api/chapters/${chapterId}/subchapters/${subchapterId}`);
   }
 }

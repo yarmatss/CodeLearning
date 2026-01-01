@@ -150,14 +150,53 @@ export class CourseEditorComponent implements OnInit {
     });
   }
 
+  moveChapterUp(chapterId: string, currentIndex: number): void {
+    if (currentIndex === 1) return; // Already at the top (1-based indexing)
+
+    const courseId = this.course()?.id;
+    if (!courseId) return;
+
+    const newIndex = currentIndex - 1;
+    this.chapterService.updateChapterOrder(courseId, chapterId, newIndex).subscribe({
+      next: () => {
+        this.loadChapters(courseId);
+      },
+      error: (error: any) => {
+        this.errorMessage.set(error.error?.message || 'Failed to reorder chapter');
+      }
+    });
+  }
+
+  moveChapterDown(chapterId: string, currentIndex: number): void {
+    const maxIndex = this.chapters().length; // Max is count since 1-based
+    if (currentIndex === maxIndex) return; // Already at the bottom
+
+    const courseId = this.course()?.id;
+    if (!courseId) return;
+
+    const newIndex = currentIndex + 1;
+    this.chapterService.updateChapterOrder(courseId, chapterId, newIndex).subscribe({
+      next: () => {
+        this.loadChapters(courseId);
+      },
+      error: (error: any) => {
+        this.errorMessage.set(error.error?.message || 'Failed to reorder chapter');
+      }
+    });
+  }
+
   deleteChapter(chapterId: string): void {
     if (!confirm('Are you sure you want to delete this chapter? This will also delete all subchapters and blocks.')) {
       return;
     }
 
-    this.chapterService.deleteChapter(chapterId).subscribe({
+    const courseId = this.course()?.id;
+    if (!courseId) return;
+
+    this.chapterService.deleteChapter(courseId, chapterId).subscribe({
       next: () => {
-        this.chapters.update(chs => chs.filter(ch => ch.id !== chapterId));
+        // Reload chapters to get updated order indices from backend
+        this.loadChapters(courseId);
         this.successMessage.set('Chapter deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
@@ -177,7 +216,8 @@ export class CourseEditorComponent implements OnInit {
           this.router.navigate(['/courses', courseId]);
         },
         error: (error: any) => {
-          this.errorMessage.set(error.error?.message || 'Failed to publish course');
+          const errorMessage = error.error?.detail || error.error?.message || error.message || 'Failed to publish course';
+          this.errorMessage.set(errorMessage);
         }
       });
     }

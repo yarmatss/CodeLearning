@@ -101,7 +101,8 @@ export class CourseDetailComponent implements OnInit {
           this.canEdit.set(false);
         },
         error: (error: any) => {
-          this.errorMessage.set(error.error?.message || 'Failed to publish course');
+          const errorMessage = error.error?.detail || error.error?.message || error.message || 'Failed to publish course';
+          this.errorMessage.set(errorMessage);
         }
       });
     }
@@ -117,7 +118,8 @@ export class CourseDetailComponent implements OnInit {
           window.location.href = '/courses';
         },
         error: (error: any) => {
-          this.errorMessage.set(error.error?.message || 'Failed to delete course');
+          const errorMessage = error.error?.detail || error.error?.message || error.message || 'Failed to delete course';
+          this.errorMessage.set(errorMessage);
         }
       });
     }

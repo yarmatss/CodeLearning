@@ -1,0 +1,150 @@
+<div class="mx-auto max-w-5xl px-4 py-8">
+  @if (isLoading()) {
+    <div class="flex items-center justify-center py-12">
+      <p class="text-gray-500">Loading...</p>
+    </div>
+  } @else {
+    <!-- Header -->
+    <div class="mb-6 flex items-center justify-between">
+      <h1 class="text-3xl font-bold text-gray-900">Manage Chapter</h1>
+      <a
+        [routerLink]="['/courses', courseId, 'edit']"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+      >
+        ← Back to Course
+      </a>
+    </div>
+
+    <!-- Messages -->
+    @if (successMessage()) {
+      <div class="mb-6 rounded-md bg-green-50 p-4">
+        <p class="text-sm text-green-800">{{ successMessage() }}</p>
+      </div>
+    }
+    @if (errorMessage()) {
+      <div class="mb-6 rounded-md bg-red-50 p-4">
+        <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      </div>
+    }
+
+    <!-- Subchapters Section -->
+    <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-xl font-semibold text-gray-900">Subchapters</h2>
+        @if (!isAddingSubchapter()) {
+          <button
+            (click)="toggleAddSubchapter()"
+            class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+          >
+            + Add Subchapter
+          </button>
+        }
+      </div>
+
+      <!-- Add Subchapter Form -->
+      @if (isAddingSubchapter()) {
+        <form [formGroup]="subchapterForm" (ngSubmit)="addSubchapter()" class="mb-6 rounded-md bg-gray-50 p-4">
+          <div class="mb-3">
+            <label for="subchapterTitle" class="mb-1 block text-sm font-medium text-gray-700">
+              Subchapter Title
+            </label>
+            <input
+              id="subchapterTitle"
+              type="text"
+              formControlName="title"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="e.g., Introduction to Variables"
+            />
+            @if (subchapterForm.get('title')?.invalid && subchapterForm.get('title')?.touched) {
+              <p class="mt-1 text-sm text-red-600">Subchapter title must be at least 3 characters</p>
+            }
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="submit"
+              class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+            >
+              Add Subchapter
+            </button>
+            <button
+              type="button"
+              (click)="toggleAddSubchapter()"
+              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      }
+
+      <!-- Subchapters List -->
+      @if (subchapters().length === 0) {
+        <div class="rounded-md bg-gray-50 p-8 text-center">
+          <p class="text-gray-500">
+            No subchapters yet. Click "Add Subchapter" to create your first subchapter.
+          </p>
+        </div>
+      } @else {
+        <div class="space-y-3">
+          @for (subchapter of subchapters(); track subchapter.id) {
+            <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <h3 class="font-semibold text-gray-900">
+                    {{ subchapter.orderIndex }}. {{ subchapter.title }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-600">
+                    {{ subchapter.blocksCount }} block(s)
+                  </p>
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    (click)="moveSubchapterUp(subchapter.id, subchapter.orderIndex)"
+                    [disabled]="subchapter.orderIndex === 1"
+                    [class.opacity-50]="subchapter.orderIndex === 1"
+                    [class.cursor-not-allowed]="subchapter.orderIndex === 1"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    (click)="moveSubchapterDown(subchapter.id, subchapter.orderIndex)"
+                    [disabled]="subchapter.orderIndex === subchapters().length"
+                    [class.opacity-50]="subchapter.orderIndex === subchapters().length"
+                    [class.cursor-not-allowed]="subchapter.orderIndex === subchapters().length"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    class="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 opacity-50 cursor-not-allowed"
+                    title="Manage blocks (coming soon)"
+                    disabled
+                  >
+                    Blocks
+                  </button>
+                  <button
+                    (click)="deleteSubchapter(subchapter.id)"
+                    class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Info Box -->
+    <div class="mt-6 rounded-md bg-blue-50 p-4">
+      <p class="text-sm text-blue-800">
+        💡 <strong>Next steps:</strong> Add subchapters to organize content within this chapter. 
+        Each subchapter can contain learning blocks (theory, videos, quizzes, and coding problems).
+      </p>
+    </div>
+  }
+</div>

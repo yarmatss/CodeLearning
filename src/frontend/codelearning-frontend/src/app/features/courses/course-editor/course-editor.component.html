@@ -165,15 +165,35 @@
               <div class="flex items-start justify-between">
                 <div class="flex-1">
                   <h3 class="font-semibold text-gray-900">
-                    {{ chapter.orderIndex + 1 }}. {{ chapter.title }}
+                    {{ chapter.orderIndex }}. {{ chapter.title }}
                   </h3>
                   <p class="mt-1 text-sm text-gray-600">
                     {{ chapter.subchaptersCount }} subchapter(s)
                   </p>
                 </div>
                 <div class="flex gap-2">
+                  <button
+                    (click)="moveChapterUp(chapter.id, chapter.orderIndex)"
+                    [disabled]="chapter.orderIndex === 1"
+                    [class.opacity-50]="chapter.orderIndex === 1"
+                    [class.cursor-not-allowed]="chapter.orderIndex === 1"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    (click)="moveChapterDown(chapter.id, chapter.orderIndex)"
+                    [disabled]="chapter.orderIndex === chapters().length"
+                    [class.opacity-50]="chapter.orderIndex === chapters().length"
+                    [class.cursor-not-allowed]="chapter.orderIndex === chapters().length"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
                   <a
-                    [routerLink]="['/chapters', chapter.id, 'edit']"
+                    [routerLink]="['/courses', course()!.id, 'chapters', chapter.id, 'edit']"
                     class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
                   >
                     Manage
