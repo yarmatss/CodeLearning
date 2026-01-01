@@ -1,16 +1,45 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
+import { CourseService } from '../../core/services/course.service';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [],
-  template: `
-    <div class="mx-auto max-w-7xl px-4 py-8">
-      <h1 class="mb-6 text-3xl font-bold text-gray-900">Dashboard</h1>
-      <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <p class="text-gray-700">Welcome to CodeLearning! Your dashboard will appear here.</p>
-      </div>
-    </div>
-  `,
+  imports: [RouterLink],
+  templateUrl: './dashboard.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class DashboardComponent {}
+export class DashboardComponent implements OnInit {
+  readonly authService = inject(AuthService);
+  readonly courseService = inject(CourseService);
+  
+  readonly isLoading = signal(false);
+
+  ngOnInit(): void {
+    this.loadDashboardData();
+  }
+
+  loadDashboardData(): void {
+    this.isLoading.set(true);
+    
+    if (this.authService.isTeacher()) {
+      this.courseService.getMyCourses().subscribe({
+        next: () => {
+          this.isLoading.set(false);
+        },
+        error: () => {
+          this.isLoading.set(false);
+        }
+      });
+    } else {
+      this.courseService.getEnrolledCourses().subscribe({
+        next: () => {
+          this.isLoading.set(false);
+        },
+        error: () => {
+          this.isLoading.set(false);
+        }
+      });
+    }
+  }
+}

@@ -174,20 +174,10 @@ public class AuthController(
     private void SetTokenCookies(string accessToken, string refreshToken)
     {
         var jwtSettings = configuration.GetSection("JwtSettings");
-        var accessTokenExpirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "60");
         var refreshTokenExpirationDays = int.Parse(jwtSettings["RefreshTokenExpirationDays"] ?? "7");
 
+        // Both cookies expire with refresh token - JWT validation checks if access token is still valid
         var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = DateTimeOffset.UtcNow.AddMinutes(accessTokenExpirationMinutes)
-        };
-
-        Response.Cookies.Append("access_token", accessToken, cookieOptions);
-
-        var refreshCookieOptions = new CookieOptions
         {
             HttpOnly = true,
             Secure = true,
@@ -195,7 +185,8 @@ public class AuthController(
             Expires = DateTimeOffset.UtcNow.AddDays(refreshTokenExpirationDays)
         };
 
-        Response.Cookies.Append("refresh_token", refreshToken, refreshCookieOptions);
+        Response.Cookies.Append("access_token", accessToken, cookieOptions);
+        Response.Cookies.Append("refresh_token", refreshToken, cookieOptions);
     }
 
     private void ClearTokenCookies()

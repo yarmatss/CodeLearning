@@ -105,7 +105,7 @@ services:
       JwtSettings__SecretKey: "longlongkeyCodeLearningApiPW2025longlongkeyCodeLearningApiPW2025"
       JwtSettings__Issuer: "CodeLearningApi"
       JwtSettings__Audience: "CodeLearningClient"
-      JwtSettings__AccessTokenExpirationMinutes: "60"
+      JwtSettings__AccessTokenExpirationMinutes: "5"
       JwtSettings__RefreshTokenExpirationDays: "7"
     depends_on:
       postgres:

@@ -1,0 +1,89 @@
+<div class="mx-auto max-w-7xl px-4 py-8">
+  <div class="mb-6">
+    <h1 class="mb-2 text-3xl font-bold text-gray-900">
+      Welcome back, {{ authService.currentUser()?.firstName }}!
+    </h1>
+    <p class="text-gray-600">
+      @if (authService.isTeacher()) {
+        <span>Manage your courses and track student progress</span>
+      } @else {
+        <span>Continue your learning journey</span>
+      }
+    </p>
+  </div>
+
+  @if (isLoading()) {
+    <div class="flex items-center justify-center py-12">
+      <p class="text-gray-500">Loading...</p>
+    </div>
+  } @else {
+    <div class="grid gap-6 md:grid-cols-3">
+      <!-- Quick Stats -->
+      @if (authService.isTeacher()) {
+        <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 class="mb-2 text-sm font-medium text-gray-500">My Courses</h3>
+          <p class="text-3xl font-bold text-gray-900">{{ courseService.courses().length }}</p>
+        </div>
+      } @else {
+        <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 class="mb-2 text-sm font-medium text-gray-500">Enrolled Courses</h3>
+          <p class="text-3xl font-bold text-gray-900">0</p>
+        </div>
+      }
+
+      <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h3 class="mb-2 text-sm font-medium text-gray-500">
+          @if (authService.isTeacher()) {
+            <span>Total Students</span>
+          } @else {
+            <span>Completed</span>
+          }
+        </h3>
+        <p class="text-3xl font-bold text-gray-900">0</p>
+      </div>
+
+      <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h3 class="mb-2 text-sm font-medium text-gray-500">
+          @if (authService.isTeacher()) {
+            <span>Published Courses</span>
+          } @else {
+            <span>In Progress</span>
+          }
+        </h3>
+        <p class="text-3xl font-bold text-gray-900">0</p>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="mt-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 class="mb-4 text-xl font-semibold text-gray-900">Quick Actions</h2>
+      <div class="flex flex-wrap gap-3">
+        <a
+          routerLink="/courses"
+          class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+        >
+          @if (authService.isTeacher()) {
+            <span>View My Courses</span>
+          } @else {
+            <span>Browse Courses</span>
+          }
+        </a>
+
+        @if (authService.isTeacher()) {
+          <a
+            routerLink="/courses/create"
+            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+          >
+            Create New Course
+          </a>
+        }
+      </div>
+    </div>
+
+    <!-- Recent Activity (Placeholder) -->
+    <div class="mt-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 class="mb-4 text-xl font-semibold text-gray-900">Recent Activity</h2>
+      <p class="text-gray-500">No recent activity to display.</p>
+    </div>
+  }
+</div>
