@@ -9,6 +9,7 @@ import { CourseDetailComponent } from './features/courses/course-detail/course-d
 import { CreateCourseComponent } from './features/courses/create-course/create-course.component';
 import { CourseEditorComponent } from './features/courses/course-editor/course-editor.component';
 import { ChapterEditor } from './features/courses/chapter-editor/chapter-editor';
+import { SubchapterEditor } from './features/courses/subchapter-editor/subchapter-editor';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
@@ -42,6 +43,11 @@ export const routes: Routes = [
   {
     path: 'courses/:courseId/chapters/:chapterId/edit',
     component: ChapterEditor,
+    canActivate: [authGuard, teacherGuard]
+  },
+  {
+    path: 'courses/:courseId/chapters/:chapterId/subchapters/:subchapterId/edit',
+    component: SubchapterEditor,
     canActivate: [authGuard, teacherGuard]
   }
 ];

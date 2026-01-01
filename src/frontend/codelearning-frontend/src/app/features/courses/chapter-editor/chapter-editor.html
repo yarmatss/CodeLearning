@@ -118,13 +118,12 @@
                   >
                     ↓
                   </button>
-                  <button
-                    class="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 opacity-50 cursor-not-allowed"
-                    title="Manage blocks (coming soon)"
-                    disabled
+                  <a
+                    [routerLink]="['/courses', courseId, 'chapters', chapterId, 'subchapters', subchapter.id, 'edit']"
+                    class="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700"
                   >
                     Blocks
-                  </button>
+                  </a>
                   <button
                     (click)="deleteSubchapter(subchapter.id)"
                     class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"

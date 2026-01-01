@@ -1,0 +1,432 @@
+<div class="mx-auto max-w-5xl px-4 py-8">
+  @if (isLoading()) {
+    <div class="flex items-center justify-center py-12">
+      <p class="text-gray-500">Loading...</p>
+    </div>
+  } @else {
+    <!-- Header -->
+    <div class="mb-6 flex items-center justify-between">
+      <h1 class="text-3xl font-bold text-gray-900">Manage Blocks</h1>
+      <a
+        [routerLink]="['/courses', courseId, 'chapters', chapterId, 'edit']"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+      >
+        ← Back to Subchapters
+      </a>
+    </div>
+
+    <!-- Messages -->
+    @if (successMessage()) {
+      <div class="mb-6 rounded-md bg-green-50 p-4">
+        <p class="text-sm text-green-800">{{ successMessage() }}</p>
+      </div>
+    }
+    @if (errorMessage()) {
+      <div class="mb-6 rounded-md bg-red-50 p-4">
+        <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      </div>
+    }
+
+    <!-- Blocks Section -->
+    <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-xl font-semibold text-gray-900">Learning Blocks</h2>
+        @if (!isAddingBlock()) {
+          <button
+            (click)="toggleAddBlock()"
+            class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+          >
+            + Add Block
+          </button>
+        }
+      </div>
+
+      <!-- Add Block Form -->
+      @if (isAddingBlock()) {
+        <form [formGroup]="blockForm" (ngSubmit)="addBlock()" class="mb-6 rounded-md bg-gray-50 p-4">
+          <!-- Block Type Selection -->
+          <div class="mb-4">
+            <label class="mb-2 block text-sm font-medium text-gray-700">Block Type</label>
+            <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <button
+                type="button"
+                (click)="onBlockTypeChange(BlockType.Theory)"
+                [class.ring-2]="selectedBlockType() === BlockType.Theory"
+                [class.ring-blue-500]="selectedBlockType() === BlockType.Theory"
+                class="rounded-md border border-gray-300 bg-white p-3 text-center hover:bg-gray-50"
+              >
+                📖 Theory
+              </button>
+              <button
+                type="button"
+                (click)="onBlockTypeChange(BlockType.Video)"
+                [class.ring-2]="selectedBlockType() === BlockType.Video"
+                [class.ring-purple-500]="selectedBlockType() === BlockType.Video"
+                class="rounded-md border border-gray-300 bg-white p-3 text-center hover:bg-gray-50"
+              >
+                🎥 Video
+              </button>
+              <button
+                type="button"
+                (click)="onBlockTypeChange(BlockType.Quiz)"
+                [class.ring-2]="selectedBlockType() === BlockType.Quiz"
+                [class.ring-green-500]="selectedBlockType() === BlockType.Quiz"
+                class="rounded-md border border-gray-300 bg-white p-3 text-center hover:bg-gray-50"
+              >
+                ✅ Quiz
+              </button>
+              <button
+                type="button"
+                (click)="onBlockTypeChange(BlockType.Problem)"
+                [class.ring-2]="selectedBlockType() === BlockType.Problem"
+                [class.ring-orange-500]="selectedBlockType() === BlockType.Problem"
+                class="rounded-md border border-gray-300 bg-white p-3 text-center hover:bg-gray-50"
+              >
+                💻 Problem
+              </button>
+            </div>
+          </div>
+
+          @if (selectedBlockType() !== null) {
+            <!-- Title -->
+            <div class="mb-3">
+              <label for="blockTitle" class="mb-1 block text-sm font-medium text-gray-700">Title</label>
+              <input
+                id="blockTitle"
+                type="text"
+                formControlName="title"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="e.g., Introduction to Variables"
+              />
+            </div>
+
+            <!-- Theory Content -->
+            @if (selectedBlockType() === BlockType.Theory) {
+              <div class="mb-3">
+                <label for="theoryContent" class="mb-1 block text-sm font-medium text-gray-700">Content (Markdown)</label>
+                <textarea
+                  id="theoryContent"
+                  formControlName="theoryContent"
+                  rows="6"
+                  class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Enter your theory content in Markdown format..."
+                ></textarea>
+              </div>
+            }
+
+            <!-- Video URL -->
+            @if (selectedBlockType() === BlockType.Video) {
+              <div class="mb-3">
+                <label for="videoUrl" class="mb-1 block text-sm font-medium text-gray-700">Video URL</label>
+                <input
+                  id="videoUrl"
+                  type="url"
+                  formControlName="videoUrl"
+                  class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="https://youtube.com/watch?v=..."
+                />
+              </div>
+            }
+
+            <!-- Quiz (Coming soon placeholder) -->
+            @if (selectedBlockType() === BlockType.Quiz) {
+              <div class="rounded-md bg-yellow-50 p-4">
+                <p class="text-sm text-yellow-800">Quiz builder coming soon! For now, quizzes can only be created via API.</p>
+              </div>
+            }
+
+            <!-- Problem Fields -->
+            @if (selectedBlockType() === BlockType.Problem) {
+              <div class="mb-4 space-y-3">
+                <!-- Toggle between select existing or create new -->
+                <div class="flex gap-2">
+                  <button
+                    type="button"
+                    (click)="isCreatingNewProblem.set(false)"
+                    [class.bg-blue-600]="!isCreatingNewProblem()"
+                    [class.text-white]="!isCreatingNewProblem()"
+                    [class.bg-gray-200]="isCreatingNewProblem()"
+                    [class.text-gray-700]="isCreatingNewProblem()"
+                    class="flex-1 rounded-md px-4 py-2 text-sm font-medium"
+                  >
+                    Select Existing Problem
+                  </button>
+                  <button
+                    type="button"
+                    (click)="isCreatingNewProblem.set(true)"
+                    [class.bg-blue-600]="isCreatingNewProblem()"
+                    [class.text-white]="isCreatingNewProblem()"
+                    [class.bg-gray-200]="!isCreatingNewProblem()"
+                    [class.text-gray-700]="!isCreatingNewProblem()"
+                    class="flex-1 rounded-md px-4 py-2 text-sm font-medium"
+                  >
+                    Create New Problem
+                  </button>
+                </div>
+
+                <!-- Select Existing Problem -->
+                @if (!isCreatingNewProblem()) {
+                  <div>
+                    @if (isLoadingProblems()) {
+                      <p class="text-sm text-gray-500">Loading your problems...</p>
+                    } @else if (myProblems().length === 0) {
+                      <div class="rounded-md bg-yellow-50 p-3">
+                        <p class="text-sm text-yellow-800">You haven't created any problems yet. Create a new problem or switch to "Create New Problem" mode.</p>
+                      </div>
+                    } @else {
+                      <label class="mb-1 block text-sm font-medium text-gray-700">Select Problem</label>
+                      <select
+                        formControlName="problemId"
+                        (change)="onProblemSelect($any($event.target).value)"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">-- Select a problem --</option>
+                        @for (problem of myProblems(); track problem.id) {
+                          <option [value]="problem.id">
+                            {{ problem.title }} ({{ problem.difficulty }})
+                          </option>
+                        }
+                      </select>
+                      
+                      @if (selectedProblemId()) {
+                        <div class="mt-2 rounded-md bg-blue-50 p-3">
+                          @for (problem of myProblems(); track problem.id) {
+                            @if (problem.id === selectedProblemId()) {
+                              <p class="text-sm text-blue-800"><strong>{{ problem.title }}</strong></p>
+                              <p class="mt-1 text-xs text-blue-700">Difficulty: {{ problem.difficulty }}</p>
+                            }
+                          }
+                        </div>
+                      }
+                    }
+                  </div>
+                }
+
+                <!-- Create New Problem -->
+                @if (isCreatingNewProblem()) {
+                  <div class="space-y-3">
+                    <div>
+                      <label for="newProblemTitle" class="mb-1 block text-sm font-medium text-gray-700">Problem Title</label>
+                      <input
+                        id="newProblemTitle"
+                        type="text"
+                        formControlName="newProblemTitle"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="e.g., Two Sum"
+                      />
+                      <p class="mt-1 text-xs text-gray-500">Leave empty to use block title</p>
+                    </div>
+                    
+                    <div>
+                      <label for="newProblemDescription" class="mb-1 block text-sm font-medium text-gray-700">Problem Description (Markdown)</label>
+                      <textarea
+                        id="newProblemDescription"
+                        formControlName="newProblemDescription"
+                        rows="6"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Describe the coding problem with examples..."
+                      ></textarea>
+                    </div>
+                    
+                    <div>
+                      <label for="newProblemDifficulty" class="mb-1 block text-sm font-medium text-gray-700">Difficulty</label>
+                      <select
+                        id="newProblemDifficulty"
+                        formControlName="newProblemDifficulty"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                      </select>
+                    </div>
+
+                    <!-- Test Cases -->
+                    <div>
+                      <div class="mb-2 flex items-center justify-between">
+                        <label class="block text-sm font-medium text-gray-700">Test Cases *</label>
+                        <button
+                          type="button"
+                          (click)="addTestCase()"
+                          class="rounded-md bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
+                        >
+                          + Add Test Case
+                        </button>
+                      </div>
+                      
+                      @if (testCases.length === 0) {
+                        <div class="rounded-md bg-yellow-50 p-3">
+                          <p class="text-xs text-yellow-800">At least one test case is required. Click "Add Test Case" to add one.</p>
+                        </div>
+                      } @else {
+                        <div class="space-y-3" formArrayName="testCases">
+                          @for (testCase of testCases.controls; track $index; let i = $index) {
+                            <div [formGroupName]="i" class="rounded-md border border-gray-300 bg-gray-50 p-3">
+                              <div class="mb-2 flex items-center justify-between">
+                                <span class="text-xs font-medium text-gray-700">Test Case #{{ i + 1 }}</span>
+                                <button
+                                  type="button"
+                                  (click)="removeTestCase(i)"
+                                  class="text-xs text-red-600 hover:text-red-700"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              
+                              <div class="mb-2">
+                                <label class="mb-1 block text-xs font-medium text-gray-700">Input</label>
+                                <textarea
+                                  formControlName="input"
+                                  rows="2"
+                                  class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  placeholder="e.g., [2,7,11,15]\n9"
+                                ></textarea>
+                              </div>
+                              
+                              <div class="mb-2">
+                                <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output</label>
+                                <textarea
+                                  formControlName="expectedOutput"
+                                  rows="2"
+                                  class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  placeholder="e.g., [0,1]"
+                                ></textarea>
+                              </div>
+                              
+                              <div class="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  formControlName="isPublic"
+                                  id="isPublic{{ i }}"
+                                  class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <label for="isPublic{{ i }}" class="ml-2 text-xs text-gray-700">
+                                  Public (visible to students)
+                                </label>
+                              </div>
+                            </div>
+                          }
+                        </div>
+                        
+                        <p class="mt-2 text-xs text-gray-500">
+                          💡 At least one test case must be public. Private test cases are used for hidden validation.
+                        </p>
+                      }
+                    </div>
+                  </div>
+                }
+              </div>
+            }
+
+            <div class="flex gap-2">
+              <button
+                type="submit"
+                [disabled]="selectedBlockType() === BlockType.Quiz"
+                class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                @if (selectedBlockType() === BlockType.Problem && isCreatingNewProblem()) {
+                  Create Problem & Add Block
+                } @else {
+                  Add Block
+                }
+              </button>
+              <button
+                type="button"
+                (click)="toggleAddBlock()"
+                class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          }
+        </form>
+      }
+
+      <!-- Blocks List -->
+      @if (blocks().length === 0) {
+        <div class="rounded-md bg-gray-50 p-8 text-center">
+          <p class="text-gray-500">
+            No blocks yet. Click "Add Block" to create your first learning block.
+          </p>
+        </div>
+      } @else {
+        <div class="space-y-3">
+          @for (block of blocks(); track block.id) {
+            <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium text-gray-600">{{ block.orderIndex }}.</span>
+                    <h3 class="font-semibold text-gray-900">{{ block.title }}</h3>
+                    <span [class]="'rounded-full px-2 py-1 text-xs font-semibold ' + getBlockTypeBadgeClass(block.type)">
+                      {{ getBlockTypeLabel(block.type) }}
+                    </span>
+                  </div>
+                  
+                  <!-- Show additional info based on block type -->
+                  @if (block.type === BlockType.Problem && block.problem) {
+                    <div class="mt-2 text-sm text-gray-600">
+                      <p><strong>Problem:</strong> {{ block.problem.description.substring(0, 100) }}{{ block.problem.description.length > 100 ? '...' : '' }}</p>
+                      <p class="mt-1">
+                        <span class="inline-flex items-center">
+                          Difficulty: 
+                          <span 
+                            [class]="block.problem.difficulty === 'Easy' ? 'ml-1 text-green-600' : 
+                                     block.problem.difficulty === 'Medium' ? 'ml-1 text-yellow-600' : 
+                                     'ml-1 text-red-600'"
+                          >
+                            {{ block.problem.difficulty }}
+                          </span>
+                        </span>
+                      </p>
+                    </div>
+                  }
+                  
+                  @if (block.type === BlockType.Video && block.videoContent) {
+                    <div class="mt-2 text-sm text-gray-600">
+                      <p><strong>URL:</strong> {{ block.videoContent.url }}</p>
+                    </div>
+                  }
+                  
+                  @if (block.type === BlockType.Theory && block.theoryContent) {
+                    <div class="mt-2 text-sm text-gray-600">
+                      <p>{{ block.theoryContent.content.substring(0, 100) }}{{ block.theoryContent.content.length > 100 ? '...' : '' }}</p>
+                    </div>
+                  }
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    (click)="moveBlockUp(block.id, block.orderIndex)"
+                    [disabled]="block.orderIndex === 1"
+                    [class.opacity-50]="block.orderIndex === 1"
+                    [class.cursor-not-allowed]="block.orderIndex === 1"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    (click)="moveBlockDown(block.id, block.orderIndex)"
+                    [disabled]="block.orderIndex === blocks().length"
+                    [class.opacity-50]="block.orderIndex === blocks().length"
+                    [class.cursor-not-allowed]="block.orderIndex === blocks().length"
+                    class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:hover:bg-gray-600"
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    (click)="deleteBlock(block.id)"
+                    class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  }
+</div>
