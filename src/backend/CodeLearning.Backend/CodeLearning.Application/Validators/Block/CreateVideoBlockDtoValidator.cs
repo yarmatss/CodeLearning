@@ -6,7 +6,7 @@ namespace CodeLearning.Application.Validators.Block;
 
 public partial class CreateVideoBlockDtoValidator : AbstractValidator<CreateVideoBlockDto>
 {
-    [GeneratedRegex(@"^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(&.*)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11}).*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex YouTubeUrlRegex();
 
     public CreateVideoBlockDtoValidator()

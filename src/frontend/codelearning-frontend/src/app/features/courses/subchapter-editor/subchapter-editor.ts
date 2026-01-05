@@ -6,7 +6,10 @@ import {
   BlockService, 
   CreateTheoryBlockRequest, 
   CreateVideoBlockRequest, 
-  CreateProblemBlockRequest 
+  CreateProblemBlockRequest,
+  CreateQuizBlockRequest,
+  CreateQuizQuestionRequest,
+  CreateQuizAnswerRequest
 } from '../../../core/services/block.service';
 import { ProblemService, ProblemResponse, CreateProblemRequest } from '../../../core/services/problem.service';
 import { Block, BlockType } from '../../../core/models/course.model';
@@ -49,6 +52,10 @@ export class SubchapterEditor implements OnInit {
     return this.blockForm.get('testCases') as FormArray;
   }
 
+  get questions(): FormArray {
+    return this.blockForm.get('questions') as FormArray;
+  }
+
   constructor() {
     this.blockForm = this.fb.group({
       title: ['', [Validators.required, Validators.minLength(3)]],
@@ -63,7 +70,9 @@ export class SubchapterEditor implements OnInit {
       newProblemDescription: [''],
       newProblemDifficulty: ['Easy'],
       // Test cases for new problems
-      testCases: this.fb.array([])
+      testCases: this.fb.array([]),
+      // Quiz fields
+      questions: this.fb.array([])
     });
   }
 
@@ -96,6 +105,7 @@ export class SubchapterEditor implements OnInit {
     if (!this.isAddingBlock()) {
       this.blockForm.reset();
       this.testCases.clear();
+      this.questions.clear();
       this.selectedBlockType.set(null);
       this.selectedProblemId.set(null);
       this.isCreatingNewProblem.set(false);
@@ -106,9 +116,31 @@ export class SubchapterEditor implements OnInit {
     this.selectedBlockType.set(type);
     this.blockForm.patchValue({ type });
     
+    // Clear validators for all type-specific fields first
+    this.blockForm.get('theoryContent')?.clearValidators();
+    this.blockForm.get('videoUrl')?.clearValidators();
+    this.blockForm.get('problemId')?.clearValidators();
+    
+    // Set validators based on selected type
+    if (type === BlockType.Theory) {
+      this.blockForm.get('theoryContent')?.setValidators([Validators.required]);
+    } else if (type === BlockType.Video) {
+      this.blockForm.get('videoUrl')?.setValidators([Validators.required]);
+    }
+    
+    // Update validity
+    this.blockForm.get('theoryContent')?.updateValueAndValidity();
+    this.blockForm.get('videoUrl')?.updateValueAndValidity();
+    this.blockForm.get('problemId')?.updateValueAndValidity();
+    
     // Load teacher's problems when Problem type is selected
     if (type === BlockType.Problem && this.myProblems().length === 0) {
       this.loadMyProblems();
+    }
+    
+    // Add initial question when Quiz type is selected
+    if (type === BlockType.Quiz && this.questions.length === 0) {
+      this.addQuestion();
     }
   }
 
@@ -149,20 +181,125 @@ export class SubchapterEditor implements OnInit {
     this.testCases.removeAt(index);
   }
 
+  // Quiz management methods
+  addQuestion(): void {
+    const questionGroup = this.fb.group({
+      questionText: ['', Validators.required],
+      type: ['SingleChoice', Validators.required],
+      points: [1, [Validators.required, Validators.min(1)]],
+      explanation: [''],
+      answers: this.fb.array([])
+    });
+    this.questions.push(questionGroup);
+    // Add two default answers
+    this.addAnswer(this.questions.length - 1);
+    this.addAnswer(this.questions.length - 1);
+  }
+
+  removeQuestion(index: number): void {
+    this.questions.removeAt(index);
+  }
+
+  getAnswers(questionIndex: number): FormArray {
+    return this.questions.at(questionIndex).get('answers') as FormArray;
+  }
+
+  addAnswer(questionIndex: number): void {
+    const answersArray = this.getAnswers(questionIndex);
+    const answerGroup = this.fb.group({
+      answerText: ['', Validators.required],
+      isCorrect: [false]
+    });
+    answersArray.push(answerGroup);
+  }
+
+  removeAnswer(questionIndex: number, answerIndex: number): void {
+    const answersArray = this.getAnswers(questionIndex);
+    answersArray.removeAt(answerIndex);
+  }
+
+  onQuestionTypeChange(questionIndex: number, type: string): void {
+    const questionGroup = this.questions.at(questionIndex);
+    questionGroup.patchValue({ type });
+    
+    console.log(`Question ${questionIndex} type changed to:`, type);
+    console.log('Question form value:', questionGroup.value);
+    
+    // For TrueFalse, ensure exactly 2 answers (True/False)
+    if (type === 'TrueFalse') {
+      const answersArray = this.getAnswers(questionIndex);
+      answersArray.clear();
+      
+      const trueAnswer = this.fb.group({
+        answerText: ['True'],
+        isCorrect: [false]
+      });
+      const falseAnswer = this.fb.group({
+        answerText: ['False'],
+        isCorrect: [false]
+      });
+      answersArray.push(trueAnswer);
+      answersArray.push(falseAnswer);
+    }
+    
+    // For SingleChoice, ensure only one answer is marked correct
+    if (type === 'SingleChoice') {
+      this.ensureSingleCorrectAnswer(questionIndex);
+    }
+  }
+
+  onSingleChoiceChange(questionIndex: number, answerIndex: number): void {
+    const answersArray = this.getAnswers(questionIndex);
+    
+    // Uncheck all answers first
+    for (let i = 0; i < answersArray.length; i++) {
+      answersArray.at(i).patchValue({ isCorrect: false });
+    }
+    
+    // Check only the selected answer
+    answersArray.at(answerIndex).patchValue({ isCorrect: true });
+  }
+
+  private ensureSingleCorrectAnswer(questionIndex: number): void {
+    const answersArray = this.getAnswers(questionIndex);
+    let foundCorrect = false;
+    
+    for (let i = 0; i < answersArray.length; i++) {
+      const isCorrect = answersArray.at(i).get('isCorrect')?.value;
+      if (isCorrect && !foundCorrect) {
+        foundCorrect = true;
+      } else if (isCorrect && foundCorrect) {
+        // Uncheck additional correct answers
+        answersArray.at(i).patchValue({ isCorrect: false });
+      }
+    }
+  }
+
   onProblemSelect(problemId: string): void {
     this.selectedProblemId.set(problemId);
     this.isCreatingNewProblem.set(false);
   }
 
   addBlock(): void {
-    if (this.blockForm.invalid) {
-      this.blockForm.markAllAsTouched();
-      return;
+    // For Quiz type, validate questions separately
+    const formValue = this.blockForm.value;
+    
+    if (formValue.type === BlockType.Quiz) {
+      // Only validate title and type for Quiz
+      if (!formValue.title || formValue.title.length < 3) {
+        this.errorMessage.set('Title is required (minimum 3 characters)');
+        this.blockForm.markAllAsTouched();
+        return;
+      }
+    } else {
+      // For other types, use standard validation
+      if (this.blockForm.invalid) {
+        this.blockForm.markAllAsTouched();
+        return;
+      }
     }
 
     this.errorMessage.set('');
-
-    const formValue = this.blockForm.value;
     let request$;
 
     // Call type-specific endpoint
@@ -181,6 +318,44 @@ export class SubchapterEditor implements OnInit {
           videoUrl: formValue.videoUrl || ''
         };
         request$ = this.blockService.addVideoBlock(this.subchapterId, videoRequest);
+        break;
+      
+      case BlockType.Quiz:
+        // Validate questions
+        if (this.questions.length === 0) {
+          this.errorMessage.set('At least one question is required');
+          return;
+        }
+        
+        // Validate each question has at least one correct answer
+        for (let i = 0; i < this.questions.length; i++) {
+          const answers = this.getAnswers(i);
+          if (answers.length < 2) {
+            this.errorMessage.set(`Question ${i + 1} must have at least 2 answers`);
+            return;
+          }
+          
+          const hasCorrectAnswer = answers.controls.some(a => a.get('isCorrect')?.value === true);
+          if (!hasCorrectAnswer) {
+            this.errorMessage.set(`Question ${i + 1} must have at least one correct answer`);
+            return;
+          }
+        }
+        
+        const quizRequest: CreateQuizBlockRequest = {
+          title: formValue.title,
+          questions: this.questions.value.map((q: any) => ({
+            questionText: q.questionText,
+            type: q.type,
+            points: q.points,
+            explanation: q.explanation || null,
+            answers: q.answers.map((a: any) => ({
+              answerText: a.answerText,
+              isCorrect: a.isCorrect
+            }))
+          }))
+        };
+        request$ = this.blockService.addQuizBlock(this.subchapterId, quizRequest);
         break;
       
       case BlockType.Problem:
@@ -225,12 +400,12 @@ export class SubchapterEditor implements OnInit {
                   this.loadMyProblems(); // Refresh problems list
                 },
                 error: (error: any) => {
-                  this.errorMessage.set(error.error?.detail || 'Failed to create block');
+                  this.errorMessage.set(this.extractErrorMessage(error));
                 }
               });
             },
             error: (error: any) => {
-              this.errorMessage.set(error.error?.detail || 'Failed to create problem');
+              this.errorMessage.set(this.extractErrorMessage(error));
             }
           });
           return; // Exit early since we handle response in nested subscribe
@@ -258,6 +433,8 @@ export class SubchapterEditor implements OnInit {
     request$.subscribe({
       next: (block) => {
         this.blockForm.reset();
+        this.testCases.clear();
+        this.questions.clear();
         this.isAddingBlock.set(false);
         this.selectedBlockType.set(null);
         this.successMessage.set('Block added successfully');
@@ -266,7 +443,7 @@ export class SubchapterEditor implements OnInit {
         this.loadBlocks();
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.detail || error.error?.message || 'Failed to add block');
+        this.errorMessage.set(this.extractErrorMessage(error));
       }
     });
   }
@@ -335,5 +512,54 @@ export class SubchapterEditor implements OnInit {
       case BlockType.Problem: return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  }
+
+  getTotalQuizPoints(quiz: any): number {
+    if (!quiz || !quiz.questions) return 0;
+    return quiz.questions.reduce((sum: number, q: any) => sum + (q.points || 0), 0);
+  }
+
+  private extractErrorMessage(error: any): string {
+    // Check for detailed validation errors
+    if (error.error?.errors) {
+      const errorMessages: string[] = [];
+      Object.keys(error.error.errors).forEach(key => {
+        const messages = error.error.errors[key];
+        if (Array.isArray(messages)) {
+          // Parse field path to make it more readable
+          const fieldPath = this.formatFieldPath(key);
+          messages.forEach(msg => {
+            errorMessages.push(`${fieldPath}: ${msg}`);
+          });
+        }
+      });
+      if (errorMessages.length > 0) {
+        return errorMessages.join('\n');
+      }
+    }
+    // Fallback to generic message
+    return error.error?.detail || error.error?.message || 'An error occurred';
+  }
+
+  private formatFieldPath(path: string): string {
+    // Convert "questions[0].Answers[1].AnswerText" to "Question 1, Answer 2"
+    const questionMatch = path.match(/questions\[(\d+)\]/);
+    const answerMatch = path.match(/Answers\[(\d+)\]/);
+    const fieldMatch = path.match(/\.([^.\[]+)$/);
+
+    let result = '';
+    if (questionMatch) {
+      const questionNum = parseInt(questionMatch[1]) + 1;
+      result += `Question ${questionNum}`;
+    }
+    if (answerMatch) {
+      const answerNum = parseInt(answerMatch[1]) + 1;
+      result += result ? `, Answer ${answerNum}` : `Answer ${answerNum}`;
+    }
+    if (fieldMatch && !answerMatch && !questionMatch) {
+      result = fieldMatch[1];
+    }
+
+    return result || path;
   }
 }

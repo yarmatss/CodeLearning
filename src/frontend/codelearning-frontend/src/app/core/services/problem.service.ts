@@ -8,13 +8,29 @@ export interface ProblemResponse {
   description: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   authorId: string;
-  authorName: string;
-  testCasesCount: number;
-  starterCodesCount: number;
-  tags: ProblemTag[];
+  authorName?: string;
+  createdAt: Date;
+  testCases: TestCaseResponse[];
+  starterCodes: StarterCodeResponse[];
+  tags: TagResponse[];
 }
 
-export interface ProblemTag {
+export interface TestCaseResponse {
+  id: string;
+  input: string;
+  expectedOutput: string;
+  isPublic: boolean;
+  orderIndex: number;
+}
+
+export interface StarterCodeResponse {
+  id: string;
+  code: string;
+  languageId: string;
+  languageName: string;
+}
+
+export interface TagResponse {
   id: string;
   name: string;
 }
@@ -28,15 +44,35 @@ export interface CreateProblemRequest {
   tagIds?: string[];
 }
 
+export interface UpdateProblemRequest {
+  title: string;
+  description: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+}
+
 export interface CreateTestCaseRequest {
   input: string;
   expectedOutput: string;
   isPublic: boolean;
 }
 
+export interface UpdateTestCaseRequest {
+  input: string;
+  expectedOutput: string;
+  isPublic: boolean;
+}
+
+export interface BulkAddTestCasesRequest {
+  testCases: CreateTestCaseRequest[];
+}
+
+export interface ReorderTestCasesRequest {
+  testCaseIds: string[];
+}
+
 export interface CreateStarterCodeRequest {
-  languageId: string;
   code: string;
+  languageId: string;
 }
 
 @Injectable({
@@ -45,6 +81,7 @@ export interface CreateStarterCodeRequest {
 export class ProblemService {
   private readonly http = inject(HttpClient);
 
+  // Problem CRUD
   getProblems(difficulty?: string, tagId?: string, search?: string): Observable<ProblemResponse[]> {
     let params: any = {};
     if (difficulty) params.difficulty = difficulty;
@@ -66,11 +103,41 @@ export class ProblemService {
     return this.http.post<ProblemResponse>('/api/problems', data);
   }
 
-  updateProblem(id: string, data: CreateProblemRequest): Observable<ProblemResponse> {
+  updateProblem(id: string, data: UpdateProblemRequest): Observable<ProblemResponse> {
     return this.http.put<ProblemResponse>(`/api/problems/${id}`, data);
   }
 
   deleteProblem(id: string): Observable<{ message: string }> {
     return this.http.delete<{ message: string }>(`/api/problems/${id}`);
+  }
+
+  // Test Cases
+  addTestCase(problemId: string, data: CreateTestCaseRequest): Observable<TestCaseResponse> {
+    return this.http.post<TestCaseResponse>(`/api/problems/${problemId}/testcases`, data);
+  }
+
+  bulkAddTestCases(problemId: string, data: BulkAddTestCasesRequest): Observable<TestCaseResponse[]> {
+    return this.http.post<TestCaseResponse[]>(`/api/problems/${problemId}/testcases/bulk`, data);
+  }
+
+  updateTestCase(testCaseId: string, data: UpdateTestCaseRequest): Observable<TestCaseResponse> {
+    return this.http.put<TestCaseResponse>(`/api/problems/testcases/${testCaseId}`, data);
+  }
+
+  deleteTestCase(testCaseId: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`/api/problems/testcases/${testCaseId}`);
+  }
+
+  reorderTestCases(problemId: string, data: ReorderTestCasesRequest): Observable<TestCaseResponse[]> {
+    return this.http.put<TestCaseResponse[]>(`/api/problems/${problemId}/testcases/reorder`, data);
+  }
+
+  // Starter Codes
+  addStarterCode(problemId: string, data: CreateStarterCodeRequest): Observable<StarterCodeResponse> {
+    return this.http.post<StarterCodeResponse>(`/api/problems/${problemId}/startercodes`, data);
+  }
+
+  deleteStarterCode(starterCodeId: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`/api/problems/startercodes/${starterCodeId}`);
   }
 }

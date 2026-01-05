@@ -124,7 +124,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         }
 
         var quiz = attempt.Quiz;
-        var maxScore = quiz.Questions.Count;
+        var maxScore = quiz.Questions.Sum(q => q.Points);
 
         var questionResults = new List<QuestionResultDto>();
 
@@ -148,6 +148,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 QuestionContent = question.Content,
                 QuestionType = question.Type.ToString(),
                 IsCorrect = isCorrect,
+                Points = question.Points,
                 SelectedAnswerIds = selectedAnswerIds,
                 Answers = question.Answers.Select(a => new AnswerFeedbackDto
                 {
@@ -160,7 +161,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
             });
         }
 
-        var score = questionResults.Count(qr => qr.IsCorrect);
+        var score = questionResults.Where(qr => qr.IsCorrect).Sum(qr => qr.Points);
         var percentage = maxScore > 0 ? (double)score / maxScore * 100 : 0;
 
         return new QuizAttemptResultDto
@@ -220,7 +221,8 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         SubmitQuizDto dto)
     {
         var results = new List<QuestionResultDto>();
-        var correctCount = 0;
+        var earnedPoints = 0;
+        var maxPoints = quiz.Questions.Sum(q => q.Points);
 
         foreach (var question in quiz.Questions)
         {
@@ -238,7 +240,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
             if (isCorrect)
             {
-                correctCount++;
+                earnedPoints += question.Points;
             }
 
             results.Add(new QuestionResultDto
@@ -247,6 +249,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 QuestionContent = question.Content,
                 QuestionType = question.Type.ToString(),
                 IsCorrect = isCorrect,
+                Points = question.Points,
                 SelectedAnswerIds = studentAnswer.SelectedAnswerIds,
                 Answers = question.Answers.Select(a => new AnswerFeedbackDto
                 {
@@ -259,6 +262,6 @@ public class QuizService(ApplicationDbContext context) : IQuizService
             });
         }
 
-        return (correctCount, quiz.Questions.Count, results);
+        return (earnedPoints, maxPoints, results);
     }
 }

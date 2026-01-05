@@ -128,10 +128,161 @@
               </div>
             }
 
-            <!-- Quiz (Coming soon placeholder) -->
+            <!-- Quiz Questions -->
             @if (selectedBlockType() === BlockType.Quiz) {
-              <div class="rounded-md bg-yellow-50 p-4">
-                <p class="text-sm text-yellow-800">Quiz builder coming soon! For now, quizzes can only be created via API.</p>
+              <div class="mb-4">
+                <div class="mb-3 flex items-center justify-between">
+                  <label class="block text-sm font-medium text-gray-700">Questions *</label>
+                  <button
+                    type="button"
+                    (click)="addQuestion()"
+                    class="rounded-md bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
+                  >
+                    + Add Question
+                  </button>
+                </div>
+
+                @if (questions.length === 0) {
+                  <div class="rounded-md bg-yellow-50 p-3">
+                    <p class="text-xs text-yellow-800">At least one question is required. Click "Add Question" to add one.</p>
+                  </div>
+                } @else {
+                  <div class="space-y-4" formArrayName="questions">
+                    @for (question of questions.controls; track $index; let qIndex = $index) {
+                      <div [formGroupName]="qIndex" class="rounded-md border border-gray-300 bg-gray-50 p-4">
+                        <!-- Question Header -->
+                        <div class="mb-3 flex items-center justify-between">
+                          <span class="text-sm font-semibold text-gray-800">Question #{{ qIndex + 1 }}</span>
+                          <button
+                            type="button"
+                            (click)="removeQuestion(qIndex)"
+                            class="text-xs text-red-600 hover:text-red-700"
+                          >
+                            Remove Question
+                          </button>
+                        </div>
+
+                        <!-- Question Text -->
+                        <div class="mb-3">
+                          <label class="mb-1 block text-xs font-medium text-gray-700">Question Text *</label>
+                          <textarea
+                            formControlName="questionText"
+                            rows="3"
+                            class="w-full rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder="Enter your question..."
+                          ></textarea>
+                        </div>
+
+                        <!-- Question Type & Points -->
+                        <div class="mb-3 grid grid-cols-2 gap-3">
+                          <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-700">Type *</label>
+                            <select
+                              formControlName="type"
+                              (change)="onQuestionTypeChange(qIndex, $any($event.target).value)"
+                              class="w-full rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="SingleChoice">Single Choice</option>
+                              <option value="MultipleChoice">Multiple Choice</option>
+                              <option value="TrueFalse">True/False</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-700">Points *</label>
+                            <input
+                              type="number"
+                              formControlName="points"
+                              min="1"
+                              class="w-full rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+
+                        <!-- Explanation (Optional) -->
+                        <div class="mb-3">
+                          <label class="mb-1 block text-xs font-medium text-gray-700">Explanation (Optional)</label>
+                          <textarea
+                            formControlName="explanation"
+                            rows="2"
+                            class="w-full rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder="Explain why this answer is correct (shown after submission)..."
+                          ></textarea>
+                        </div>
+
+                        <!-- Answers -->
+                        <div formArrayName="answers">
+                          <div class="mb-2 flex items-center justify-between">
+                            <label class="block text-xs font-medium text-gray-700">Answers *</label>
+                            @if (question.get('type')?.value !== 'TrueFalse') {
+                              <button
+                                type="button"
+                                (click)="addAnswer(qIndex)"
+                                class="rounded-md bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                              >
+                                + Add Answer
+                              </button>
+                            }
+                          </div>
+
+                          <div class="space-y-2">
+                            @for (answer of getAnswers(qIndex).controls; track $index; let aIndex = $index) {
+                              <div [formGroupName]="aIndex" class="flex gap-2 rounded-md bg-white p-2" [class.items-center]="question.get('type')?.value === 'TrueFalse'" [class.items-start]="question.get('type')?.value !== 'TrueFalse'">
+                                <div class="flex items-center" [class.pt-2]="question.get('type')?.value !== 'TrueFalse'">
+                                  @if (question.get('type')?.value === 'SingleChoice' || question.get('type')?.value === 'TrueFalse') {
+                                    <input
+                                      type="radio"
+                                      [name]="'correct_' + qIndex"
+                                      [checked]="answer.get('isCorrect')?.value"
+                                      (change)="onSingleChoiceChange(qIndex, aIndex)"
+                                      id="correct_{{ qIndex }}_{{ aIndex }}"
+                                      class="h-4 w-4 border-gray-300 text-green-600 focus:ring-green-500"
+                                    />
+                                  } @else {
+                                    <input
+                                      type="checkbox"
+                                      formControlName="isCorrect"
+                                      id="correct_{{ qIndex }}_{{ aIndex }}"
+                                      class="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                    />
+                                  }
+                                </div>
+                                <div class="flex-1">
+                                  <label for="correct_{{ qIndex }}_{{ aIndex }}" class="mb-1 block text-xs font-medium text-gray-600">
+                                    @if (question.get('type')?.value === 'TrueFalse') {
+                                      {{ answer.get('answerText')?.value }}
+                                    } @else {
+                                      Answer {{ aIndex + 1 }}
+                                    }
+                                    @if (answer.get('isCorrect')?.value) {
+                                      <span class="ml-1 text-green-600">✓ Correct</span>
+                                    }
+                                  </label>
+                                  @if (question.get('type')?.value !== 'TrueFalse') {
+                                    <input
+                                      type="text"
+                                      formControlName="answerText"
+                                      class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      placeholder="Enter answer text..."
+                                    />
+                                  }
+                                </div>
+                                @if (question.get('type')?.value !== 'TrueFalse') {
+                                  <button
+                                    type="button"
+                                    (click)="removeAnswer(qIndex, aIndex)"
+                                    class="mt-6 text-xs text-red-600 hover:text-red-700"
+                                  >
+                                    Remove
+                                  </button>
+                                }
+                              </div>
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
               </div>
             }
 
@@ -321,7 +472,6 @@
             <div class="flex gap-2">
               <button
                 type="submit"
-                [disabled]="selectedBlockType() === BlockType.Quiz"
                 class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 @if (selectedBlockType() === BlockType.Problem && isCreatingNewProblem()) {
@@ -384,7 +534,14 @@
                   
                   @if (block.type === BlockType.Video && block.videoContent) {
                     <div class="mt-2 text-sm text-gray-600">
-                      <p><strong>URL:</strong> {{ block.videoContent.url }}</p>
+                      <p><strong>Video URL:</strong> <a [href]="block.videoContent.videoUrl" target="_blank" class="text-blue-600 hover:underline">{{ block.videoContent.videoUrl }}</a></p>
+                    </div>
+                  }
+                  
+                  @if (block.type === BlockType.Quiz && block.quiz) {
+                    <div class="mt-2 text-sm text-gray-600">
+                      <p><strong>Questions:</strong> {{ block.quiz.questions.length }}</p>
+                      <p class="mt-1"><strong>Total Points:</strong> {{ getTotalQuizPoints(block.quiz) }}</p>
                     </div>
                   }
                   

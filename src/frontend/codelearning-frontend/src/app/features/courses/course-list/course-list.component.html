@@ -18,14 +18,52 @@
     }
   </div>
 
-  <!-- Search Bar -->
-  <div class="mb-6">
+  <!-- Search Bar and Filters -->
+  <div class="mb-6 space-y-4">
     <input
       type="text"
       placeholder="Search courses..."
       (input)="onSearch($event)"
       class="w-full rounded-md border border-gray-300 px-4 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
     />
+    
+    @if (authService.isTeacher()) {
+      <div class="flex items-center gap-4">
+        <label class="text-sm font-medium text-gray-700">Filter by status:</label>
+        <div class="flex gap-3">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              [checked]="statusFilter() === 'all'"
+              (change)="onStatusChange('all')"
+              class="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span class="text-sm text-gray-700">All</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              [checked]="statusFilter() === 'draft'"
+              (change)="onStatusChange('draft')"
+              class="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span class="text-sm text-gray-700">Draft</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              [checked]="statusFilter() === 'published'"
+              (change)="onStatusChange('published')"
+              class="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span class="text-sm text-gray-700">Published</span>
+          </label>
+        </div>
+      </div>
+    }
   </div>
 
   @if (errorMessage()) {
@@ -68,9 +106,8 @@
               </span>
             </div>
 
-            <p class="mb-4 line-clamp-2 text-sm text-gray-600">
-              {{ course.description }}
-            </p>
+            <div class="mb-4 line-clamp-2 text-sm text-gray-600 markdown-content" [innerHTML]="renderDescription(course.description)">
+            </div>
 
             <div class="mb-4 flex items-center gap-4 text-sm text-gray-500">
               <span>👤 {{ course.instructorName }}</span>

@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DatePipe } from '@angular/common';
+import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { MarkdownService } from '../../../core/services/markdown.service';
 import { Course, CourseStatus } from '../../../core/models/course.model';
 
 @Component({
@@ -16,6 +18,7 @@ export class CourseDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   readonly courseService = inject(CourseService);
   readonly authService = inject(AuthService);
+  readonly markdownService = inject(MarkdownService);
 
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
@@ -133,6 +136,10 @@ export class CourseDetailComponent implements OnInit {
 
   getStatusText(status: CourseStatus): string {
     return status === CourseStatus.Published ? 'Published' : 'Draft';
+  }
+
+  renderDescription(description: string): SafeHtml {
+    return this.markdownService.renderMarkdownSync(description);
   }
 
   // Expose enum to template

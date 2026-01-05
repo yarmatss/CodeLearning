@@ -74,8 +74,9 @@ export interface TheoryContent {
 }
 
 export interface VideoContent {
-  url: string;
-  duration?: number;
+  videoUrl: string;
+  videoId: string;
+  durationSeconds?: number;
 }
 
 export interface Quiz {

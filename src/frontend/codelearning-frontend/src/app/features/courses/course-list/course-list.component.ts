@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal, computed, OnInit } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { MarkdownService } from '../../../core/services/markdown.service';
 import { Course, CourseStatus } from '../../../core/models/course.model';
 
 @Component({
@@ -16,24 +18,40 @@ export class CourseListComponent implements OnInit {
   readonly CourseStatus = CourseStatus;
   readonly courseService = inject(CourseService);
   readonly authService = inject(AuthService);
+  readonly markdownService = inject(MarkdownService);
 
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly searchQuery = signal('');
+  readonly statusFilter = signal<'all' | 'draft' | 'published'>('all');
 
   readonly filteredCourses = computed(() => {
-    const courses = this.courseService.courses();
+    let courses = this.courseService.courses();
     const query = this.searchQuery().toLowerCase();
+    const status = this.statusFilter();
 
-    if (!query) {
-      return courses;
+    // Filter by status (only for teachers)
+    if (this.authService.isTeacher() && status !== 'all') {
+      courses = courses.filter(course => {
+        if (status === 'draft') {
+          return course.status === CourseStatus.Draft;
+        } else if (status === 'published') {
+          return course.status === CourseStatus.Published;
+        }
+        return true;
+      });
     }
 
-    return courses.filter(course =>
-      course.title.toLowerCase().includes(query) ||
-      course.description.toLowerCase().includes(query) ||
-      course.instructorName.toLowerCase().includes(query)
-    );
+    // Filter by search query
+    if (query) {
+      courses = courses.filter(course =>
+        course.title.toLowerCase().includes(query) ||
+        course.description.toLowerCase().includes(query) ||
+        course.instructorName.toLowerCase().includes(query)
+      );
+    }
+
+    return courses;
   });
 
   ngOnInit(): void {
@@ -44,6 +62,8 @@ export class CourseListComponent implements OnInit {
     this.isLoading.set(true);
     this.errorMessage.set('');
 
+    // Teachers see all their courses (filtering happens in computed)
+    // Students see only published courses
     const observable = this.authService.isTeacher()
       ? this.courseService.getMyCourses()
       : this.courseService.getPublishedCourses();
@@ -59,6 +79,14 @@ export class CourseListComponent implements OnInit {
     });
   }
 
+  onStatusFilterChange(): void {
+    // Filtering happens automatically via computed signal
+  }
+
+  onStatusChange(status: 'all' | 'draft' | 'published'): void {
+    this.statusFilter.set(status);
+  }
+
   onSearch(event: Event): void {
     const input = event.target as HTMLInputElement;
     this.searchQuery.set(input.value);
@@ -72,5 +100,9 @@ export class CourseListComponent implements OnInit {
 
   getStatusText(status: CourseStatus): string {
     return status === CourseStatus.Published ? 'Published' : 'Draft';
+  }
+
+  renderDescription(description: string): SafeHtml {
+    return this.markdownService.renderMarkdownSync(description);
   }
 }

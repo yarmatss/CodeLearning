@@ -26,7 +26,7 @@ public static class QuizExtensions
             Id = question.Id,
             Content = question.Content,
             Type = question.Type.ToString(),
-            Points = 0, // Hidden from students until submission
+            Points = question.Points,
             OrderIndex = question.OrderIndex,
             Answers = question.Answers
                 .OrderBy(a => a.OrderIndex)

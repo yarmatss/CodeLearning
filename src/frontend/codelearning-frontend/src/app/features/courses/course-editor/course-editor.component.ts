@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { ChapterService } from '../../../core/services/chapter.service';
+import { MarkdownService } from '../../../core/services/markdown.service';
 import { Course, Chapter, UpdateCourseRequest } from '../../../core/models/course.model';
 
 @Component({
@@ -18,6 +20,7 @@ export class CourseEditorComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
   readonly courseService = inject(CourseService);
   private readonly chapterService = inject(ChapterService);
+  readonly markdownService = inject(MarkdownService);
 
   readonly course = signal<Course | null>(null);
   readonly chapters = signal<Chapter[]>([]);
@@ -221,5 +224,9 @@ export class CourseEditorComponent implements OnInit {
         }
       });
     }
+  }
+
+  renderDescription(description: string): SafeHtml {
+    return this.markdownService.renderMarkdownSync(description);
   }
 }

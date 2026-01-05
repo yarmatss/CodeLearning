@@ -1,0 +1,348 @@
+<div class="container mx-auto max-w-5xl px-4 py-8">
+  <!-- Header -->
+  <div class="mb-6">
+    <div class="flex items-center gap-3 text-sm text-gray-600">
+      <a [routerLink]="['/problems']" class="hover:text-blue-600">Problems</a>
+      <span>›</span>
+      <span class="text-gray-900">{{ isEditMode() ? 'Edit Problem' : 'Create Problem' }}</span>
+    </div>
+    <h1 class="mt-2 text-3xl font-bold text-gray-900">
+      {{ isEditMode() ? 'Edit Problem' : 'Create New Problem' }}
+    </h1>
+  </div>
+
+  <!-- Messages -->
+  @if (errorMessage()) {
+    <div class="mb-4 rounded-md bg-red-50 p-4">
+      <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+    </div>
+  }
+  @if (successMessage()) {
+    <div class="mb-4 rounded-md bg-green-50 p-4">
+      <p class="text-sm text-green-800">{{ successMessage() }}</p>
+    </div>
+  }
+
+  @if (isLoading()) {
+    <div class="rounded-lg border border-gray-200 bg-white p-8 text-center">
+      <p class="text-gray-500">Loading...</p>
+    </div>
+  } @else {
+    <!-- Problem Form -->
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+      <h2 class="mb-4 text-xl font-semibold text-gray-900">Basic Information</h2>
+      
+      <form [formGroup]="problemForm" (ngSubmit)="saveProblem()">
+        <div class="mb-4">
+          <label for="title" class="mb-1 block text-sm font-medium text-gray-700">Title *</label>
+          <input
+            id="title"
+            type="text"
+            formControlName="title"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            placeholder="e.g., Two Sum"
+          />
+        </div>
+
+        <div class="mb-4">
+          <label for="description" class="mb-1 block text-sm font-medium text-gray-700">Description (Markdown) *</label>
+          <textarea
+            id="description"
+            formControlName="description"
+            rows="8"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            placeholder="Describe the problem with examples..."
+          ></textarea>
+        </div>
+
+        <div class="mb-4">
+          <label for="difficulty" class="mb-1 block text-sm font-medium text-gray-700">Difficulty *</label>
+          <select
+            id="difficulty"
+            formControlName="difficulty"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="Easy">Easy</option>
+            <option value="Medium">Medium</option>
+            <option value="Hard">Hard</option>
+          </select>
+        </div>
+
+        @if (!isEditMode()) {
+          <div class="mb-4 rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
+            Note: You must add at least one test case (must be public) before creating the problem.
+          </div>
+        }
+
+        <div class="flex gap-2">
+          <button
+            type="submit"
+            class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+            [disabled]="!isEditMode() && testCasesFormArray.length === 0"
+            [class.opacity-50]="!isEditMode() && testCasesFormArray.length === 0"
+            [class.cursor-not-allowed]="!isEditMode() && testCasesFormArray.length === 0"
+          >
+            {{ isEditMode() ? 'Update Problem' : 'Create Problem' }}
+          </button>
+          <a
+            [routerLink]="['/problems']"
+            class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </a>
+        </div>
+      </form>
+    </div>
+
+    <!-- Test Cases Section (both create and edit modes) -->
+    @if (!isEditMode() || (isEditMode() && problemId)) {
+      <!-- Test Cases Section -->
+      <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+        <h2 class="mb-4 text-xl font-semibold text-gray-900">Test Cases</h2>
+        
+        <!-- Add Test Case Form -->
+        <div class="mb-6 rounded-md bg-gray-50 p-4">
+          <h3 class="mb-3 text-sm font-semibold text-gray-700">Add New Test Case</h3>
+          <form [formGroup]="testCaseForm" (ngSubmit)="isEditMode() ? addTestCase() : addTestCaseToForm()">
+            <div class="mb-3">
+              <label class="mb-1 block text-xs font-medium text-gray-700">Input</label>
+              <textarea
+                formControlName="input"
+                rows="3"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="e.g., [2,7,11,15]\n9"
+              ></textarea>
+            </div>
+            <div class="mb-3">
+              <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output</label>
+              <textarea
+                formControlName="expectedOutput"
+                rows="2"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="e.g., [0,1]"
+              ></textarea>
+            </div>
+            <div class="mb-3 flex items-center">
+              <input
+                type="checkbox"
+                formControlName="isPublic"
+                id="isPublic"
+                class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label for="isPublic" class="ml-2 text-xs text-gray-700">
+                Public (visible to students)
+              </label>
+            </div>
+            <button
+              type="submit"
+              class="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700"
+            >
+              + Add Test Case
+            </button>
+          </form>
+        </div>
+
+        <!-- Test Cases List -->
+        @if (!isEditMode()) {
+          <!-- Create Mode - Show FormArray -->
+          @if (testCasesFormArray.length === 0) {
+            <div class="rounded-md bg-yellow-50 p-4">
+              <p class="text-sm text-yellow-800">No test cases yet. Add at least one test case (must be public).</p>
+            </div>
+          } @else {
+            <div class="space-y-3">
+              @for (testCaseControl of testCasesFormArray.controls; track $index; let i = $index) {
+                <div class="rounded-md border border-gray-300 bg-white p-4">
+                  <div class="mb-2 flex items-start justify-between">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium text-gray-700">Test Case {{ i + 1 }}</span>
+                      @if (testCaseControl.get('isPublic')?.value) {
+                        <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Public</span>
+                      } @else {
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-800">Private</span>
+                      }
+                    </div>
+                    <button
+                      (click)="removeTestCaseFromForm(i)"
+                      class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Input:</label>
+                      <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCaseControl.get('input')?.value }}</pre>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output:</label>
+                      <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCaseControl.get('expectedOutput')?.value }}</pre>
+                    </div>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        } @else {
+          <!-- Edit Mode - Show from signal -->
+          @if (testCases().length === 0) {
+            <div class="rounded-md bg-yellow-50 p-4">
+              <p class="text-sm text-yellow-800">No test cases yet. Add at least one test case (must be public).</p>
+            </div>
+          } @else {
+          <div class="space-y-3">
+            @for (testCase of testCases(); track testCase.id; let i = $index) {
+              <div class="rounded-md border border-gray-300 bg-white p-4">
+                <div class="mb-2 flex items-start justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium text-gray-700">Test Case {{ testCase.orderIndex }}</span>
+                    @if (testCase.isPublic) {
+                      <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Public</span>
+                    } @else {
+                      <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-800">Private</span>
+                    }
+                  </div>
+                  <div class="flex gap-1">
+                    <button
+                      (click)="moveTestCaseUp(i)"
+                      [disabled]="i === 0"
+                      [class.opacity-50]="i === 0"
+                      [class.cursor-not-allowed]="i === 0"
+                      class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
+                      title="Move up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      (click)="moveTestCaseDown(i)"
+                      [disabled]="i === testCases().length - 1"
+                      [class.opacity-50]="i === testCases().length - 1"
+                      [class.cursor-not-allowed]="i === testCases().length - 1"
+                      class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
+                      title="Move down"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      (click)="deleteTestCase(testCase.id)"
+                      class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-700">Input:</label>
+                    <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.input }}</pre>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output:</label>
+                    <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.expectedOutput }}</pre>
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+        }
+        }
+      </div>
+
+      <!-- Starter Codes Section -->
+      <div class="rounded-lg border border-gray-200 bg-white p-6">
+        <h2 class="mb-4 text-xl font-semibold text-gray-900">Starter Codes</h2>
+        
+        <!-- Add Starter Code Form -->
+        @if (getAvailableLanguagesForStarterCode().length > 0) {
+          <div class="mb-6 rounded-md bg-gray-50 p-4">
+            <h3 class="mb-3 text-sm font-semibold text-gray-700">Add Starter Code</h3>
+            <form [formGroup]="starterCodeForm" (ngSubmit)="isEditMode() ? addStarterCode() : addStarterCodeToForm()">
+              <div class="mb-3">
+                <label class="mb-1 block text-xs font-medium text-gray-700">Language</label>
+                <select
+                  formControlName="languageId"
+                  class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">-- Select language --</option>
+                  @for (lang of getAvailableLanguagesForStarterCode(); track lang.id) {
+                    <option [value]="lang.id">{{ lang.name }}</option>
+                  }
+                </select>
+              </div>
+              <div class="mb-3">
+                <label class="mb-1 block text-xs font-medium text-gray-700">Code</label>
+                <textarea
+                  formControlName="code"
+                  rows="8"
+                  class="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="def two_sum(nums, target):&#10;    # Write your solution here&#10;    pass"
+                ></textarea>
+              </div>
+              <button
+                type="submit"
+                class="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700"
+              >
+                + Add Starter Code
+              </button>
+            </form>
+          </div>
+        } @else {
+          <div class="mb-4 rounded-md bg-blue-50 p-3">
+            <p class="text-sm text-blue-800">All supported languages have starter code.</p>
+          </div>
+        }
+
+        <!-- Starter Codes List -->
+        @if (!isEditMode()) {
+          <!-- Create Mode - Show FormArray -->
+          @if (starterCodesFormArray.length === 0) {
+            <div class="rounded-md bg-yellow-50 p-4">
+              <p class="text-sm text-yellow-800">No starter codes yet. Add starter code for at least one language (optional).</p>
+            </div>
+          } @else {
+            <div class="space-y-3">
+              @for (starterCodeControl of starterCodesFormArray.controls; track $index; let i = $index) {
+                <div class="rounded-md border border-gray-300 bg-white p-4">
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="font-medium text-gray-900">{{ getLanguageNameById(starterCodeControl.get('languageId')?.value) }}</span>
+                    <button
+                      (click)="removeStarterCodeFromForm(i)"
+                      class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <pre class="rounded-md bg-gray-50 p-3 font-mono text-sm text-gray-800">{{ starterCodeControl.get('code')?.value }}</pre>
+                </div>
+              }
+            </div>
+          }
+        } @else {
+          <!-- Edit Mode - Show from signal -->
+          @if (starterCodes().length === 0) {
+            <div class="rounded-md bg-yellow-50 p-4">
+              <p class="text-sm text-yellow-800">No starter codes yet. Add starter code for at least one language.</p>
+            </div>
+          } @else {
+          <div class="space-y-3">
+            @for (starterCode of starterCodes(); track starterCode.id) {
+              <div class="rounded-md border border-gray-300 bg-white p-4">
+                <div class="mb-2 flex items-center justify-between">
+                  <span class="font-medium text-gray-900">{{ starterCode.languageName }}</span>
+                  <button
+                    (click)="deleteStarterCode(starterCode.id)"
+                    class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                  >
+                    Delete
+                  </button>
+                </div>
+                <pre class="rounded-md bg-gray-50 p-3 font-mono text-sm text-gray-800">{{ starterCode.code }}</pre>
+              </div>
+            }
+          </div>
+        }
+        }
+      </div>
+    }
+  }
+</div>

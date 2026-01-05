@@ -86,6 +86,10 @@ public class BlockService(
             {
                 Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
                 Type = Enum.Parse<QuestionType>(q.Type),
+                Points = q.Points,
+                Explanation = string.IsNullOrWhiteSpace(q.Explanation) 
+                    ? null 
+                    : sanitizationService.SanitizeMarkdown(q.Explanation),
                 OrderIndex = qIndex + 1,
                 Quiz = null!,
                 Answers = q.Answers.Select((a, aIndex) => new QuizAnswer
@@ -152,7 +156,22 @@ public class BlockService(
 
         VerifyBlockOwnership(block, instructorId);
 
+        var deletedOrderIndex = block.OrderIndex;
+        var subchapterId = block.SubchapterId;
+
         context.CourseBlocks.Remove(block);
+        await context.SaveChangesAsync();
+
+        // Reindex remaining blocks: all blocks with orderIndex > deletedOrderIndex should decrease by 1
+        var blocksToReindex = await context.CourseBlocks
+            .Where(b => b.SubchapterId == subchapterId && b.OrderIndex > deletedOrderIndex)
+            .ToListAsync();
+
+        foreach (var blockToReindex in blocksToReindex)
+        {
+            blockToReindex.OrderIndex--;
+        }
+
         await context.SaveChangesAsync();
     }
 

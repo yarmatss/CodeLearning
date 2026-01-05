@@ -35,6 +35,8 @@ export interface UpdateQuizBlockRequest {
 
 export interface CreateQuizQuestionRequest {
   questionText: string;
+  type: string; // "SingleChoice" | "MultipleChoice" | "TrueFalse"
+  points: number;
   answers: CreateQuizAnswerRequest[];
 }
 

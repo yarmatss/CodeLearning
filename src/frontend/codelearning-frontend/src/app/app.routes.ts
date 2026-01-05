@@ -10,6 +10,8 @@ import { CreateCourseComponent } from './features/courses/create-course/create-c
 import { CourseEditorComponent } from './features/courses/course-editor/course-editor.component';
 import { ChapterEditor } from './features/courses/chapter-editor/chapter-editor';
 import { SubchapterEditor } from './features/courses/subchapter-editor/subchapter-editor';
+import { ProblemList } from './features/problems/problem-list/problem-list';
+import { ProblemEditor } from './features/problems/problem-editor/problem-editor';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
@@ -48,6 +50,21 @@ export const routes: Routes = [
   {
     path: 'courses/:courseId/chapters/:chapterId/subchapters/:subchapterId/edit',
     component: SubchapterEditor,
+    canActivate: [authGuard, teacherGuard]
+  },
+  {
+    path: 'problems',
+    component: ProblemList,
+    canActivate: [authGuard, teacherGuard]
+  },
+  {
+    path: 'problems/create',
+    component: ProblemEditor,
+    canActivate: [authGuard, teacherGuard]
+  },
+  {
+    path: 'problems/:id/edit',
+    component: ProblemEditor,
     canActivate: [authGuard, teacherGuard]
   }
 ];

@@ -28,9 +28,11 @@ public class CreateQuizQuestionDtoValidator : AbstractValidator<CreateQuizQuesti
             .SetValidator(new CreateQuizAnswerDtoValidator());
 
         RuleFor(x => x)
-            .Must(HaveAtLeastOneCorrectAnswer).WithMessage("Question must have at least one correct answer")
-            .When(x => x.Type == "SingleChoice")
-            .Must(HaveExactlyOneCorrectAnswer).WithMessage("SingleChoice question must have exactly one correct answer");
+            .Must(HaveAtLeastOneCorrectAnswer).WithMessage("Question must have at least one correct answer");
+
+        RuleFor(x => x)
+            .Must(HaveExactlyOneCorrectAnswer).WithMessage("SingleChoice question must have exactly one correct answer")
+            .When(x => x.Type == "SingleChoice" || x.Type == "TrueFalse");
     }
 
     private bool BeValidQuestionType(string? type)
