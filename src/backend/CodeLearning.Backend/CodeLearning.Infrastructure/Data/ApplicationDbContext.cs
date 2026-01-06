@@ -2,6 +2,8 @@ using CodeLearning.Core.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using System.Text.Json;
 
 namespace CodeLearning.Infrastructure.Data;
 
@@ -111,9 +113,10 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
             .Property(e => e.Answers)
             .HasColumnType("jsonb")
             .HasConversion(
-                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions)null),
-                v => System.Text.Json.JsonSerializer.Deserialize<List<QuizAnswerData>>(v, (System.Text.Json.JsonSerializerOptions)null) ?? new List<QuizAnswerData>()
-            );
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                v => JsonSerializer.Deserialize<List<QuizAnswerData>>(v, (JsonSerializerOptions?)null) ?? new List<QuizAnswerData>()
+            )
+            .Metadata.SetValueComparer(CreateJsonValueComparer<QuizAnswerData>());
 
         // Language unique constraint
         modelBuilder.Entity<Language>()
@@ -482,6 +485,15 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     {
         UpdateTimestamps();
         return base.SaveChangesAsync(cancellationToken);
+    }
+
+    private static ValueComparer<List<T>> CreateJsonValueComparer<T>()
+    {
+        return new ValueComparer<List<T>>(
+            (c1, c2) => JsonSerializer.Serialize(c1) == JsonSerializer.Serialize(c2),
+            c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v!.GetHashCode())),
+            c => JsonSerializer.Deserialize<List<T>>(JsonSerializer.Serialize(c))!
+        );
     }
 
     private void UpdateTimestamps()

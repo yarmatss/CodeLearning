@@ -14,7 +14,6 @@ public static class VideoContentExtensions
             Id = content.Id,
             VideoUrl = content.VideoUrl,
             VideoId = content.VideoId,
-            DurationSeconds = content.DurationSeconds
         };
     }
 }

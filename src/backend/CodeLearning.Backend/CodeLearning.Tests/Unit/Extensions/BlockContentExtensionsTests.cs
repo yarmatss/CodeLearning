@@ -55,7 +55,6 @@ public class BlockContentExtensionsTests
             Id = Guid.NewGuid(),
             VideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             VideoId = "dQw4w9WgXcQ",
-            DurationSeconds = 212,
             Block = null!
         };
 
@@ -67,28 +66,6 @@ public class BlockContentExtensionsTests
         result!.Id.Should().Be(content.Id);
         result.VideoUrl.Should().Be(content.VideoUrl);
         result.VideoId.Should().Be(content.VideoId);
-        result.DurationSeconds.Should().Be(212);
-    }
-
-    [Fact]
-    public void VideoContent_WithoutDuration_ToDtoShouldMapWithNull()
-    {
-        // Arrange
-        var content = new VideoContent
-        {
-            Id = Guid.NewGuid(),
-            VideoUrl = "https://youtu.be/ABC123DEF45",
-            VideoId = "ABC123DEF45",
-            DurationSeconds = null,
-            Block = null!
-        };
-
-        // Act
-        var result = content.ToDto();
-
-        // Assert
-        result.Should().NotBeNull();
-        result!.DurationSeconds.Should().BeNull();
     }
 
     [Fact]
@@ -116,8 +93,8 @@ public class BlockContentExtensionsTests
         {
             Id = Guid.NewGuid(),
             Block = null!,
-            Questions = new List<QuizQuestion>
-            {
+            Questions =
+            [
                 new()
                 {
                     Id = Guid.NewGuid(),
@@ -131,7 +108,7 @@ public class BlockContentExtensionsTests
                         new() { Id = Guid.NewGuid(), Text = "Database", IsCorrect = false, OrderIndex = 2, Question = null! }
                     }
                 }
-            }
+            ]
         };
 
         // Act
@@ -145,7 +122,6 @@ public class BlockContentExtensionsTests
         var question = result.Questions.First();
         question.Content.Should().Be("What is C#?");
         question.Type.Should().Be("SingleChoice");
-        question.Points.Should().Be(0); // Hidden from students
         question.Answers.Should().HaveCount(2);
     }
 

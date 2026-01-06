@@ -3,15 +3,13 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Configuration;
 
 namespace CodeLearning.Infrastructure.Services;
 
 public class AuthService(
     UserManager<User> userManager,
     SignInManager<User> signInManager,
-    ITokenService tokenService,
-    IConfiguration configuration) : IAuthService
+    ITokenService tokenService) : IAuthService
 {
     public async Task<AuthResponseDto> RegisterAsync(RegisterDto registerDto)
     {

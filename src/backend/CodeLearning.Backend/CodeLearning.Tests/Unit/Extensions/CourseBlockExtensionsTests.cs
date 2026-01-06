@@ -54,7 +54,6 @@ public class CourseBlockExtensionsTests
             Id = Guid.NewGuid(),
             VideoUrl = "https://www.youtube.com/watch?v=test",
             VideoId = "test1234567",
-            DurationSeconds = 120,
             Block = null!
         };
 
@@ -76,7 +75,6 @@ public class CourseBlockExtensionsTests
         result.Type.Should().Be(BlockType.Video);
         result.VideoContent.Should().NotBeNull();
         result.VideoContent!.VideoId.Should().Be("test1234567");
-        result.VideoContent.DurationSeconds.Should().Be(120);
         result.TheoryContent.Should().BeNull();
         result.Quiz.Should().BeNull();
         result.Problem.Should().BeNull();
