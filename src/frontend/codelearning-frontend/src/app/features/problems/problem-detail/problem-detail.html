@@ -1,0 +1,112 @@
+<div class="container mx-auto max-w-5xl px-4 py-8">
+  @if (isLoading()) {
+    <div class="rounded-lg border border-gray-200 bg-white p-8 text-center">
+      <p class="text-gray-500">Loading problem...</p>
+    </div>
+  } @else if (errorMessage()) {
+    <div class="mb-4 rounded-md bg-red-50 p-4">
+      <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      <a [routerLink]="['/problems']" class="mt-2 inline-block text-sm text-blue-600 hover:text-blue-700">
+        ← Back to Problems
+      </a>
+    </div>
+  } @else if (problem()) {
+    <!-- Header -->
+    <div class="mb-6">
+      <div class="flex items-center gap-3 text-sm text-gray-600">
+        <a [routerLink]="['/problems']" class="hover:text-blue-600">Problems</a>
+        <span>›</span>
+        <span class="text-gray-900">{{ problem()!.title }}</span>
+      </div>
+      <div class="mt-2 flex items-start justify-between">
+        <div class="flex-1">
+          <h1 class="text-3xl font-bold text-gray-900">{{ problem()!.title }}</h1>
+          <div class="mt-2 flex items-center gap-3">
+            <span [class]="'rounded-full px-3 py-1 text-sm font-semibold ' + getDifficultyClass(problem()!.difficulty)">
+              {{ problem()!.difficulty }}
+            </span>
+            @if (problem()!.tags && problem()!.tags.length > 0) {
+              @for (tag of problem()!.tags; track tag.id) {
+                <span class="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700">{{ tag.name }}</span>
+              }
+            }
+          </div>
+        </div>
+        @if (authService.currentUser()?.userId === problem()!.authorId) {
+          <a
+            [routerLink]="['/problems', problem()!.id, 'edit']"
+            class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+          >
+            Edit Problem
+          </a>
+        }
+      </div>
+    </div>
+
+    <!-- Problem Description -->
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+      <h2 class="mb-4 text-xl font-semibold text-gray-900">Description</h2>
+      <div class="markdown-content max-w-none text-gray-700" [innerHTML]="problem()!.description | markdown">
+      </div>
+    </div>
+
+    <!-- Test Cases -->
+    @if (problem()!.testCases && problem()!.testCases.length > 0) {
+      <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+        <h2 class="mb-4 text-xl font-semibold text-gray-900">Example Test Cases</h2>
+        <div class="space-y-4">
+          @for (testCase of problem()!.testCases; track testCase.id) {
+            @if (testCase.isPublic) {
+              <div class="rounded-md border border-gray-300 bg-gray-50 p-4">
+                <div class="mb-2 flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-700">Test Case {{ testCase.orderIndex }}</span>
+                  <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Public</span>
+                </div>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-700">Input:</label>
+                    <pre class="rounded-md bg-white p-3 text-xs text-gray-800 overflow-x-auto">{{ testCase.input }}</pre>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output:</label>
+                    <pre class="rounded-md bg-white p-3 text-xs text-gray-800 overflow-x-auto">{{ testCase.expectedOutput }}</pre>
+                  </div>
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Starter Codes -->
+    @if (problem()!.starterCodes && problem()!.starterCodes.length > 0) {
+      <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+        <h2 class="mb-4 text-xl font-semibold text-gray-900">Starter Code</h2>
+        <div class="space-y-4">
+          @for (starterCode of problem()!.starterCodes; track starterCode.id) {
+            <div class="rounded-md border border-gray-300 bg-gray-50 p-4">
+              <div class="mb-2 flex items-center gap-2">
+                <span class="text-sm font-medium text-gray-700">{{ starterCode.languageName }}</span>
+              </div>
+              <pre class="rounded-md bg-gray-900 p-4 text-sm text-green-400 overflow-x-auto"><code>{{ starterCode.code }}</code></pre>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Additional Info -->
+    <div class="rounded-lg border border-gray-200 bg-white p-6">
+      <h2 class="mb-4 text-xl font-semibold text-gray-900">Additional Information</h2>
+      <div class="space-y-2 text-sm text-gray-700">
+        @if (problem()!.authorName) {
+          <p><strong>Author:</strong> {{ problem()!.authorName }}</p>
+        }
+        <p><strong>Total Test Cases:</strong> {{ problem()!.testCases.length }}</p>
+        <p><strong>Public Test Cases:</strong> {{ getPublicTestCasesCount() }}</p>
+        <p><strong>Available Languages:</strong> {{ problem()!.starterCodes.length }}</p>
+      </div>
+    </div>
+  }
+</div>

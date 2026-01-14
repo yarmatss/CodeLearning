@@ -57,6 +57,13 @@ public class ProblemsController(
         return Ok(results);
     }
 
+    [HttpGet("tags")]
+    public async Task<IActionResult> GetTags()
+    {
+        var tags = await problemService.GetAllTagsAsync();
+        return Ok(tags);
+    }
+
     [HttpPut("{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
     public async Task<IActionResult> UpdateProblem(Guid id, [FromBody] UpdateProblemDto dto)

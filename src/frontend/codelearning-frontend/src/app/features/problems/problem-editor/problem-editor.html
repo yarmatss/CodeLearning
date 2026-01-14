@@ -68,6 +68,29 @@
           </select>
         </div>
 
+        <div class="mb-4">
+          <label class="mb-1 block text-sm font-medium text-gray-700">Tags</label>
+          <div class="flex flex-wrap gap-2">
+            @for (tag of availableTags(); track tag.id) {
+              <label class="inline-flex cursor-pointer items-center rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50"
+                     [class.border-blue-500]="isTagSelected(tag.id)"
+                     [class.bg-blue-50]="isTagSelected(tag.id)">
+                <input
+                  type="checkbox"
+                  [value]="tag.id"
+                  [checked]="isTagSelected(tag.id)"
+                  (change)="toggleTag(tag.id)"
+                  class="mr-2 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                {{ tag.name }}
+              </label>
+            }
+          </div>
+          @if (availableTags().length === 0) {
+            <p class="mt-1 text-sm text-gray-500">No tags available</p>
+          }
+        </div>
+
         @if (!isEditMode()) {
           <div class="mb-4 rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
             Note: You must add at least one test case (must be public) before creating the problem.
@@ -193,54 +216,112 @@
           <div class="space-y-3">
             @for (testCase of testCases(); track testCase.id; let i = $index) {
               <div class="rounded-md border border-gray-300 bg-white p-4">
-                <div class="mb-2 flex items-start justify-between">
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium text-gray-700">Test Case {{ testCase.orderIndex }}</span>
-                    @if (testCase.isPublic) {
-                      <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Public</span>
-                    } @else {
-                      <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-800">Private</span>
-                    }
+                @if (editingTestCaseId() === testCase.id) {
+                  <!-- Edit Mode -->
+                  <form [formGroup]="editTestCaseForm" (ngSubmit)="saveTestCaseEdit()" class="space-y-3">
+                    <div class="flex items-center justify-between">
+                      <span class="text-sm font-medium text-gray-700">Editing Test Case {{ testCase.orderIndex }}</span>
+                      <button
+                        type="button"
+                        (click)="cancelEditingTestCase()"
+                        class="text-xs text-gray-600 hover:text-gray-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Input *</label>
+                      <textarea
+                        formControlName="input"
+                        rows="3"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      ></textarea>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output *</label>
+                      <textarea
+                        formControlName="expectedOutput"
+                        rows="3"
+                        class="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      ></textarea>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center">
+                        <input
+                          type="checkbox"
+                          formControlName="isPublic"
+                          id="editIsPublic"
+                          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <label for="editIsPublic" class="ml-2 text-xs text-gray-700">
+                          Public (visible to students)
+                        </label>
+                      </div>
+                      <button
+                        type="submit"
+                        class="rounded-md bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </form>
+                } @else {
+                  <!-- View Mode -->
+                  <div class="mb-2 flex items-start justify-between">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium text-gray-700">Test Case {{ testCase.orderIndex }}</span>
+                      @if (testCase.isPublic) {
+                        <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">Public</span>
+                      } @else {
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-800">Private</span>
+                      }
+                    </div>
+                    <div class="flex gap-1">
+                      <button
+                        (click)="startEditingTestCase(testCase)"
+                        class="rounded-md bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        (click)="moveTestCaseUp(i)"
+                        [disabled]="i === 0"
+                        [class.opacity-50]="i === 0"
+                        [class.cursor-not-allowed]="i === 0"
+                        class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        (click)="moveTestCaseDown(i)"
+                        [disabled]="i === testCases().length - 1"
+                        [class.opacity-50]="i === testCases().length - 1"
+                        [class.cursor-not-allowed]="i === testCases().length - 1"
+                        class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        (click)="deleteTestCase(testCase.id)"
+                        class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex gap-1">
-                    <button
-                      (click)="moveTestCaseUp(i)"
-                      [disabled]="i === 0"
-                      [class.opacity-50]="i === 0"
-                      [class.cursor-not-allowed]="i === 0"
-                      class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
-                      title="Move up"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      (click)="moveTestCaseDown(i)"
-                      [disabled]="i === testCases().length - 1"
-                      [class.opacity-50]="i === testCases().length - 1"
-                      [class.cursor-not-allowed]="i === testCases().length - 1"
-                      class="rounded-md bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
-                      title="Move down"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      (click)="deleteTestCase(testCase.id)"
-                      class="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                    >
-                      Delete
-                    </button>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Input:</label>
+                      <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.input }}</pre>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output:</label>
+                      <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.expectedOutput }}</pre>
+                    </div>
                   </div>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-700">Input:</label>
-                    <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.input }}</pre>
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output:</label>
-                    <pre class="rounded-md bg-gray-50 p-2 text-xs text-gray-800">{{ testCase.expectedOutput }}</pre>
-                  </div>
-                </div>
+                }
               </div>
             }
           </div>

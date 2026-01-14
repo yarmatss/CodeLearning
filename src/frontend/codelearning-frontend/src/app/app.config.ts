@@ -17,11 +17,8 @@ export const appConfig: ApplicationConfig = {
     ),
     provideAppInitializer(() => {
       const authService = inject(AuthService);
-      return new Promise<void>((resolve) => {
-        authService.getCurrentUser().subscribe({
-          next: () => resolve(),
-          error: () => resolve() // Silent fail - user not logged in
-        });
+      authService.getCurrentUser().subscribe({
+        error: () => {} // Silent fail - user not logged in
       });
     })
   ]

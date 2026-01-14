@@ -12,6 +12,7 @@ import { ChapterEditor } from './features/courses/chapter-editor/chapter-editor'
 import { SubchapterEditor } from './features/courses/subchapter-editor/subchapter-editor';
 import { ProblemList } from './features/problems/problem-list/problem-list';
 import { ProblemEditor } from './features/problems/problem-editor/problem-editor';
+import { ProblemDetail } from './features/problems/problem-detail/problem-detail';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
@@ -60,6 +61,11 @@ export const routes: Routes = [
   {
     path: 'problems/create',
     component: ProblemEditor,
+    canActivate: [authGuard, teacherGuard]
+  },
+  {
+    path: 'problems/:id',
+    component: ProblemDetail,
     canActivate: [authGuard, teacherGuard]
   },
   {

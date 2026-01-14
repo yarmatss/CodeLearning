@@ -10,7 +10,9 @@ import {
   TestCaseResponse,
   StarterCodeResponse,
   CreateTestCaseRequest,
-  CreateStarterCodeRequest
+  UpdateTestCaseRequest,
+  CreateStarterCodeRequest,
+  TagResponse
 } from '../../../core/services/problem.service';
 
 interface Language {
@@ -34,11 +36,14 @@ export class ProblemEditor implements OnInit {
   readonly problem = signal<ProblemResponse | null>(null);
   readonly testCases = signal<TestCaseResponse[]>([]);
   readonly starterCodes = signal<StarterCodeResponse[]>([]);
+  readonly availableTags = signal<TagResponse[]>([]);
   
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly successMessage = signal<string>('');
   readonly isEditMode = signal(false);
+  readonly editingTestCaseId = signal<string | null>(null);
+  readonly editTestCaseForm: FormGroup;
   
   readonly problemForm: FormGroup;
   readonly testCaseForm: FormGroup;
@@ -52,12 +57,14 @@ export class ProblemEditor implements OnInit {
   ];
 
   problemId: string | null = null;
+  returnUrl: string | null = null;
 
   constructor() {
     this.problemForm = this.fb.group({
       title: ['', [Validators.required, Validators.minLength(3)]],
       description: ['', Validators.required],
       difficulty: ['Easy', Validators.required],
+      tagIds: [[]],
       testCases: this.fb.array([]),
       starterCodes: this.fb.array([])
     });
@@ -72,6 +79,12 @@ export class ProblemEditor implements OnInit {
       languageId: ['', Validators.required],
       code: ['', Validators.required]
     });
+
+    this.editTestCaseForm = this.fb.group({
+      input: ['', Validators.required],
+      expectedOutput: ['', Validators.required],
+      isPublic: [true]
+    });
   }
 
   get testCasesFormArray(): FormArray {
@@ -83,11 +96,20 @@ export class ProblemEditor implements OnInit {
   }
 
   ngOnInit(): void {
+    this.loadTags();
     this.problemId = this.route.snapshot.paramMap.get('id');
+    this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
     if (this.problemId) {
       this.isEditMode.set(true);
       this.loadProblem();
     }
+  }
+
+  loadTags(): void {
+    this.problemService.getTags().subscribe({
+      next: (tags) => this.availableTags.set(tags),
+      error: () => this.availableTags.set([])
+    });
   }
 
   loadProblem(): void {
@@ -103,7 +125,8 @@ export class ProblemEditor implements OnInit {
         this.problemForm.patchValue({
           title: problem.title,
           description: problem.description,
-          difficulty: problem.difficulty
+          difficulty: problem.difficulty,
+          tagIds: problem.tags.map(t => t.id)
         });
         
         this.isLoading.set(false);
@@ -111,6 +134,34 @@ export class ProblemEditor implements OnInit {
       error: (error: any) => {
         this.isLoading.set(false);
         this.errorMessage.set(error.error?.detail || 'Failed to load problem');
+      }
+    });
+  }
+
+  refreshTestCases(): void {
+    if (!this.problemId) return;
+
+    this.problemService.getProblem(this.problemId).subscribe({
+      next: (problem) => {
+        this.problem.set(problem);
+        this.testCases.set(problem.testCases);
+      },
+      error: (error: any) => {
+        this.errorMessage.set(error.error?.detail || 'Failed to refresh test cases');
+      }
+    });
+  }
+
+  refreshStarterCodes(): void {
+    if (!this.problemId) return;
+
+    this.problemService.getProblem(this.problemId).subscribe({
+      next: (problem) => {
+        this.problem.set(problem);
+        this.starterCodes.set(problem.starterCodes);
+      },
+      error: (error: any) => {
+        this.errorMessage.set(error.error?.detail || 'Failed to refresh starter codes');
       }
     });
   }
@@ -129,7 +180,8 @@ export class ProblemEditor implements OnInit {
       const updateData: UpdateProblemRequest = {
         title: formValue.title,
         description: formValue.description,
-        difficulty: formValue.difficulty
+        difficulty: formValue.difficulty,
+        tagIds: formValue.tagIds || []
       };
 
       this.problemService.updateProblem(this.problemId, updateData).subscribe({
@@ -161,6 +213,7 @@ export class ProblemEditor implements OnInit {
         title: formValue.title,
         description: formValue.description,
         difficulty: formValue.difficulty,
+        tagIds: formValue.tagIds || [],
         testCases: formValue.testCases,
         starterCodes: formValue.starterCodes
       };
@@ -168,7 +221,11 @@ export class ProblemEditor implements OnInit {
       this.problemService.createProblem(createData).subscribe({
         next: (problem) => {
           this.successMessage.set('Problem created successfully');
-          this.router.navigate(['/problems', problem.id, 'edit']);
+          if (this.returnUrl) {
+            this.router.navigateByUrl(this.returnUrl);
+          } else {
+            this.router.navigate(['/problems', problem.id, 'edit']);
+          }
         },
         error: (error: any) => {
           // Extract validation errors if available
@@ -224,7 +281,7 @@ export class ProblemEditor implements OnInit {
     this.problemService.addTestCase(this.problemId, data).subscribe({
       next: () => {
         this.testCaseForm.reset({ isPublic: true });
-        this.loadProblem();
+        this.refreshTestCases();
         this.successMessage.set('Test case added successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
@@ -241,12 +298,49 @@ export class ProblemEditor implements OnInit {
 
     this.problemService.deleteTestCase(testCaseId).subscribe({
       next: () => {
-        this.loadProblem();
+        this.refreshTestCases();
         this.successMessage.set('Test case deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
         this.errorMessage.set(error.error?.detail || 'Failed to delete test case');
+      }
+    });
+  }
+
+  startEditingTestCase(testCase: TestCaseResponse): void {
+    this.editingTestCaseId.set(testCase.id);
+    this.editTestCaseForm.patchValue({
+      input: testCase.input,
+      expectedOutput: testCase.expectedOutput,
+      isPublic: testCase.isPublic
+    });
+  }
+
+  cancelEditingTestCase(): void {
+    this.editingTestCaseId.set(null);
+    this.editTestCaseForm.reset({ isPublic: true });
+  }
+
+  saveTestCaseEdit(): void {
+    if (this.editTestCaseForm.invalid || !this.editingTestCaseId()) {
+      this.editTestCaseForm.markAllAsTouched();
+      return;
+    }
+
+    const data: UpdateTestCaseRequest = this.editTestCaseForm.value;
+    const testCaseId = this.editingTestCaseId()!;
+
+    this.problemService.updateTestCase(testCaseId, data).subscribe({
+      next: () => {
+        this.editingTestCaseId.set(null);
+        this.editTestCaseForm.reset({ isPublic: true });
+        this.refreshTestCases();
+        this.successMessage.set('Test case updated successfully');
+        setTimeout(() => this.successMessage.set(''), 3000);
+      },
+      error: (error: any) => {
+        this.errorMessage.set(error.error?.detail || 'Failed to update test case');
       }
     });
   }
@@ -262,7 +356,7 @@ export class ProblemEditor implements OnInit {
     
     this.problemService.reorderTestCases(this.problemId, reorderData).subscribe({
       next: () => {
-        this.loadProblem();
+        this.refreshTestCases();
       },
       error: (error: any) => {
         this.errorMessage.set(error.error?.detail || 'Failed to reorder test cases');
@@ -281,7 +375,7 @@ export class ProblemEditor implements OnInit {
     
     this.problemService.reorderTestCases(this.problemId, reorderData).subscribe({
       next: () => {
-        this.loadProblem();
+        this.refreshTestCases();
       },
       error: (error: any) => {
         this.errorMessage.set(error.error?.detail || 'Failed to reorder test cases');
@@ -327,7 +421,7 @@ export class ProblemEditor implements OnInit {
     this.problemService.addStarterCode(this.problemId, data).subscribe({
       next: () => {
         this.starterCodeForm.reset();
-        this.loadProblem();
+        this.refreshStarterCodes();
         this.successMessage.set('Starter code added successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
@@ -344,7 +438,7 @@ export class ProblemEditor implements OnInit {
 
     this.problemService.deleteStarterCode(starterCodeId).subscribe({
       next: () => {
-        this.loadProblem();
+        this.refreshStarterCodes();
         this.successMessage.set('Starter code deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
@@ -365,5 +459,23 @@ export class ProblemEditor implements OnInit {
       );
       return this.availableLanguages.filter(lang => !usedLanguageIds.includes(lang.id));
     }
+  }
+
+  isTagSelected(tagId: string): boolean {
+    const selectedTags = this.problemForm.get('tagIds')?.value || [];
+    return selectedTags.includes(tagId);
+  }
+
+  toggleTag(tagId: string): void {
+    const currentTags = this.problemForm.get('tagIds')?.value || [];
+    const index = currentTags.indexOf(tagId);
+    
+    if (index > -1) {
+      currentTags.splice(index, 1);
+    } else {
+      currentTags.push(tagId);
+    }
+    
+    this.problemForm.patchValue({ tagIds: [...currentTags] });
   }
 }

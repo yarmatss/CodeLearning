@@ -289,183 +289,58 @@
             <!-- Problem Fields -->
             @if (selectedBlockType() === BlockType.Problem) {
               <div class="mb-4 space-y-3">
-                <!-- Toggle between select existing or create new -->
-                <div class="flex gap-2">
-                  <button
-                    type="button"
-                    (click)="isCreatingNewProblem.set(false)"
-                    [class.bg-blue-600]="!isCreatingNewProblem()"
-                    [class.text-white]="!isCreatingNewProblem()"
-                    [class.bg-gray-200]="isCreatingNewProblem()"
-                    [class.text-gray-700]="isCreatingNewProblem()"
-                    class="flex-1 rounded-md px-4 py-2 text-sm font-medium"
-                  >
-                    Select Existing Problem
-                  </button>
-                  <button
-                    type="button"
-                    (click)="isCreatingNewProblem.set(true)"
-                    [class.bg-blue-600]="isCreatingNewProblem()"
-                    [class.text-white]="isCreatingNewProblem()"
-                    [class.bg-gray-200]="!isCreatingNewProblem()"
-                    [class.text-gray-700]="!isCreatingNewProblem()"
-                    class="flex-1 rounded-md px-4 py-2 text-sm font-medium"
-                  >
-                    Create New Problem
-                  </button>
-                </div>
-
-                <!-- Select Existing Problem -->
-                @if (!isCreatingNewProblem()) {
-                  <div>
-                    @if (isLoadingProblems()) {
-                      <p class="text-sm text-gray-500">Loading your problems...</p>
-                    } @else if (myProblems().length === 0) {
-                      <div class="rounded-md bg-yellow-50 p-3">
-                        <p class="text-sm text-yellow-800">You haven't created any problems yet. Create a new problem or switch to "Create New Problem" mode.</p>
-                      </div>
-                    } @else {
-                      <label class="mb-1 block text-sm font-medium text-gray-700">Select Problem</label>
-                      <select
-                        formControlName="problemId"
-                        (change)="onProblemSelect($any($event.target).value)"
-                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                <!-- Problem Selection -->
+                <div class="mb-3">
+                  @if (isLoadingProblems()) {
+                    <p class="text-sm text-gray-500">Loading your problems...</p>
+                  } @else if (myProblems().length === 0) {
+                    <div class="rounded-md bg-yellow-50 p-4">
+                      <p class="mb-2 text-sm font-semibold text-yellow-800">No problems available</p>
+                      <p class="mb-3 text-sm text-yellow-700">You need to create a problem first before adding it to this course.</p>
+                      <a
+                        [routerLink]="['/problems/create']"
+                        [queryParams]="{ returnUrl: getCurrentUrl() }"
+                        class="inline-flex items-center rounded-md bg-yellow-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-yellow-700"
                       >
-                        <option value="">-- Select a problem --</option>
+                        + Create New Problem
+                      </a>
+                    </div>
+                  } @else {
+                    <div class="mb-2 flex items-center justify-between">
+                      <label class="block text-sm font-medium text-gray-700">Select Problem</label>
+                      <a
+                        [routerLink]="['/problems/create']"
+                        [queryParams]="{ returnUrl: getCurrentUrl() }"
+                        class="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        + Create New
+                      </a>
+                    </div>
+                    <select
+                      formControlName="problemId"
+                      (change)="onProblemSelect($any($event.target).value)"
+                      class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="">-- Select a problem --</option>
+                      @for (problem of myProblems(); track problem.id) {
+                        <option [value]="problem.id">
+                          {{ problem.title }} ({{ problem.difficulty }})
+                        </option>
+                      }
+                    </select>
+                    
+                    @if (selectedProblemId()) {
+                      <div class="mt-2 rounded-md bg-blue-50 p-3">
                         @for (problem of myProblems(); track problem.id) {
-                          <option [value]="problem.id">
-                            {{ problem.title }} ({{ problem.difficulty }})
-                          </option>
+                          @if (problem.id === selectedProblemId()) {
+                            <p class="text-sm text-blue-800"><strong>{{ problem.title }}</strong></p>
+                            <p class="mt-1 text-xs text-blue-700">Difficulty: {{ problem.difficulty }}</p>
+                          }
                         }
-                      </select>
-                      
-                      @if (selectedProblemId()) {
-                        <div class="mt-2 rounded-md bg-blue-50 p-3">
-                          @for (problem of myProblems(); track problem.id) {
-                            @if (problem.id === selectedProblemId()) {
-                              <p class="text-sm text-blue-800"><strong>{{ problem.title }}</strong></p>
-                              <p class="mt-1 text-xs text-blue-700">Difficulty: {{ problem.difficulty }}</p>
-                            }
-                          }
-                        </div>
-                      }
-                    }
-                  </div>
-                }
-
-                <!-- Create New Problem -->
-                @if (isCreatingNewProblem()) {
-                  <div class="space-y-3">
-                    <div>
-                      <label for="newProblemTitle" class="mb-1 block text-sm font-medium text-gray-700">Problem Title</label>
-                      <input
-                        id="newProblemTitle"
-                        type="text"
-                        formControlName="newProblemTitle"
-                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="e.g., Two Sum"
-                      />
-                      <p class="mt-1 text-xs text-gray-500">Leave empty to use block title</p>
-                    </div>
-                    
-                    <div>
-                      <label for="newProblemDescription" class="mb-1 block text-sm font-medium text-gray-700">Problem Description (Markdown)</label>
-                      <textarea
-                        id="newProblemDescription"
-                        formControlName="newProblemDescription"
-                        rows="6"
-                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Describe the coding problem with examples..."
-                      ></textarea>
-                    </div>
-                    
-                    <div>
-                      <label for="newProblemDifficulty" class="mb-1 block text-sm font-medium text-gray-700">Difficulty</label>
-                      <select
-                        id="newProblemDifficulty"
-                        formControlName="newProblemDifficulty"
-                        class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="Easy">Easy</option>
-                        <option value="Medium">Medium</option>
-                        <option value="Hard">Hard</option>
-                      </select>
-                    </div>
-
-                    <!-- Test Cases -->
-                    <div>
-                      <div class="mb-2 flex items-center justify-between">
-                        <label class="block text-sm font-medium text-gray-700">Test Cases *</label>
-                        <button
-                          type="button"
-                          (click)="addTestCase()"
-                          class="rounded-md bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
-                        >
-                          + Add Test Case
-                        </button>
                       </div>
-                      
-                      @if (testCases.length === 0) {
-                        <div class="rounded-md bg-yellow-50 p-3">
-                          <p class="text-xs text-yellow-800">At least one test case is required. Click "Add Test Case" to add one.</p>
-                        </div>
-                      } @else {
-                        <div class="space-y-3" formArrayName="testCases">
-                          @for (testCase of testCases.controls; track $index; let i = $index) {
-                            <div [formGroupName]="i" class="rounded-md border border-gray-300 bg-gray-50 p-3">
-                              <div class="mb-2 flex items-center justify-between">
-                                <span class="text-xs font-medium text-gray-700">Test Case #{{ i + 1 }}</span>
-                                <button
-                                  type="button"
-                                  (click)="removeTestCase(i)"
-                                  class="text-xs text-red-600 hover:text-red-700"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                              
-                              <div class="mb-2">
-                                <label class="mb-1 block text-xs font-medium text-gray-700">Input</label>
-                                <textarea
-                                  formControlName="input"
-                                  rows="2"
-                                  class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  placeholder="e.g., [2,7,11,15]\n9"
-                                ></textarea>
-                              </div>
-                              
-                              <div class="mb-2">
-                                <label class="mb-1 block text-xs font-medium text-gray-700">Expected Output</label>
-                                <textarea
-                                  formControlName="expectedOutput"
-                                  rows="2"
-                                  class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  placeholder="e.g., [0,1]"
-                                ></textarea>
-                              </div>
-                              
-                              <div class="flex items-center">
-                                <input
-                                  type="checkbox"
-                                  formControlName="isPublic"
-                                  id="isPublic{{ i }}"
-                                  class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <label for="isPublic{{ i }}" class="ml-2 text-xs text-gray-700">
-                                  Public (visible to students)
-                                </label>
-                              </div>
-                            </div>
-                          }
-                        </div>
-                        
-                        <p class="mt-2 text-xs text-gray-500">
-                          💡 At least one test case must be public. Private test cases are used for hidden validation.
-                        </p>
-                      }
-                    </div>
-                  </div>
-                }
+                    }
+                  }
+                </div>
               </div>
             }
 
@@ -474,15 +349,11 @@
                 type="submit"
                 class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                @if (selectedBlockType() === BlockType.Problem && isCreatingNewProblem()) {
-                  Create Problem & Add Block
-                } @else {
-                  Add Block
-                }
+                {{ isEditingBlock() ? 'Update Block' : 'Add Block' }}
               </button>
               <button
                 type="button"
-                (click)="toggleAddBlock()"
+                (click)="isEditingBlock() ? cancelEdit() : toggleAddBlock()"
                 class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
               >
                 Cancel
@@ -552,6 +423,13 @@
                   }
                 </div>
                 <div class="flex gap-2">
+                  <button
+                    (click)="startEditBlock(block)"
+                    class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+                    title="Edit block"
+                  >
+                    Edit
+                  </button>
                   <button
                     (click)="moveBlockUp(block.id, block.orderIndex)"
                     [disabled]="block.orderIndex === 1"

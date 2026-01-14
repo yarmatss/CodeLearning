@@ -48,6 +48,7 @@ export interface UpdateProblemRequest {
   title: string;
   description: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
+  tagIds?: string[];
 }
 
 export interface CreateTestCaseRequest {
@@ -109,6 +110,10 @@ export class ProblemService {
 
   deleteProblem(id: string): Observable<{ message: string }> {
     return this.http.delete<{ message: string }>(`/api/problems/${id}`);
+  }
+
+  getTags(): Observable<TagResponse[]> {
+    return this.http.get<TagResponse[]>('/api/problems/tags');
   }
 
   // Test Cases

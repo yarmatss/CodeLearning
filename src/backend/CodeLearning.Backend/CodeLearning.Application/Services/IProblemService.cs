@@ -10,6 +10,7 @@ public interface IProblemService
     Task<IEnumerable<ProblemListDto>> GetMyProblemsAsync(Guid authorId);
     Task<ProblemResponseDto> UpdateProblemAsync(Guid problemId, UpdateProblemDto dto, Guid authorId);
     Task DeleteProblemAsync(Guid problemId, Guid authorId);
+    Task<IEnumerable<TagResponseDto>> GetAllTagsAsync();
     
     // Test Case Management
     Task<TestCaseResponseDto> AddTestCaseAsync(Guid problemId, CreateTestCaseDto dto, Guid authorId);

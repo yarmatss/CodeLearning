@@ -9,8 +9,8 @@ public interface IBlockService
     Task<Guid> CreateQuizBlockAsync(Guid subchapterId, CreateQuizBlockDto dto, Guid instructorId);
     Task<Guid> CreateProblemBlockAsync(Guid subchapterId, CreateProblemBlockDto dto, Guid instructorId);
     
-    Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId);
-    Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId);
+    Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, bool includeCorrectAnswers = false);
+    Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, bool includeCorrectAnswers = false);
 
     Task UpdateTheoryBlockAsync(Guid blockId, UpdateTheoryBlockDto dto, Guid instructorId);
     Task UpdateVideoBlockAsync(Guid blockId, UpdateVideoBlockDto dto, Guid instructorId);

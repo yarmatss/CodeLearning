@@ -3,7 +3,7 @@ import { Router, RouterLink, NavigationEnd } from '@angular/router';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { filter, Subscription } from 'rxjs';
-import { ProblemService, ProblemResponse } from '../../../core/services/problem.service';
+import { ProblemService, ProblemResponse, TagResponse } from '../../../core/services/problem.service';
 import { AuthService } from '../../../core/services/auth.service';
 
 @Component({
@@ -19,18 +19,25 @@ export class ProblemList implements OnInit, OnDestroy {
   private readonly router = inject(Router);
 
   readonly problems = signal<ProblemResponse[]>([]);
+  readonly availableTags = signal<TagResponse[]>([]);
+  readonly myProblemIds = signal<Set<string>>(new Set());
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly successMessage = signal<string>('');
 
   readonly searchControl = new FormControl('');
   readonly difficultyControl = new FormControl('');
+  readonly tagControl = new FormControl('');
 
   readonly isTeacher = computed(() => this.authService.currentUser()?.role === 'Teacher');
   
   private routerSubscription?: Subscription;
 
   ngOnInit(): void {
+    this.loadTags();
+    if (this.isTeacher()) {
+      this.loadMyProblems();
+    }
     this.loadProblems();
     
     // Reload list when navigating back to /problems (e.g., from problem editor)
@@ -46,14 +53,36 @@ export class ProblemList implements OnInit, OnDestroy {
     this.routerSubscription?.unsubscribe();
   }
 
+  loadTags(): void {
+    this.problemService.getTags().subscribe({
+      next: (tags) => this.availableTags.set(tags),
+      error: () => this.availableTags.set([])
+    });
+  }
+
+  loadMyProblems(): void {
+    this.problemService.getMyProblems().subscribe({
+      next: (problems) => {
+        const ids = new Set(problems.map(p => p.id));
+        this.myProblemIds.set(ids);
+      },
+      error: () => this.myProblemIds.set(new Set())
+    });
+  }
+
+  canEditProblem(problemId: string): boolean {
+    return this.myProblemIds().has(problemId);
+  }
+
   loadProblems(): void {
     this.isLoading.set(true);
     this.errorMessage.set('');
 
     const search = this.searchControl.value || undefined;
     const difficulty = this.difficultyControl.value || undefined;
+    const tagId = this.tagControl.value || undefined;
 
-    this.problemService.getProblems(difficulty, undefined, search).subscribe({
+    this.problemService.getProblems(difficulty, tagId, search).subscribe({
       next: (problems) => {
         this.problems.set(problems);
         this.isLoading.set(false);
@@ -73,9 +102,14 @@ export class ProblemList implements OnInit, OnDestroy {
     this.loadProblems();
   }
 
+  onTagChange(): void {
+    this.loadProblems();
+  }
+
   clearFilters(): void {
     this.searchControl.setValue('');
     this.difficultyControl.setValue('');
+    this.tagControl.setValue('');
     this.loadProblems();
   }
 

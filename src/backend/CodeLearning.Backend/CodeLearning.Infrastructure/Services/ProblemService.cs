@@ -171,6 +171,9 @@ public class ProblemService(
         problem.Description = sanitizationService.SanitizeMarkdown(dto.Description);
         problem.Difficulty = Enum.Parse<DifficultyLevel>(dto.Difficulty);
 
+        // Mark problem as modified to ensure EF Core tracks changes
+        context.Entry(problem).State = EntityState.Modified;
+
         context.ProblemTags.RemoveRange(problem.ProblemTags);
 
         if (dto.TagIds.Count > 0)
@@ -220,6 +223,19 @@ public class ProblemService(
 
         context.Problems.Remove(problem);
         await context.SaveChangesAsync();
+    }
+
+    public async Task<IEnumerable<TagResponseDto>> GetAllTagsAsync()
+    {
+        var tags = await context.Tags
+            .OrderBy(t => t.Name)
+            .ToListAsync();
+
+        return tags.Select(t => new TagResponseDto
+        {
+            Id = t.Id,
+            Name = t.Name
+        });
     }
 
     public async Task<TestCaseResponseDto> AddTestCaseAsync(Guid problemId, CreateTestCaseDto dto, Guid authorId)
@@ -507,7 +523,11 @@ public class ProblemService(
         Difficulty = problem.Difficulty.ToString(),
         AuthorName = $"{problem.Author.FirstName} {problem.Author.LastName}",
         TestCasesCount = problem.TestCases.Count,
-        Tags = problem.ProblemTags.Select(pt => pt.Tag.Name).ToList(),
+        Tags = problem.ProblemTags.Select(pt => new TagResponseDto
+        {
+            Id = pt.Tag.Id,
+            Name = pt.Tag.Name
+        }).ToList(),
         CreatedAt = problem.CreatedAt
     };
 

@@ -175,15 +175,15 @@ public class BlockService(
         await context.SaveChangesAsync();
     }
 
-    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId)
+    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, bool includeCorrectAnswers = false)
     {
         var block = await GetBlockWithIncludesAsync(blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
-        return block.ToResponseDto();
+        return block.ToResponseDto(includeCorrectAnswers);
     }
 
-    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId)
+    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, bool includeCorrectAnswers = false)
     {
         var blocks = await context.CourseBlocks
             .Include(b => b.TheoryContent)
@@ -196,7 +196,7 @@ public class BlockService(
             .OrderBy(b => b.OrderIndex)
             .ToListAsync();
 
-        return blocks.ToResponseDtos();
+        return blocks.ToResponseDtos(includeCorrectAnswers);
     }
 
     public async Task UpdateTheoryBlockAsync(Guid blockId, UpdateTheoryBlockDto dto, Guid instructorId)

@@ -5,7 +5,7 @@ namespace CodeLearning.Application.Extensions;
 
 public static class CourseBlockExtensions
 {
-    public static BlockResponseDto ToResponseDto(this CourseBlock block)
+    public static BlockResponseDto ToResponseDto(this CourseBlock block, bool includeCorrectAnswers = false)
     {
         ArgumentNullException.ThrowIfNull(block);
 
@@ -20,14 +20,14 @@ public static class CourseBlockExtensions
 
         dto.TheoryContent = block.TheoryContent?.ToDto();
         dto.VideoContent = block.VideoContent?.ToDto();
-        dto.Quiz = block.Quiz?.ToDto();
+        dto.Quiz = block.Quiz?.ToDto(includeCorrectAnswers);
         dto.Problem = block.Problem?.ToDto();
 
         return dto;
     }
 
-    public static IEnumerable<BlockResponseDto> ToResponseDtos(this IEnumerable<CourseBlock> blocks)
+    public static IEnumerable<BlockResponseDto> ToResponseDtos(this IEnumerable<CourseBlock> blocks, bool includeCorrectAnswers = false)
     {
-        return blocks.Select(b => b.ToResponseDto());
+        return blocks.Select(b => b.ToResponseDto(includeCorrectAnswers));
     }
 }

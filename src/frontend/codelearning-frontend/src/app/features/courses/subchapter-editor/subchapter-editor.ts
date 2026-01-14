@@ -33,13 +33,14 @@ export class SubchapterEditor implements OnInit {
   readonly errorMessage = signal<string>('');
   readonly successMessage = signal<string>('');
   readonly isAddingBlock = signal(false);
+  readonly isEditingBlock = signal(false);
+  readonly editingBlockId = signal<string | null>(null);
   readonly selectedBlockType = signal<BlockType | null>(null);
   
   // Problem-specific signals
   readonly myProblems = signal<ProblemResponse[]>([]);
   readonly isLoadingProblems = signal(false);
   readonly selectedProblemId = signal<string | null>(null);
-  readonly isCreatingNewProblem = signal(false);
 
   readonly blockForm: FormGroup;
   readonly BlockType = BlockType;
@@ -47,10 +48,6 @@ export class SubchapterEditor implements OnInit {
   courseId = '';
   chapterId = '';
   subchapterId = '';
-
-  get testCases(): FormArray {
-    return this.blockForm.get('testCases') as FormArray;
-  }
 
   get questions(): FormArray {
     return this.blockForm.get('questions') as FormArray;
@@ -66,11 +63,6 @@ export class SubchapterEditor implements OnInit {
       videoUrl: [''],
       // Problem fields
       problemId: [''],
-      newProblemTitle: [''],
-      newProblemDescription: [''],
-      newProblemDifficulty: ['Easy'],
-      // Test cases for new problems
-      testCases: this.fb.array([]),
       // Quiz fields
       questions: this.fb.array([])
     });
@@ -84,6 +76,58 @@ export class SubchapterEditor implements OnInit {
     if (this.subchapterId) {
       this.loadBlocks();
     }
+  }
+
+  getCurrentUrl(): string {
+    return this.router.url;
+  }
+
+  startEditBlock(block: Block): void {
+    this.isEditingBlock.set(true);
+    this.editingBlockId.set(block.id);
+    this.selectedBlockType.set(block.type);
+    this.isAddingBlock.set(true); // Reuse the same form UI
+
+    // Populate form based on block type
+    this.blockForm.patchValue({
+      title: block.title,
+      type: block.type
+    });
+
+    if (block.type === BlockType.Theory && block.theoryContent) {
+      this.blockForm.patchValue({ theoryContent: block.theoryContent.content });
+    } else if (block.type === BlockType.Video && block.videoContent) {
+      this.blockForm.patchValue({ videoUrl: block.videoContent.videoUrl });
+    } else if (block.type === BlockType.Quiz && block.quiz) {
+      // Populate quiz questions
+      this.questions.clear();
+      block.quiz.questions.forEach(q => {
+        const questionGroup = this.fb.group({
+          questionText: [q.content, Validators.required],
+          type: [q.type, Validators.required],
+          points: [q.points, [Validators.required, Validators.min(1)]],
+          explanation: [q.explanation || ''],
+          answers: this.fb.array(
+            q.answers.map(a => this.fb.group({
+              answerText: [a.text, Validators.required],
+              isCorrect: [a.isCorrect ?? false]
+            }))
+          )
+        });
+        this.questions.push(questionGroup);
+      });
+    } else if (block.type === BlockType.Problem && block.problem) {
+      // Redirect to problem edit page instead of showing the form
+      this.router.navigate(['/problems', block.problem.id, 'edit'], {
+        queryParams: { returnUrl: this.getCurrentUrl() }
+      });
+    }
+  }
+
+  cancelEdit(): void {
+    this.isEditingBlock.set(false);
+    this.editingBlockId.set(null);
+    this.toggleAddBlock();
   }
 
   loadBlocks(): void {
@@ -104,11 +148,9 @@ export class SubchapterEditor implements OnInit {
     this.isAddingBlock.update(v => !v);
     if (!this.isAddingBlock()) {
       this.blockForm.reset();
-      this.testCases.clear();
       this.questions.clear();
       this.selectedBlockType.set(null);
       this.selectedProblemId.set(null);
-      this.isCreatingNewProblem.set(false);
     }
   }
 
@@ -156,29 +198,6 @@ export class SubchapterEditor implements OnInit {
         this.errorMessage.set(error.error?.detail || 'Failed to load problems');
       }
     });
-  }
-
-  toggleCreateNewProblem(): void {
-    this.isCreatingNewProblem.update(v => !v);
-    this.selectedProblemId.set(null);
-    
-    // Add one test case when switching to create new problem
-    if (this.isCreatingNewProblem() && this.testCases.length === 0) {
-      this.addTestCase();
-    }
-  }
-
-  addTestCase(): void {
-    const testCaseGroup = this.fb.group({
-      input: ['', Validators.required],
-      expectedOutput: ['', Validators.required],
-      isPublic: [true]
-    });
-    this.testCases.push(testCaseGroup);
-  }
-
-  removeTestCase(index: number): void {
-    this.testCases.removeAt(index);
   }
 
   // Quiz management methods
@@ -277,10 +296,12 @@ export class SubchapterEditor implements OnInit {
 
   onProblemSelect(problemId: string): void {
     this.selectedProblemId.set(problemId);
-    this.isCreatingNewProblem.set(false);
   }
 
   addBlock(): void {
+    const isEditing = this.isEditingBlock();
+    const blockId = this.editingBlockId();
+    
     // For Quiz type, validate questions separately
     const formValue = this.blockForm.value;
     
@@ -309,7 +330,9 @@ export class SubchapterEditor implements OnInit {
           title: formValue.title,
           content: formValue.theoryContent || ''
         };
-        request$ = this.blockService.addTheoryBlock(this.subchapterId, theoryRequest);
+        request$ = isEditing && blockId
+          ? this.blockService.updateTheoryBlock(this.subchapterId, blockId, theoryRequest)
+          : this.blockService.addTheoryBlock(this.subchapterId, theoryRequest);
         break;
       
       case BlockType.Video:
@@ -317,7 +340,9 @@ export class SubchapterEditor implements OnInit {
           title: formValue.title,
           videoUrl: formValue.videoUrl || ''
         };
-        request$ = this.blockService.addVideoBlock(this.subchapterId, videoRequest);
+        request$ = isEditing && blockId
+          ? this.blockService.updateVideoBlock(this.subchapterId, blockId, videoRequest)
+          : this.blockService.addVideoBlock(this.subchapterId, videoRequest);
         break;
       
       case BlockType.Quiz:
@@ -355,74 +380,25 @@ export class SubchapterEditor implements OnInit {
             }))
           }))
         };
-        request$ = this.blockService.addQuizBlock(this.subchapterId, quizRequest);
+        request$ = isEditing && blockId
+          ? this.blockService.updateQuizBlock(this.subchapterId, blockId, quizRequest)
+          : this.blockService.addQuizBlock(this.subchapterId, quizRequest);
         break;
       
       case BlockType.Problem:
-        if (this.isCreatingNewProblem()) {
-          // Validate test cases
-          if (this.testCases.length === 0) {
-            this.errorMessage.set('At least one test case is required');
-            return;
-          }
-          
-          const hasPublicTestCase = this.testCases.controls.some(tc => tc.get('isPublic')?.value === true);
-          if (!hasPublicTestCase) {
-            this.errorMessage.set('At least one test case must be public');
-            return;
-          }
-          
-          // Create new problem first, then create block
-          const newProblemData: CreateProblemRequest = {
-            title: formValue.newProblemTitle || formValue.title,
-            description: formValue.newProblemDescription || '',
-            difficulty: formValue.newProblemDifficulty as 'Easy' | 'Medium' | 'Hard',
-            testCases: this.testCases.value
-          };
-          
-          this.problemService.createProblem(newProblemData).subscribe({
-            next: (createdProblem) => {
-              const problemBlockRequest: CreateProblemBlockRequest = {
-                title: formValue.title,
-                problemId: createdProblem.id
-              };
-              
-              this.blockService.addProblemBlock(this.subchapterId, problemBlockRequest).subscribe({
-                next: () => {
-                  this.blockForm.reset();
-                  this.testCases.clear();
-                  this.isAddingBlock.set(false);
-                  this.selectedBlockType.set(null);
-                  this.isCreatingNewProblem.set(false);
-                  this.successMessage.set('Problem block added successfully');
-                  setTimeout(() => this.successMessage.set(''), 3000);
-                  this.loadBlocks();
-                  this.loadMyProblems(); // Refresh problems list
-                },
-                error: (error: any) => {
-                  this.errorMessage.set(this.extractErrorMessage(error));
-                }
-              });
-            },
-            error: (error: any) => {
-              this.errorMessage.set(this.extractErrorMessage(error));
-            }
-          });
-          return; // Exit early since we handle response in nested subscribe
-        } else {
-          // Use existing problem
-          const problemId = this.selectedProblemId() || formValue.problemId;
-          if (!problemId) {
-            this.errorMessage.set('Please select a problem or create a new one');
-            return;
-          }
-          
-          const problemRequest: CreateProblemBlockRequest = {
-            title: formValue.title,
-            problemId: problemId
-          };
-          request$ = this.blockService.addProblemBlock(this.subchapterId, problemRequest);
+        const problemId = this.selectedProblemId() || formValue.problemId;
+        if (!problemId) {
+          this.errorMessage.set('Please select a problem');
+          return;
         }
+        
+        const problemRequest: CreateProblemBlockRequest = {
+          title: formValue.title,
+          problemId: problemId
+        };
+        request$ = isEditing && blockId
+          ? this.blockService.updateProblemBlock(this.subchapterId, blockId, problemRequest)
+          : this.blockService.addProblemBlock(this.subchapterId, problemRequest);
         break;
       
       default:
@@ -433,11 +409,12 @@ export class SubchapterEditor implements OnInit {
     request$.subscribe({
       next: (block) => {
         this.blockForm.reset();
-        this.testCases.clear();
         this.questions.clear();
         this.isAddingBlock.set(false);
+        this.isEditingBlock.set(false);
+        this.editingBlockId.set(null);
         this.selectedBlockType.set(null);
-        this.successMessage.set('Block added successfully');
+        this.successMessage.set(isEditing ? 'Block updated successfully' : 'Block added successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
         // Reload blocks to get complete data from server
         this.loadBlocks();

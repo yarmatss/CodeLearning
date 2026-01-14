@@ -86,14 +86,19 @@ export interface Quiz {
 
 export interface QuizQuestion {
   id: string;
-  questionText: string;
+  content: string;
+  type: string; // "SingleChoice" | "MultipleChoice" | "TrueFalse"
+  points: number;
+  explanation?: string;
+  orderIndex: number;
   answers: QuizAnswer[];
 }
 
 export interface QuizAnswer {
   id: string;
-  answerText: string;
-  isCorrect: boolean;
+  text: string;
+  orderIndex: number;
+  isCorrect?: boolean; // Only populated for instructors/admins editing quizzes
 }
 
 export interface Problem {

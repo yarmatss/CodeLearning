@@ -29,7 +29,7 @@
 
   <!-- Filters -->
   <div class="mb-6 rounded-lg border border-gray-200 bg-white p-4">
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-700">Search</label>
         <input
@@ -51,6 +51,19 @@
           <option value="Easy">Easy</option>
           <option value="Medium">Medium</option>
           <option value="Hard">Hard</option>
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-sm font-medium text-gray-700">Tag</label>
+        <select
+          [formControl]="tagControl"
+          (change)="onTagChange()"
+          class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">All Tags</option>
+          @for (tag of availableTags(); track tag.id) {
+            <option [value]="tag.id">{{ tag.name }}</option>
+          }
         </select>
       </div>
       <div class="flex items-end gap-2">
@@ -122,20 +135,35 @@
                   </div>
                 }
               </div>
-              @if (isTeacher() && problem.authorId === authService.currentUser()?.userId) {
+              @if (isTeacher()) {
                 <div class="ml-4 flex gap-2">
-                  <button
-                    (click)="editProblem(problem.id)"
-                    class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    (click)="deleteProblem(problem.id, problem.title)"
-                    class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
+                  @if (canEditProblem(problem.id)) {
+                    <a
+                      [routerLink]="['/problems', problem.id]"
+                      class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700"
+                    >
+                      View
+                    </a>
+                    <button
+                      (click)="editProblem(problem.id)"
+                      class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      (click)="deleteProblem(problem.id, problem.title)"
+                      class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  } @else {
+                    <a
+                      [routerLink]="['/problems', problem.id]"
+                      class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700"
+                    >
+                      View
+                    </a>
+                  }
                 </div>
               }
             </div>
