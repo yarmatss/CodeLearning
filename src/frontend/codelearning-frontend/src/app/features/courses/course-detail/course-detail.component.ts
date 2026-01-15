@@ -1,15 +1,17 @@
 import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { DatePipe } from '@angular/common';
+import { DatePipe, CommonModule } from '@angular/common';
 import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { MarkdownService } from '../../../core/services/markdown.service';
+import { ProgressService } from '../../../core/services/progress.service';
 import { Course, CourseStatus } from '../../../core/models/course.model';
+import { CourseProgress, CourseStructure } from '../../../core/models/progress.model';
 
 @Component({
   selector: 'app-course-detail',
-  imports: [RouterLink, DatePipe],
+  imports: [RouterLink, DatePipe, CommonModule],
   templateUrl: './course-detail.component.html',
   styleUrl: './course-detail.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -19,6 +21,7 @@ export class CourseDetailComponent implements OnInit {
   readonly courseService = inject(CourseService);
   readonly authService = inject(AuthService);
   readonly markdownService = inject(MarkdownService);
+  readonly progressService = inject(ProgressService);
 
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
@@ -26,6 +29,8 @@ export class CourseDetailComponent implements OnInit {
   readonly isEnrolling = signal(false);
 
   readonly course = signal<Course | null>(null);
+  readonly courseProgress = signal<CourseProgress | null>(null);
+  readonly courseStructure = signal<CourseStructure | null>(null);
 
   readonly canEdit = signal(false);
 
@@ -35,6 +40,9 @@ export class CourseDetailComponent implements OnInit {
       this.loadCourse(courseId);
       if (this.authService.isStudent()) {
         this.checkEnrollmentStatus(courseId);
+      } else {
+        // For non-students (teachers, unauthenticated), load structure
+        this.loadCourseStructure(courseId);
       }
     }
   }
@@ -67,9 +75,41 @@ export class CourseDetailComponent implements OnInit {
     this.courseService.getEnrollmentStatus(courseId).subscribe({
       next: (status) => {
         this.isEnrolled.set(status.isEnrolled);
+        
+        // If enrolled, load progress with structure
+        if (status.isEnrolled) {
+          this.loadCourseProgress(courseId);
+        } else {
+          // If not enrolled, load structure without progress
+          this.loadCourseStructure(courseId);
+        }
       },
       error: () => {
         this.isEnrolled.set(false);
+        // On error, load structure anyway
+        this.loadCourseStructure(courseId);
+      }
+    });
+  }
+
+  loadCourseProgress(courseId: string): void {
+    this.progressService.getCourseProgress(courseId).subscribe({
+      next: (progress) => {
+        this.courseProgress.set(progress);
+      },
+      error: (error) => {
+        console.error('Failed to load course progress:', error);
+      }
+    });
+  }
+
+  loadCourseStructure(courseId: string): void {
+    this.courseService.getCourseStructure(courseId).subscribe({
+      next: (structure) => {
+        this.courseStructure.set(structure);
+      },
+      error: (error) => {
+        console.error('Failed to load course structure:', error);
       }
     });
   }
@@ -85,12 +125,39 @@ export class CourseDetailComponent implements OnInit {
       next: () => {
         this.isEnrolling.set(false);
         this.isEnrolled.set(true);
+        // After enrollment, load progress instead of structure
+        this.loadCourseProgress(courseId);
       },
       error: (error: any) => {
         this.isEnrolling.set(false);
         this.errorMessage.set(error.error?.message || 'Failed to enroll in course');
       }
     });
+  }
+
+  unenrollFromCourse(): void {
+    const courseId = this.course()?.id;
+    const courseTitle = this.course()?.title;
+    if (!courseId) return;
+
+    if (confirm(`Are you sure you want to unenroll from "${courseTitle}"? Your progress will be lost.`)) {
+      this.isEnrolling.set(true);
+      this.errorMessage.set('');
+
+      this.courseService.unenrollFromCourse(courseId).subscribe({
+        next: () => {
+          this.isEnrolling.set(false);
+          this.isEnrolled.set(false);
+          // After unenrolling, clear progress and load structure
+          this.courseProgress.set(null);
+          this.loadCourseStructure(courseId);
+        },
+        error: (error: any) => {
+          this.isEnrolling.set(false);
+          this.errorMessage.set(error.error?.message || 'Failed to unenroll from course');
+        }
+      });
+    }
   }
 
   publishCourse(): void {
@@ -140,6 +207,55 @@ export class CourseDetailComponent implements OnInit {
 
   renderDescription(description: string): SafeHtml {
     return this.markdownService.renderMarkdownSync(description);
+  }
+
+  getCompletedBlocksInSubchapter(subchapterId: string): number {
+    const progress = this.courseProgress();
+    if (!progress) return 0;
+    
+    for (const chapter of progress.chapters) {
+      const subchapter = chapter.subchapters.find(s => s.subchapterId === subchapterId);
+      if (subchapter) {
+        return subchapter.blocks.filter(b => b.isCompleted).length;
+      }
+    }
+    return 0;
+  }
+
+  getCompletedBlocksInChapter(chapterId: string): number {
+    const progress = this.courseProgress();
+    if (!progress) return 0;
+    
+    const chapter = progress.chapters.find(c => c.chapterId === chapterId);
+    if (!chapter) return 0;
+    
+    return chapter.subchapters.reduce((total, subchapter) => {
+      return total + subchapter.blocks.filter(b => b.isCompleted).length;
+    }, 0);
+  }
+
+  getTotalBlocksInChapter(chapterId: string): number {
+    const progress = this.courseProgress();
+    if (!progress) return 0;
+    
+    const chapter = progress.chapters.find(c => c.chapterId === chapterId);
+    if (!chapter) return 0;
+    
+    return chapter.subchapters.reduce((total, subchapter) => {
+      return total + subchapter.blocks.length;
+    }, 0);
+  }
+
+  getTotalBlocksInChapterFromStructure(chapterId: string): number {
+    const structure = this.courseStructure();
+    if (!structure) return 0;
+    
+    const chapter = structure.chapters.find(c => c.chapterId === chapterId);
+    if (!chapter) return 0;
+    
+    return chapter.subchapters.reduce((total, subchapter) => {
+      return total + subchapter.blocksCount;
+    }, 0);
   }
 
   // Expose enum to template

@@ -34,6 +34,14 @@ public class CoursesController(
         return Ok(course);
     }
 
+    [HttpGet("{id}/structure")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetCourseStructure(Guid id)
+    {
+        var structure = await courseService.GetCourseStructureAsync(id);
+        return Ok(structure);
+    }
+
     [HttpGet("my-courses")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> GetMyCourses()

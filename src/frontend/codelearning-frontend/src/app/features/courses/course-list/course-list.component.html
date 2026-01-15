@@ -99,11 +99,18 @@
                   {{ course.title }}
                 </a>
               </h3>
-              <span
-                [class]="'rounded-full px-2 py-1 text-xs font-semibold ' + getStatusBadgeClass(course.status)"
-              >
-                {{ getStatusText(course.status) }}
-              </span>
+              <div class="flex flex-col items-end gap-1">
+                <span
+                  [class]="'rounded-full px-2 py-1 text-xs font-semibold ' + getStatusBadgeClass(course.status)"
+                >
+                  {{ getStatusText(course.status) }}
+                </span>
+                @if (authService.isStudent() && isEnrolledIn(course.id)) {
+                  <span class="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 text-center">
+                    Enrolled
+                  </span>
+                }
+              </div>
             </div>
 
             <div class="mb-4 line-clamp-2 text-sm text-gray-600 markdown-content" [innerHTML]="renderDescription(course.description)">
@@ -118,15 +125,52 @@
               <span>📝 {{ course.totalBlocks }} blocks</span>
             </div>
 
-            <div class="flex gap-2">
-              <a
-                [routerLink]="['/courses', course.id]"
-                class="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                View Details
-              </a>
+            @if (authService.isStudent() && isEnrolledIn(course.id)) {
+              <div class="mb-4">
+                <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
+                  <span>Your Progress</span>
+                  <span class="font-semibold">{{ getCourseProgress(course.id) }}%</span>
+                </div>
+                <div class="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    class="h-full bg-blue-500 transition-all duration-300"
+                    [style.width.%]="getCourseProgress(course.id)"
+                  ></div>
+                </div>
+              </div>
+            }
 
-              @if (authService.isTeacher()) {
+            <div class="flex gap-2">
+              @if (authService.isStudent()) {
+                @if (isEnrolledIn(course.id)) {
+                  <a
+                    [routerLink]="['/learn', course.id]"
+                    class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    Continue Learning
+                  </a>
+                  <a
+                    [routerLink]="['/courses', course.id]"
+                    class="rounded-md border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Details
+                  </a>
+                } @else {
+                  <a
+                    [routerLink]="['/courses', course.id]"
+                    class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    View Details
+                  </a>
+                }
+              } @else {
+                <a
+                  [routerLink]="['/courses', course.id]"
+                  class="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  View Details
+                </a>
+
                 @if (course.status === CourseStatus.Draft) {
                   <a
                     [routerLink]="['/courses', course.id, 'edit']"

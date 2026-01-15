@@ -61,10 +61,16 @@
         @if (course()!.status === CourseStatus.Published) {
           @if (isEnrolled()) {
             <button
-              disabled
-              class="rounded-md bg-green-600 px-6 py-3 text-white"
+              (click)="unenrollFromCourse()"
+              [disabled]="isEnrolling()"
+              class="rounded-md bg-green-600 px-6 py-3 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Click to unenroll from this course"
             >
-              ✓ Enrolled
+              @if (isEnrolling()) {
+                <span>Processing...</span>
+              } @else {
+                <span>✓ Enrolled</span>
+              }
             </button>
             <a
               [routerLink]="['/learn', course()!.id]"
@@ -124,10 +130,81 @@
       }
     </div>
 
-    <!-- Course Content (Placeholder) -->
+    <!-- Course Content -->
     <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <h2 class="mb-4 text-xl font-semibold text-gray-900">Course Content</h2>
-      @if (course()!.chaptersCount === 0) {
+      
+      @if (courseProgress()) {
+        <!-- Show progress structure for enrolled students -->
+        <div class="space-y-4">
+          @for (chapter of courseProgress()!.chapters; track chapter.chapterId) {
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <!-- Chapter Header -->
+              <div class="mb-3 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900">
+                  {{ chapter.orderIndex }}. {{ chapter.title }}
+                </h3>
+                <span class="text-sm font-medium text-gray-600">
+                  {{ getCompletedBlocksInChapter(chapter.chapterId) }}/{{ getTotalBlocksInChapter(chapter.chapterId) }} blocks
+                </span>
+              </div>
+
+              <!-- Subchapters -->
+              <div class="ml-4 space-y-2">
+                @for (subchapter of chapter.subchapters; track subchapter.subchapterId) {
+                  <div class="flex items-center justify-between rounded-md bg-white p-3">
+                    <span class="text-sm text-gray-700">
+                      {{ chapter.orderIndex }}.{{ subchapter.orderIndex }} {{ subchapter.title }}
+                    </span>
+                    <span class="text-xs font-medium text-gray-500">
+                      {{ getCompletedBlocksInSubchapter(subchapter.subchapterId) }}/{{ subchapter.blocks.length }} blocks
+                    </span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      } @else if (courseStructure()) {
+        <!-- Show structure without progress for non-enrolled users -->
+        <div class="space-y-4">
+          @for (chapter of courseStructure()!.chapters; track chapter.chapterId) {
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <!-- Chapter Header -->
+              <div class="mb-3 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900">
+                  {{ chapter.orderIndex }}. {{ chapter.title }}
+                </h3>
+                <span class="text-sm font-medium text-gray-600">
+                  {{ getTotalBlocksInChapterFromStructure(chapter.chapterId) }} blocks
+                </span>
+              </div>
+
+              <!-- Subchapters -->
+              <div class="ml-4 space-y-2">
+                @for (subchapter of chapter.subchapters; track subchapter.subchapterId) {
+                  <div class="flex items-center justify-between rounded-md bg-white p-3">
+                    <span class="text-sm text-gray-700">
+                      {{ chapter.orderIndex }}.{{ subchapter.orderIndex }} {{ subchapter.title }}
+                    </span>
+                    <span class="text-xs font-medium text-gray-500">
+                      {{ subchapter.blocksCount }} blocks
+                    </span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+        @if (authService.isStudent() && !isEnrolled()) {
+          <div class="mt-4 rounded-md bg-blue-50 p-4">
+            <p class="text-sm text-blue-800">
+              Enroll in this course to track your progress.
+            </p>
+          </div>
+        }
+      } @else if (course()!.chaptersCount === 0) {
         <p class="text-gray-500">
           No chapters have been added to this course yet.
           @if (canEdit()) {
@@ -138,7 +215,7 @@
         </p>
       } @else {
         <p class="text-gray-500">
-          Course content will be displayed here (coming soon).
+          This course has {{ course()!.chaptersCount }} chapter(s) with {{ course()!.totalBlocks }} block(s).
         </p>
       }
     </div>

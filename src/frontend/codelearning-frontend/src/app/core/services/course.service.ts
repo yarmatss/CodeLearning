@@ -9,6 +9,7 @@ import {
   EnrolledCourse,
   EnrollmentStatus
 } from '../models/course.model';
+import { CourseStructure } from '../models/progress.model';
 
 @Injectable({
   providedIn: 'root'
@@ -109,5 +110,10 @@ export class CourseService {
   // Student: Check enrollment status
   getEnrollmentStatus(courseId: string): Observable<EnrollmentStatus> {
     return this.http.get<EnrollmentStatus>(`${this.ENROLLMENT_URL}/courses/${courseId}/status`);
+  }
+
+  // Get course structure (for non-enrolled users)
+  getCourseStructure(courseId: string): Observable<CourseStructure> {
+    return this.http.get<CourseStructure>(`${this.API_URL}/${courseId}/structure`);
   }
 }

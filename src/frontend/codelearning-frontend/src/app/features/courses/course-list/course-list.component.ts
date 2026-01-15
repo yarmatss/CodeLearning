@@ -4,7 +4,7 @@ import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { MarkdownService } from '../../../core/services/markdown.service';
-import { Course, CourseStatus } from '../../../core/models/course.model';
+import { Course, CourseStatus, EnrolledCourse } from '../../../core/models/course.model';
 
 @Component({
   selector: 'app-course-list',
@@ -24,6 +24,7 @@ export class CourseListComponent implements OnInit {
   readonly errorMessage = signal<string>('');
   readonly searchQuery = signal('');
   readonly statusFilter = signal<'all' | 'draft' | 'published'>('all');
+  readonly enrolledCourses = signal<EnrolledCourse[]>([]);
 
   readonly filteredCourses = computed(() => {
     let courses = this.courseService.courses();
@@ -71,6 +72,18 @@ export class CourseListComponent implements OnInit {
     observable.subscribe({
       next: () => {
         this.isLoading.set(false);
+        
+        // If student, also load enrolled courses to show enrollment status
+        if (this.authService.isStudent()) {
+          this.courseService.getEnrolledCourses().subscribe({
+            next: (enrolled) => {
+              this.enrolledCourses.set(enrolled);
+            },
+            error: (error) => {
+              console.error('Failed to load enrolled courses:', error);
+            }
+          });
+        }
       },
       error: (error: any) => {
         this.isLoading.set(false);
@@ -104,5 +117,14 @@ export class CourseListComponent implements OnInit {
 
   renderDescription(description: string): SafeHtml {
     return this.markdownService.renderMarkdownSync(description);
+  }
+
+  isEnrolledIn(courseId: string): boolean {
+    return this.enrolledCourses().some(ec => ec.courseId === courseId);
+  }
+
+  getCourseProgress(courseId: string): number {
+    const enrolled = this.enrolledCourses().find(ec => ec.courseId === courseId);
+    return enrolled?.progressPercentage ?? 0;
   }
 }

@@ -116,12 +116,15 @@ export interface Enrollment {
 }
 
 export interface EnrolledCourse {
-  id: string;
-  title: string;
-  description: string;
+  courseId: string;
+  courseTitle: string;
+  courseDescription: string;
   instructorName: string;
   enrolledAt: Date;
+  lastActivityAt: Date;
   currentBlockId?: string;
+  completedBlocksCount: number;
+  totalBlocksCount: number;
   progressPercentage: number;
 }
 

@@ -77,9 +77,44 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
             .Where(p => p.StudentId == studentId)
             .ToListAsync();
 
-        var enrolledCourses = await Task.WhenAll(
-            enrollments.Select(enrollment => MapToEnrolledCourseDto(enrollment, studentId))
-        );
+        var completedBlocksByCourse = await context.StudentBlockProgresses
+            .Where(bp => bp.StudentId == studentId && bp.IsCompleted)
+            .Include(bp => bp.Block)
+                .ThenInclude(b => b.Subchapter)
+                    .ThenInclude(s => s.Chapter)
+            .ToListAsync();
+
+        var completedBlocksCountByCourse = completedBlocksByCourse
+            .GroupBy(bp => bp.Block.Subchapter.Chapter.CourseId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var enrolledCourses = enrollments.Select(enrollment =>
+        {
+            var totalBlocks = enrollment.Course.Chapters
+                .SelectMany(ch => ch.Subchapters)
+                .SelectMany(s => s.Blocks)
+                .Count();
+
+            var completedBlocks = completedBlocksCountByCourse.GetValueOrDefault(enrollment.CourseId, 0);
+
+            var progressPercentage = totalBlocks > 0
+                ? (double)completedBlocks / totalBlocks * 100
+                : 0;
+
+            return new EnrolledCourseDto
+            {
+                CourseId = enrollment.CourseId,
+                CourseTitle = enrollment.Course.Title,
+                CourseDescription = enrollment.Course.Description,
+                InstructorName = $"{enrollment.Course.Instructor.FirstName} {enrollment.Course.Instructor.LastName}",
+                EnrolledAt = enrollment.EnrolledAt,
+                LastActivityAt = enrollment.LastActivityAt,
+                CurrentBlockId = enrollment.CurrentBlockId,
+                CompletedBlocksCount = completedBlocks,
+                TotalBlocksCount = totalBlocks,
+                ProgressPercentage = Math.Round(progressPercentage, 2)
+            };
+        });
 
         return enrolledCourses.OrderByDescending(e => e.LastActivityAt);
     }
@@ -88,37 +123,5 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
     {
         return await context.StudentCourseProgresses
             .AnyAsync(p => p.CourseId == courseId && p.StudentId == studentId);
-    }
-
-    private async Task<EnrolledCourseDto> MapToEnrolledCourseDto(StudentCourseProgress enrollment, Guid studentId)
-    {
-        var totalBlocks = enrollment.Course.Chapters
-            .SelectMany(ch => ch.Subchapters)
-            .SelectMany(s => s.Blocks)
-            .Count();
-
-        var completedBlocks = await context.StudentBlockProgresses
-            .Where(bp => bp.StudentId == studentId &&
-                         bp.IsCompleted &&
-                         bp.Block.Subchapter.Chapter.CourseId == enrollment.CourseId)
-            .CountAsync();
-
-        var progressPercentage = totalBlocks > 0
-            ? (double)completedBlocks / totalBlocks * 100
-            : 0;
-
-        return new EnrolledCourseDto
-        {
-            CourseId = enrollment.CourseId,
-            CourseTitle = enrollment.Course.Title,
-            CourseDescription = enrollment.Course.Description,
-            InstructorName = $"{enrollment.Course.Instructor.FirstName} {enrollment.Course.Instructor.LastName}",
-            EnrolledAt = enrollment.EnrolledAt,
-            LastActivityAt = enrollment.LastActivityAt,
-            CurrentBlockId = enrollment.CurrentBlockId,
-            CompletedBlocksCount = completedBlocks,
-            TotalBlocksCount = totalBlocks,
-            ProgressPercentage = Math.Round(progressPercentage, 2)
-        };
     }
 }

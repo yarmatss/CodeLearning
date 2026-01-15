@@ -44,6 +44,48 @@ public class CourseService(
         return await MapToCourseResponseDto(course);
     }
 
+    public async Task<CourseStructureDto> GetCourseStructureAsync(Guid courseId)
+    {
+        var course = await context.Courses
+            .Include(c => c.Chapters)
+                .ThenInclude(ch => ch.Subchapters)
+                    .ThenInclude(s => s.Blocks)
+            .FirstOrDefaultAsync(c => c.Id == courseId)
+            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+
+        var totalBlocks = course.Chapters
+            .SelectMany(ch => ch.Subchapters)
+            .SelectMany(s => s.Blocks)
+            .Count();
+
+        return new CourseStructureDto
+        {
+            CourseId = course.Id,
+            CourseTitle = course.Title,
+            CourseDescription = course.Description,
+            TotalBlocksCount = totalBlocks,
+            Chapters = course.Chapters
+                .OrderBy(ch => ch.OrderIndex)
+                .Select(ch => new ChapterStructureDto
+                {
+                    ChapterId = ch.Id,
+                    Title = ch.Title,
+                    OrderIndex = ch.OrderIndex,
+                    Subchapters = ch.Subchapters
+                        .OrderBy(s => s.OrderIndex)
+                        .Select(s => new SubchapterStructureDto
+                        {
+                            SubchapterId = s.Id,
+                            Title = s.Title,
+                            OrderIndex = s.OrderIndex,
+                            BlocksCount = s.Blocks.Count
+                        })
+                        .ToList()
+                })
+                .ToList()
+        };
+    }
+
     public async Task<IEnumerable<CourseResponseDto>> GetInstructorCoursesAsync(Guid instructorId)
     {
         var courses = await context.Courses
