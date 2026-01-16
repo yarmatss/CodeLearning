@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
+import { Router, NavigationEnd, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
+import { filter, Subscription } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
 import { CourseService } from '../../core/services/course.service';
 import { EnrolledCourse } from '../../core/models/course.model';
@@ -11,15 +12,31 @@ import { EnrolledCourse } from '../../core/models/course.model';
   templateUrl: './dashboard.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class DashboardComponent implements OnInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   readonly authService = inject(AuthService);
   readonly courseService = inject(CourseService);
+  private readonly router = inject(Router);
   
   readonly isLoading = signal(false);
   readonly enrolledCourses = signal<EnrolledCourse[]>([]);
+  
+  private routerSubscription?: Subscription;
 
   ngOnInit(): void {
     this.loadDashboardData();
+    
+    // Reload data when navigating back to dashboard
+    this.routerSubscription = this.router.events
+      .pipe(filter(event => event instanceof NavigationEnd))
+      .subscribe((event: NavigationEnd) => {
+        if (event.url === '/dashboard') {
+          this.loadDashboardData();
+        }
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.routerSubscription?.unsubscribe();
   }
 
   loadDashboardData(): void {
@@ -37,7 +54,6 @@ export class DashboardComponent implements OnInit {
     } else {
       this.courseService.getEnrolledCourses().subscribe({
         next: (courses) => {
-          console.log('Enrolled courses:', courses);
           this.enrolledCourses.set(courses);
           this.isLoading.set(false);
         },

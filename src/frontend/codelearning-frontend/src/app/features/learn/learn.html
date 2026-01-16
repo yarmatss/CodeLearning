@@ -1,0 +1,357 @@
+<div class="flex h-screen overflow-hidden bg-gray-50">
+  <!-- Sidebar -->
+  <aside
+    [class]="'flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ' + (isSidebarOpen() ? 'w-80' : 'w-0')"
+  >
+    @if (isSidebarOpen() && courseProgress()) {
+      <div class="flex-1 overflow-y-auto p-4">
+        <h2 class="mb-4 text-lg font-bold text-gray-900">{{ courseProgress()!.courseTitle }}</h2>
+        
+        <!-- Progress Overview -->
+        <div class="mb-6 rounded-lg bg-gray-50 p-3">
+          <div class="mb-2 flex items-center justify-between text-sm">
+            <span class="text-gray-600">Overall Progress</span>
+            <span class="font-semibold text-gray-900">{{ courseProgress()!.progressPercentage }}%</span>
+          </div>
+          <div class="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              class="h-full bg-blue-600 transition-all duration-300"
+              [style.width.%]="courseProgress()!.progressPercentage"
+            ></div>
+          </div>
+          <p class="mt-2 text-xs text-gray-500">
+            {{ courseProgress()!.completedBlocksCount }} / {{ courseProgress()!.totalBlocksCount }} blocks completed
+          </p>
+        </div>
+
+        <!-- Course Structure -->
+        <div class="space-y-3">
+          @for (chapter of courseProgress()!.chapters; track chapter.chapterId) {
+            <div class="rounded-lg border border-gray-200 bg-white">
+              <div class="bg-gray-50 p-3">
+                <h3 class="text-sm font-semibold text-gray-900">
+                  {{ chapter.orderIndex }}. {{ chapter.title }}
+                </h3>
+              </div>
+              
+              <div class="space-y-1 p-2">
+                @for (subchapter of chapter.subchapters; track subchapter.subchapterId) {
+                  <div>
+                    <div class="flex items-center justify-between rounded px-2 py-1 text-xs text-gray-600">
+                      <span>{{ chapter.orderIndex }}.{{ subchapter.orderIndex }} {{ subchapter.title }}</span>
+                      <span class="text-xs">
+                        {{ getBlockProgress(chapter.chapterId, subchapter.subchapterId).completed }}/{{ getBlockProgress(chapter.chapterId, subchapter.subchapterId).total }}
+                      </span>
+                    </div>
+                    
+                    <!-- Blocks -->
+                    <div class="ml-4 space-y-1">
+                      @for (block of subchapter.blocks; track block.blockId) {
+                        <button
+                          (click)="selectBlock(block.blockId)"
+                          [class]="'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ' + 
+                                   (currentBlock()?.id === block.blockId ? 'bg-blue-100 text-blue-900' : 'text-gray-700 hover:bg-gray-100')"
+                        >
+                          @if (block.isCompleted) {
+                            <span class="text-green-600">✓</span>
+                          } @else {
+                            <span class="text-gray-400">○</span>
+                          }
+                          <span class="flex-1 truncate">{{ block.title }}</span>
+                          @if (block.type === BlockType.Theory) {
+                            <span class="text-gray-400">📄</span>
+                          } @else if (block.type === BlockType.Video) {
+                            <span class="text-gray-400">🎥</span>
+                          } @else if (block.type === BlockType.Quiz) {
+                            <span class="text-gray-400">❓</span>
+                          } @else if (block.type === BlockType.Problem) {
+                            <span class="text-gray-400">💻</span>
+                          }
+                        </button>
+                      }
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex flex-1 flex-col overflow-hidden">
+    <!-- Header -->
+    <header class="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+      <div class="flex items-center gap-4">
+        <button
+          (click)="toggleSidebar()"
+          class="rounded p-2 hover:bg-gray-100"
+        >
+          <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        
+        @if (currentBlock()) {
+          <div>
+            <h1 class="text-xl font-bold text-gray-900">{{ currentBlock()!.title }}</h1>
+            @if (currentBlock()!.type === BlockType.Theory) {
+              <p class="text-sm text-gray-500">Theory Lesson</p>
+            } @else if (currentBlock()!.type === BlockType.Video) {
+              <p class="text-sm text-gray-500">Video Lesson</p>
+            } @else if (currentBlock()!.type === BlockType.Quiz) {
+              <p class="text-sm text-gray-500">Quiz</p>
+            } @else if (currentBlock()!.type === BlockType.Problem) {
+              <p class="text-sm text-gray-500">Coding Challenge</p>
+            }
+          </div>
+        }
+      </div>
+
+      <a
+        [routerLink]="['/courses', courseProgress()?.courseId]"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+      >
+        Exit Course
+      </a>
+    </header>
+
+    <!-- Content Area -->
+    <div class="flex-1 overflow-y-auto p-6 min-h-0">
+      @if (isLoading()) {
+        <div class="flex items-center justify-center py-12">
+          <p class="text-gray-500">Loading...</p>
+        </div>
+      } @else if (errorMessage()) {
+        <div class="rounded-md bg-red-50 p-4">
+          <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+        </div>
+      } @else if (currentBlock()) {
+        <!-- Theory Block -->
+        @if (currentBlock()!.type === BlockType.Theory && currentBlock()!.theoryContent) {
+          <div class="markdown-content text-gray-700">
+            <div [innerHTML]="renderMarkdown(currentBlock()!.theoryContent!.content)"></div>
+          </div>
+        }
+
+        <!-- Video Block -->
+        @if (currentBlock()!.type === BlockType.Video && currentBlock()!.videoContent) {
+          <div class="mx-auto max-w-4xl">
+            <div class="aspect-video w-full overflow-hidden rounded-lg bg-black">
+              <iframe
+                [src]="getSafeYouTubeUrl(currentBlock()!.videoContent!.videoUrl)"
+                class="h-full w-full"
+                frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen
+              ></iframe>
+            </div>
+            @if (currentBlock()!.videoContent!.durationSeconds) {
+              <p class="mt-4 text-sm text-gray-500">
+                Duration: {{ (currentBlock()!.videoContent!.durationSeconds! / 60) | number:'1.0-0' }} minutes
+              </p>
+            }
+          </div>
+        }
+
+        <!-- Quiz Block -->
+        @if (currentBlock()!.type === BlockType.Quiz && currentBlock()!.quiz) {
+          <div class="mx-auto max-w-3xl">
+            @if (!quizResult()) {
+              <!-- Quiz Questions -->
+              <div class="space-y-6">
+                @for (question of currentBlock()!.quiz!.questions; track question.id; let i = $index) {
+                  <div class="rounded-lg border border-gray-200 bg-white p-6">
+                    <div class="mb-4">
+                      <span class="text-sm font-medium text-gray-500">Question {{ i + 1 }}</span>
+                      <h3 class="mt-1 text-lg font-semibold text-gray-900">{{ question.content }}</h3>
+                      <p class="mt-1 text-sm text-gray-600">{{ question.points }} points</p>
+                    </div>
+                    
+                    <div class="space-y-2">
+                      @for (answer of question.answers; track answer.id) {
+                        <label [class]="'flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ' + 
+                                        (isAnswerSelected(question.id, answer.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50')">
+                          @if (question.type === 'SingleChoice') {
+                            <input 
+                              type="radio" 
+                              [name]="'question-' + question.id" 
+                              [checked]="isAnswerSelected(question.id, answer.id)"
+                              (change)="selectQuizAnswer(question.id, answer.id, true)"
+                              class="h-4 w-4" 
+                            />
+                          } @else {
+                            <input 
+                              type="checkbox" 
+                              [checked]="isAnswerSelected(question.id, answer.id)"
+                              (change)="selectQuizAnswer(question.id, answer.id, false)"
+                              class="h-4 w-4" 
+                            />
+                          }
+                          <span class="text-sm text-gray-900">{{ answer.text }}</span>
+                        </label>
+                      }
+                    </div>
+                  </div>
+                }
+                
+                <button 
+                  (click)="submitQuiz()"
+                  [disabled]="isSubmittingQuiz()"
+                  class="w-full rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700 disabled:bg-gray-400"
+                >
+                  @if (isSubmittingQuiz()) {
+                    Submitting...
+                  } @else {
+                    Submit Quiz
+                  }
+                </button>
+              </div>
+            } @else {
+              <!-- Quiz Results -->
+              <div class="space-y-6">
+                <div class="rounded-lg border border-gray-200 bg-green-50 p-6">
+                  <h3 class="text-2xl font-bold mb-2 text-green-900">
+                    Quiz Completed!
+                  </h3>
+                  <p class="text-lg text-green-800">
+                    Score: {{ quizResult()!.score }} / {{ quizResult()!.maxScore }} ({{ quizResult()!.percentage }}%)
+                  </p>
+                  <p class="text-sm text-gray-600 mt-1">
+                    Submitted: {{ quizResult()!.attemptedAt | date:'dd/MM/yyyy HH:mm:ss' }}
+                  </p>
+                </div>
+
+                <!-- Answer Review -->
+                @for (question of quizResult()!.questionResults; track question.questionId; let i = $index) {
+                  <div class="rounded-lg border border-gray-200 bg-white p-6">
+                    <div class="mb-4">
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-gray-500">Question {{ i + 1 }}</span>
+                        @if (question.isCorrect) {
+                          <span class="text-sm font-semibold text-green-600">✓ Correct</span>
+                        } @else {
+                          <span class="text-sm font-semibold text-red-600">✗ Incorrect</span>
+                        }
+                      </div>
+                      <p class="mt-2 text-gray-900">{{ question.questionContent }}</p>
+                      <p class="mt-1 text-sm text-gray-600">
+                        {{ question.isCorrect ? question.points : 0 }} / {{ question.points }} points
+                      </p>
+                    </div>
+                    
+                    <!-- Answers -->
+                    <div class="space-y-2 mb-3">
+                      @for (answer of question.answers; track answer.answerId) {
+                        <div [class]="'rounded-md border p-3 ' + 
+                                     (answer.isCorrect ? 'bg-green-50 border-green-200' : 
+                                      answer.wasSelected && !answer.isCorrect ? 'bg-red-50 border-red-200' : 
+                                      'bg-gray-50 border-gray-200')">
+                          <div class="flex items-start gap-2">
+                            @if (answer.isCorrect) {
+                              <span class="text-green-600 font-bold">✓</span>
+                            } @else if (answer.wasSelected) {
+                              <span class="text-red-600 font-bold">✗</span>
+                            } @else {
+                              <span class="text-gray-400">○</span>
+                            }
+                            <span [class]="answer.isCorrect ? 'text-green-900' : 
+                                          answer.wasSelected && !answer.isCorrect ? 'text-red-900' : 
+                                          'text-gray-700'">{{ answer.text }}</span>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                    
+                    @if (question.explanation) {
+                      <div class="mt-3 rounded-md bg-blue-50 border border-blue-200 p-3">
+                        <p class="text-sm text-blue-900">
+                          <strong>Explanation:</strong> {{ question.explanation }}
+                        </p>
+                      </div>
+                    }
+                  </div>
+                }
+
+                <div class="flex justify-end">
+                  <button 
+                    (click)="goToNextBlock()"
+                    [disabled]="!hasNextBlock()"
+                    class="rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    @if (hasNextBlock()) {
+                      Continue to Next Block →
+                    } @else {
+                      Complete Course! 🎉
+                    }
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Problem Block -->
+        @if (currentBlock()!.type === BlockType.Problem && currentBlock()!.problem) {
+          <div class="mx-auto max-w-6xl">
+            <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+              <div class="prose max-w-none">
+                <div [innerHTML]="renderMarkdown(currentBlock()!.problem!.description)"></div>
+              </div>
+              
+              <div class="mt-4 flex gap-4">
+                <span class="inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800">
+                  {{ currentBlock()!.problem!.difficulty }}
+                </span>
+                <span class="text-sm text-gray-600">Time Limit: {{ currentBlock()!.problem!.timeLimit }}ms</span>
+                <span class="text-sm text-gray-600">Memory Limit: {{ currentBlock()!.problem!.memoryLimit }}MB</span>
+              </div>
+            </div>
+
+            <!-- Code Editor Placeholder -->
+            <div class="rounded-lg border border-gray-200 bg-gray-900 p-4">
+              <p class="font-mono text-sm text-gray-400">// Code editor will be implemented with Monaco Editor</p>
+              <p class="font-mono text-sm text-gray-400">// Coming soon...</p>
+            </div>
+          </div>
+        }
+      } @else {
+        <div class="text-center py-12">
+          <p class="text-gray-500">Select a block from the sidebar to begin</p>
+        </div>
+      }
+    </div>
+
+    <!-- Navigation Footer -->
+    <footer class="border-t border-gray-200 bg-white px-6 py-4">
+      <div class="flex items-center justify-between">
+        <button
+          (click)="goToPreviousBlock()"
+          [disabled]="!hasPreviousBlock()"
+          [class]="'rounded-md border px-6 py-2 transition-colors ' + 
+                   (hasPreviousBlock() ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50' : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed')"
+        >
+          ← Previous
+        </button>
+
+        <div class="text-sm text-gray-600">
+          Block {{ currentBlockIndex() + 1 }} of {{ allBlocks().length }}
+        </div>
+
+        <button
+          (click)="hasNextBlock() ? goToNextBlock() : completeCourse()"
+          [class]="'rounded-md px-6 py-2 transition-colors ' + 
+                   (hasNextBlock() ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-green-600 text-white hover:bg-green-700')"
+        >
+          @if (hasNextBlock()) {
+            Next →
+          } @else {
+            Course Complete! 🎉
+          }
+        </button>
+      </div>
+    </footer>
+  </main>
+</div>

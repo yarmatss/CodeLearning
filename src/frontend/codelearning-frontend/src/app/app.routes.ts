@@ -13,6 +13,7 @@ import { SubchapterEditor } from './features/courses/subchapter-editor/subchapte
 import { ProblemList } from './features/problems/problem-list/problem-list';
 import { ProblemEditor } from './features/problems/problem-editor/problem-editor';
 import { ProblemDetail } from './features/problems/problem-detail/problem-detail';
+import { Learn } from './features/learn/learn';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
@@ -36,6 +37,11 @@ export const routes: Routes = [
   {
     path: 'courses/:id',
     component: CourseDetailComponent,
+    canActivate: [authGuard]
+  },
+  {
+    path: 'learn/:courseId',
+    component: Learn,
     canActivate: [authGuard]
   },
   {

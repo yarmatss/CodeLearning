@@ -17,8 +17,28 @@ export const appConfig: ApplicationConfig = {
     ),
     provideAppInitializer(() => {
       const authService = inject(AuthService);
-      authService.getCurrentUser().subscribe({
-        error: () => {} // Silent fail - user not logged in
+      return new Promise<void>((resolve) => {
+        authService.getCurrentUser().subscribe({
+          next: () => {
+            console.log('[APP_INIT] User loaded, calling refreshToken...');
+            // Użytkownik załadowany - odśwież token aby dostać exp i zaplanować timer
+            authService.refreshToken().subscribe({
+              next: () => {
+                console.log('[APP_INIT] Token refreshed successfully');
+                resolve();
+              },
+              error: (err) => {
+                console.error('[APP_INIT] Token refresh failed:', err);
+                resolve(); // Token refresh failed, authErrorInterceptor will handle it
+              }
+            });
+          },
+          error: (err) => {
+            console.log('[APP_INIT] User not logged in:', err.status);
+            // Użytkownik nie jest zalogowany
+            resolve();
+          }
+        });
       });
     })
   ]

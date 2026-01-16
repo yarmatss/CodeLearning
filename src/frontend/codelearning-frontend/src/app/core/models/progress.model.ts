@@ -1,3 +1,5 @@
+import { BlockType } from './course.model';
+
 export interface CourseProgress {
   courseId: string;
   courseTitle: string;
@@ -27,7 +29,7 @@ export interface SubchapterProgress {
 export interface BlockProgress {
   blockId: string;
   title: string;
-  type: 'Theory' | 'Video' | 'Quiz' | 'Problem';
+  type: BlockType;
   orderIndex: number;
   isCompleted: boolean;
   completedAt?: Date;

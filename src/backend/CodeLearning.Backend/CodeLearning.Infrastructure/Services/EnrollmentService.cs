@@ -55,10 +55,17 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
             ?? throw new KeyNotFoundException("Enrollment not found");
 
+        // Remove block progress
         var blockProgress = await context.StudentBlockProgresses
             .Where(bp => bp.StudentId == studentId && bp.Block.Subchapter.Chapter.CourseId == courseId)
             .ToListAsync();
 
+        // Remove quiz attempts
+        var quizAttempts = await context.StudentQuizAttempts
+            .Where(qa => qa.StudentId == studentId && qa.Quiz.Block.Subchapter.Chapter.CourseId == courseId)
+            .ToListAsync();
+
+        context.StudentQuizAttempts.RemoveRange(quizAttempts);
         context.StudentBlockProgresses.RemoveRange(blockProgress);
         context.StudentCourseProgresses.Remove(enrollment);
 

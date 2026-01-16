@@ -120,4 +120,9 @@ export class BlockService {
   deleteBlock(subchapterId: string, blockId: string): Observable<{ message: string }> {
     return this.http.delete<{ message: string }>(`/api/subchapters/${subchapterId}/blocks/${blockId}`);
   }
+
+  // Progress tracking
+  completeBlock(blockId: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`/api/progress/blocks/${blockId}/complete`, {});
+  }
 }
