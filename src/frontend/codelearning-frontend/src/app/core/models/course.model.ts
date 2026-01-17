@@ -107,6 +107,14 @@ export interface Problem {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   timeLimit: number;
   memoryLimit: number;
+  starterCodes?: StarterCode[];
+}
+
+export interface StarterCode {
+  id: string;
+  code: string;
+  languageId: string;
+  languageName: string;
 }
 
 export interface Enrollment {

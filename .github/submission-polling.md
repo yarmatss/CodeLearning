@@ -1,6 +1,5 @@
 # Submission Polling Strategy
 
-**Until SignalR is implemented, use polling:**
 @Component({...}) export class SubmissionResultComponent { submissionId = input.required<string>(); submission = signal<Submission | null>(null); isPolling = signal(false);
 constructor() { const submissionService = inject(SubmissionService);
 effect(() => {
@@ -10,7 +9,7 @@ effect(() => {
   }
 });
 }
-private async pollSubmission(id: string) { this.isPolling.set(true); const maxAttempts = 60; // 2 minutes (2s interval)
+private async pollSubmission(id: string) { this.isPolling.set(true); const maxAttempts = 60; // 1 minute (1s interval)
 for (let i = 0; i < maxAttempts; i++) {
   try {
     const sub = await firstValueFrom(
@@ -31,7 +30,7 @@ for (let i = 0; i < maxAttempts; i++) {
       break;
     }
     
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
   } catch (error) {
     console.error('Polling error:', error);
     this.isPolling.set(false);

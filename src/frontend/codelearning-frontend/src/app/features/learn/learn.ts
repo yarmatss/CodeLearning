@@ -6,12 +6,17 @@ import { ProgressService } from '../../core/services/progress.service';
 import { BlockService } from '../../core/services/block.service';
 import { MarkdownService } from '../../core/services/markdown.service';
 import { QuizService, QuizSubmission, QuizResult } from '../../core/services/quiz.service';
+import { SubmissionService } from '../../core/services/submission.service';
+import { ProblemService } from '../../core/services/problem.service';
 import { CourseProgress, BlockProgress } from '../../core/models/progress.model';
 import { Block, BlockType } from '../../core/models/course.model';
+import { Submission, SubmitCodeRequest } from '../../core/models/submission.model';
+import { CodeEditorComponent } from '../../shared/components/code-editor/code-editor.component';
+import { firstValueFrom } from 'rxjs';
 
 @Component({
   selector: 'app-learn',
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, CodeEditorComponent],
   templateUrl: './learn.html',
   styleUrl: './learn.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -23,6 +28,8 @@ export class Learn implements OnInit {
   private readonly blockService = inject(BlockService);
   private readonly markdownService = inject(MarkdownService);
   private readonly quizService = inject(QuizService);
+  private readonly submissionService = inject(SubmissionService);
+  private readonly problemService = inject(ProblemService);
   private readonly sanitizer = inject(DomSanitizer);
 
   readonly courseProgress = signal<CourseProgress | null>(null);
@@ -35,6 +42,37 @@ export class Learn implements OnInit {
   readonly quizAnswers = signal<Map<string, Set<string>>>(new Map());
   readonly quizResult = signal<QuizResult | null>(null);
   readonly isSubmittingQuiz = signal(false);
+
+  // Problem state
+  readonly selectedLanguage = signal<string | null>(null);
+  readonly userCode = signal<string>('');
+  readonly currentSubmission = signal<Submission | null>(null);
+  readonly isPolling = signal(false);
+
+  // Computed helper for submission
+  readonly passedTestCases = computed(() => {
+    const submission = this.currentSubmission();
+    if (!submission || !submission.testResults) return 0;
+    return submission.testResults.filter(t => t.status === 1).length; // 1 = Accepted
+  });
+
+  readonly totalTestCases = computed(() => {
+    const submission = this.currentSubmission();
+    return submission?.testResults?.length || 0;
+  });
+
+  readonly getStatusName = (status: number): string => {
+    switch (status) {
+      case 0: return 'Pending';
+      case 1: return 'Running';
+      case 2: return 'Completed';
+      case 3: return 'Compilation Error';
+      case 4: return 'Runtime Error';
+      case 5: return 'Time Limit Exceeded';
+      case 6: return 'Memory Limit Exceeded';
+      default: return 'Unknown';
+    }
+  };
 
   // Computed signals for navigation
   readonly allBlocks = computed(() => {
@@ -120,9 +158,15 @@ export class Learn implements OnInit {
     this.blockService.getBlock(blockId).subscribe({
       next: (block: Block) => {
         this.currentBlock.set(block);
+        
         // Reset quiz state when loading new block
         this.quizAnswers.set(new Map());
         this.quizResult.set(null);
+        
+        // Reset problem state when loading new block
+        this.selectedLanguage.set(null);
+        this.userCode.set('');
+        this.currentSubmission.set(null);
         
         // If it's a quiz block, try to load previous attempt
         if (block.quiz) {
@@ -133,6 +177,34 @@ export class Learn implements OnInit {
             },
             error: () => {
               // No previous attempt, that's fine
+            }
+          });
+        }
+        
+        // If it's a problem block, fetch full problem details with starterCodes
+        if (block.problem) {
+          this.problemService.getProblem(block.problem.id).subscribe({
+            next: (problemDetails) => {
+              // Update problem with full details including starterCodes
+              block.problem!.starterCodes = problemDetails.starterCodes.map(sc => ({
+                id: sc.id,
+                code: sc.code,
+                languageId: sc.languageId,
+                languageName: sc.languageName
+              }));
+              
+              // Auto-select first language if available
+              if (problemDetails.starterCodes && problemDetails.starterCodes.length > 0) {
+                const firstStarter = problemDetails.starterCodes[0];
+                this.selectedLanguage.set(firstStarter.languageId);
+                this.userCode.set(firstStarter.code);
+              }
+              
+              // Trigger change detection by updating the signal
+              this.currentBlock.set({ ...block });
+            },
+            error: (err) => {
+              console.error('Failed to load problem details:', err);
             }
           });
         }
@@ -315,5 +387,109 @@ export class Learn implements OnInit {
         this.isSubmittingQuiz.set(false);
       }
     });
+  }
+
+  // Problem block methods
+  selectLanguage(languageId: string, starterCode: string): void {
+    this.selectedLanguage.set(languageId);
+    this.userCode.set(starterCode);
+    this.currentSubmission.set(null);
+  }
+
+  updateCode(code: string): void {
+    this.userCode.set(code);
+  }
+
+  async submitCode(): Promise<void> {
+    const block = this.currentBlock();
+    const languageId = this.selectedLanguage();
+    
+    if (!block || !block.problem || !languageId) return;
+
+    const request: SubmitCodeRequest = {
+      problemId: block.problem.id,
+      languageId: languageId,
+      code: this.userCode()
+    };
+
+    try {
+      const submission = await firstValueFrom(
+        this.submissionService.submit(request)
+      );
+      
+      this.currentSubmission.set(submission);
+      
+      // Start polling
+      await this.pollSubmission(submission.id);
+    } catch (error: any) {
+      this.errorMessage.set(error.error?.message || 'Failed to submit code');
+    }
+  }
+
+  private async pollSubmission(submissionId: string): Promise<void> {
+    this.isPolling.set(true);
+    const maxAttempts = 60; // 1 minute (1s interval)
+
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const sub = await firstValueFrom(
+          this.submissionService.getById(submissionId)
+        );
+
+        this.currentSubmission.set(sub);
+
+        // Check if submission is in final state (not Pending/Running)
+        const finalStatuses = [2, 3, 4, 5, 6]; // Completed, CompilationError, RuntimeError, TimeLimitExceeded, MemoryLimitExceeded
+
+        if (finalStatuses.includes(sub.status)) {
+          this.isPolling.set(false);
+          
+          // If score is 100%, mark block as complete
+          if (sub.status === 2 && sub.score === 100) {
+            const blockId = this.currentBlock()?.id;
+            if (blockId) {
+              this.markBlockComplete(blockId);
+            }
+          }
+          
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error('Polling error:', error);
+        this.isPolling.set(false);
+        break;
+      }
+    }
+
+    this.isPolling.set(false);
+  }
+
+  getStatusClass(status: number): string {
+    const baseClass = 'rounded-lg p-4 ';
+    switch (status) {
+      case 2: // Completed
+        return baseClass + 'bg-green-50 border border-green-200';
+      case 0: // Pending
+      case 1: // Running
+        return baseClass + 'bg-blue-50 border border-blue-200';
+      case 3: // CompilationError
+      case 4: // RuntimeError
+      case 5: // TimeLimitExceeded
+      case 6: // MemoryLimitExceeded
+        return baseClass + 'bg-red-50 border border-red-200';
+      default:
+        return baseClass + 'bg-gray-50 border border-gray-200';
+    }
+  }
+
+  getLanguageName(languageId: string): 'python' | 'javascript' | 'csharp' | 'java' {
+    // Map GUID to language name for Monaco Editor
+    if (languageId === '11111111-1111-1111-1111-111111111111') return 'python';
+    if (languageId === '22222222-2222-2222-2222-222222222222') return 'javascript';
+    if (languageId === '33333333-3333-3333-3333-333333333333') return 'csharp';
+    if (languageId === '44444444-4444-4444-4444-444444444444') return 'java';
+    return 'python'; // default
   }
 }
