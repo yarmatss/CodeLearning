@@ -11,5 +11,9 @@
     </None>
     <None Include="docker-compose.yml" />
     <None Include=".dockerignore" />
+    <None Include="docker\csharp\Dockerfile" />
+    <None Include="docker\java\Dockerfile" />
+    <None Include="docker\node\Dockerfile" />
+    <None Include="docker\python\Dockerfile" />
   </ItemGroup>
 </Project>

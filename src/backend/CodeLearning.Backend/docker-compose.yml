@@ -157,6 +157,42 @@ services:
           cpus: '2'      # Limit CPU usage
           memory: 2G     # Limit memory usage
 
+  # Executor Images (build-only, not running)
+  # These images are used by Runner to execute student code
+  # Build them with: docker compose build executor-python executor-node executor-csharp executor-java
+  
+  executor-python:
+    image: codelearning/python:3.14.2-alpine
+    build:
+      context: ./docker/python
+      dockerfile: Dockerfile
+    profiles:
+      - executors  # Don't start by default, only build
+
+  executor-node:
+    image: codelearning/node:25.2.1-alpine
+    build:
+      context: ./docker/node
+      dockerfile: Dockerfile
+    profiles:
+      - executors
+
+  executor-csharp:
+    image: codelearning/dotnet:10.0
+    build:
+      context: ./docker/csharp
+      dockerfile: Dockerfile
+    profiles:
+      - executors
+
+  executor-java:
+    image: codelearning/java:21-jdk
+    build:
+      context: ./docker/java
+      dockerfile: Dockerfile
+    profiles:
+      - executors
+
 networks:
   codelearning-network:
     driver: bridge

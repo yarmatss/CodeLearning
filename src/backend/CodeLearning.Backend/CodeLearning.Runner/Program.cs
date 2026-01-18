@@ -37,11 +37,7 @@ try
     // Services
     builder.Services.AddSingleton<ISubmissionQueue, SubmissionQueue>();
     builder.Services.AddSingleton<IDockerRunner, DockerRunner>();
-
-    // Code Executors
-    builder.Services.AddSingleton<ICodeExecutor, PythonExecutor>();
-    builder.Services.AddSingleton<ICodeExecutor, JavaScriptExecutor>();
-    // Add more executors here (C#, Java, etc.)
+    builder.Services.AddSingleton<ICodeExecutor, UniversalExecutor>();
 
     // Background Worker
     builder.Services.AddHostedService<ExecutionWorker>();

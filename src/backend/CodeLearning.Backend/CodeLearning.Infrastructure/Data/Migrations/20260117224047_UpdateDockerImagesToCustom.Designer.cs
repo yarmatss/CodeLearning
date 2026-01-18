@@ -3,6 +3,7 @@ using System;
 using CodeLearning.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CodeLearning.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260117224047_UpdateDockerImagesToCustom")]
+    partial class UpdateDockerImagesToCustom
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -338,27 +341,27 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         new
                         {
                             Id = new Guid("33333333-3333-3333-3333-333333333333"),
-                            CompileCommand = "csharp",
+                            CompileCommand = "dotnet build /app/solution.csproj",
                             CpuLimit = 1.0m,
                             CreatedAt = new DateTimeOffset(new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             DockerImage = "codelearning/dotnet:10.0",
-                            ExecutableCommand = "dotnet run --no-build",
+                            ExecutableCommand = "dotnet run",
                             FileExtension = ".cs",
                             IsEnabled = true,
                             MemoryLimitMB = 512,
                             Name = "C#",
                             RunCommand = "/bin/bash /app/run_tests.sh",
-                            TimeoutSeconds = 30,
+                            TimeoutSeconds = 10,
                             UpdatedAt = new DateTimeOffset(new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Version = "14"
                         },
                         new
                         {
                             Id = new Guid("44444444-4444-4444-4444-444444444444"),
-                            CompileCommand = "javac Solution.java",
+                            CompileCommand = "javac solution.java",
                             CpuLimit = 1.0m,
                             CreatedAt = new DateTimeOffset(new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            DockerImage = "codelearning/java:21-jdk",
+                            DockerImage = "codelearning/java:25-slim",
                             ExecutableCommand = "java Solution",
                             FileExtension = ".java",
                             IsEnabled = true,
@@ -367,7 +370,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                             RunCommand = "/bin/bash /app/run_tests.sh",
                             TimeoutSeconds = 10,
                             UpdatedAt = new DateTimeOffset(new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Version = "21"
+                            Version = "25"
                         });
                 });
 

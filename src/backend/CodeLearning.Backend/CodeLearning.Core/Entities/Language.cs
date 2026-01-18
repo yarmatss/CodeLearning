@@ -6,7 +6,8 @@ public class Language : BaseEntity
     public required string Version { get; set; }
     public required string DockerImage { get; set; }
     public required string FileExtension { get; set; }
-    public required string RunCommand { get; set; }
+    public required string RunCommand { get; set; } = "/bin/bash /app/run_tests.sh";
+    public required string ExecutableCommand { get; set; }
     public string? CompileCommand { get; set; }
     public int TimeoutSeconds { get; set; } = 5;
     public int MemoryLimitMB { get; set; } = 256;

@@ -136,15 +136,7 @@ public class ExecutionWorker : BackgroundService
         submission.Status = SubmissionStatus.Running;
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var executor = executors.FirstOrDefault(e =>
-            e.LanguageName.Equals(submission.Language.Name, StringComparison.OrdinalIgnoreCase));
-
-        if (executor == null)
-        {
-            _logger.LogError("No executor found for language {Language}", submission.Language.Name);
-            await UpdateSubmissionStatusAsync(dbContext, submission, SubmissionStatus.RuntimeError, cancellationToken);
-            return;
-        }
+        var executor = executors.Single();
 
         try
         {

@@ -26,22 +26,16 @@ public class DockerRunner : IDockerRunner
         Models.ExecutionContext context,
         CancellationToken cancellationToken = default)
     {
-        var startTime = DateTime.UtcNow;
         string? containerId = null;
-        ulong peakMemoryBytes = 0;
 
         try
         {
-            // Verify workspace files exist before creating container
             VerifyWorkspaceFiles(context.WorkspaceDirectory);
 
-            // Create container with security constraints (without bind mount)
             containerId = await CreateContainerAsync(context, cancellationToken);
 
-            // Copy workspace files to container
             await CopyFilesToContainerAsync(containerId, context.WorkspaceDirectory, cancellationToken);
 
-            // Start container
             await _client.Containers.StartContainerAsync(
                 containerId,
                 new ContainerStartParameters(),
@@ -52,35 +46,18 @@ public class DockerRunner : IDockerRunner
                 containerId,
                 context.Submission.Id);
 
-            // Poll stats while waiting for container to complete
+            // Wait for container to complete (with timeout buffer for compilation + all tests)
+            // For compiled languages, add extra time for compilation
+            var compilationOverhead = !string.IsNullOrWhiteSpace(context.Language.CompileCommand) ? 15 : 0;
+            var totalTimeout = (context.Language.TimeoutSeconds * context.TestCases.Count) + compilationOverhead + 10;
+            
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(context.Language.TimeoutSeconds));
-
-            var waitTask = _client.Containers.WaitContainerAsync(containerId, cts.Token);
-
-            // Poll memory usage while container is running
-            while (!waitTask.IsCompleted)
-            {
-                try
-                {
-                    var memoryUsage = await GetCurrentMemoryUsageAsync(containerId, cancellationToken);
-                    if (memoryUsage > peakMemoryBytes)
-                    {
-                        peakMemoryBytes = memoryUsage;
-                    }
-                }
-                catch
-                {
-                    // Container might have stopped
-                }
-
-                await Task.Delay(100, cancellationToken); // Poll every 100ms
-            }
+            cts.CancelAfter(TimeSpan.FromSeconds(totalTimeout));
 
             bool completed;
             try
             {
-                await waitTask;
+                await _client.Containers.WaitContainerAsync(containerId, cts.Token);
                 completed = true;
             }
             catch (OperationCanceledException)
@@ -91,9 +68,10 @@ public class DockerRunner : IDockerRunner
             if (!completed)
             {
                 _logger.LogWarning(
-                    "Container {ContainerId} timed out after {Timeout}s",
+                    "Container {ContainerId} timed out after {Timeout}s (expected max: {TotalTimeout}s)",
                     containerId,
-                    context.Language.TimeoutSeconds);
+                    context.Language.TimeoutSeconds,
+                    totalTimeout);
 
                 await _client.Containers.KillContainerAsync(
                     containerId,
@@ -103,32 +81,22 @@ public class DockerRunner : IDockerRunner
                 return new ExecutionResult
                 {
                     Status = SubmissionStatus.TimeLimitExceeded,
-                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000,
-                    MaxMemoryUsedKB = peakMemoryBytes > 0 ? (int)(peakMemoryBytes / 1024) : null
+                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000
                 };
             }
 
-            // Get container exit code
-            var inspectResponse = await _client.Containers.InspectContainerAsync(
-                containerId,
-                cancellationToken);
-
-            var exitCode = inspectResponse.State.ExitCode;
-
-            // Get logs (stdout + stderr)
             var logs = await GetContainerLogsAsync(containerId, cancellationToken);
 
-            // Parse results
-            var result = ParseExecutionOutput(logs, exitCode, context.TestCases, peakMemoryBytes);
+            _logger.LogDebug("Container output (first 1000 chars): {Output}", 
+                logs.Length > 1000 ? logs.Substring(0, 1000) : logs);
 
-            var executionTime = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
-            result.TotalExecutionTimeMs = executionTime;
+            var result = ParseExecutionOutput(logs, context.TestCases);
 
             _logger.LogInformation(
-                "Container {ContainerId} completed with status {Status} in {Time}ms, memory {MemoryKB}KB",
+                "Container {ContainerId} completed with status {Status}, total time {Time}ms, peak memory {MemoryKB}KB",
                 containerId,
                 result.Status,
-                executionTime,
+                result.TotalExecutionTimeMs ?? 0,
                 result.MaxMemoryUsedKB ?? 0);
 
             return result;
@@ -152,51 +120,6 @@ public class DockerRunner : IDockerRunner
             {
                 await CleanupContainerAsync(containerId, cancellationToken);
             }
-        }
-    }
-
-    private async Task<ulong> GetCurrentMemoryUsageAsync(
-    string containerId,
-    CancellationToken cancellationToken)
-    {
-        try
-        {
-            var tcs = new TaskCompletionSource<ulong>();
-
-            var statsParams = new ContainerStatsParameters
-            {
-                Stream = false,
-                OneShot = true
-            };
-
-            var progress = new Progress<ContainerStatsResponse>(stats =>
-            {
-                tcs.TrySetResult(stats.MemoryStats?.Usage ?? 0);
-            });
-
-            // Start stats request
-            var statsTask = _client.Containers.GetContainerStatsAsync(
-                containerId,
-                statsParams,
-                progress,
-                cancellationToken);
-
-            // Wait for either stats to arrive or timeout
-            var completedTask = await Task.WhenAny(
-                tcs.Task,
-                statsTask,
-                Task.Delay(500, cancellationToken));
-
-            if (completedTask == tcs.Task)
-            {
-                return await tcs.Task;
-            }
-
-            return 0;
-        }
-        catch
-        {
-            return 0;
         }
     }
 
@@ -248,32 +171,32 @@ public class DockerRunner : IDockerRunner
 
             HostConfig = new HostConfig
             {
-                // SECURITY: Network isolation
+                // Network isolation
                 NetworkMode = "none",
 
-                // SECURITY: Resource limits
+                // Resource limits
                 Memory = context.Language.MemoryLimitMB * 1024 * 1024,
                 MemorySwap = context.Language.MemoryLimitMB * 1024 * 1024,
                 NanoCPUs = (long)(context.Language.CpuLimit * 1_000_000_000),
                 PidsLimit = 50,
 
-                // SECURITY: Filesystem isolation
+                // Filesystem isolation
                 Tmpfs = new Dictionary<string, string>
                 {
                     { "/tmp", "size=10m,mode=1777,noexec,nosuid" }
                 },
 
-                // SECURITY: Privilege restrictions
+                // Privilege restrictions
                 CapDrop = new List<string> { "ALL" },
                 SecurityOpt = new List<string>
                 {
                     "no-new-privileges",
                 },
                 
-                // SECURITY: Read-only /proc and /sys
+                // Read-only /proc and /sys
                 ReadonlyPaths = new List<string> { "/proc", "/sys" },
                 
-                // SECURITY: Mask sensitive paths
+                // Mask sensitive paths
                 MaskedPaths = new List<string>
                 {
                     "/proc/kcore",
@@ -285,7 +208,6 @@ public class DockerRunner : IDockerRunner
             }
         };
 
-        // Pull image if not exists
         await EnsureImageExistsAsync(context.Language.DockerImage, cancellationToken);
 
         var response = await _client.Containers.CreateContainerAsync(
@@ -339,8 +261,8 @@ public class DockerRunner : IDockerRunner
     }
 
     private async Task<string> GetContainerLogsAsync(
-    string containerId,
-    CancellationToken cancellationToken)
+        string containerId,
+        CancellationToken cancellationToken)
     {
         const int MaxLogSizeBytes = 1024 * 1024; // 1 MB limit
 
@@ -367,7 +289,6 @@ public class DockerRunner : IDockerRunner
             stderr: stderrStream,
             cancellationToken);
 
-        // Check size limits
         if (stdoutStream.Length > MaxLogSizeBytes || stderrStream.Length > MaxLogSizeBytes)
         {
             _logger.LogWarning(
@@ -396,82 +317,129 @@ public class DockerRunner : IDockerRunner
 
     private ExecutionResult ParseExecutionOutput(
         string output,
-        long exitCode,
-        List<TestCase> testCases,
-        ulong peakMemoryBytes)
+        List<TestCase> testCases)
     {
         var result = new ExecutionResult
         {
-            TotalTests = testCases.Count,
-            MaxMemoryUsedKB = peakMemoryBytes > 0 ? (int)(peakMemoryBytes / 1024) : null
+            TotalTests = testCases.Count
         };
 
-        // Check for compilation error (exit code != 0 and no JSON output)
-        if (exitCode != 0 && !output.TrimStart().StartsWith("["))
+        // Check for empty output
+        if (string.IsNullOrWhiteSpace(output))
         {
-            result.Status = SubmissionStatus.CompilationError;
-            result.CompilationError = output;
+            result.Status = SubmissionStatus.RuntimeError;
+            result.RuntimeError = "No output from execution";
             return result;
         }
 
         try
         {
-            // Parse JSON output from wrapper script
+            // Expected JSON format from bash:
+            // {
+            //   "results": [
+            //     {"testCaseId":"...", "status":1, "executionTimeMs":42, "memoryUsedKB":8192, ...}
+            //   ]
+            // }
+            
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             };
+            
+            var doc = JsonDocument.Parse(output);
+            var root = doc.RootElement;
+            
+            if (!root.TryGetProperty("results", out var resultsElement))
+            {
+                // Fallback: try parsing as array directly (old format compatibility)
+                if (output.TrimStart().StartsWith("["))
+                {
+                    var testResults = JsonSerializer.Deserialize<List<TestCaseResult>>(output, jsonOptions);
+                    if (testResults != null)
+                    {
+                        return ProcessTestResults(testResults, testCases, result);
+                    }
+                }
+                
+                result.Status = SubmissionStatus.RuntimeError;
+                result.RuntimeError = "Invalid JSON format: missing 'results' property";
+                return result;
+            }
+            
+            var testResultsList = JsonSerializer.Deserialize<List<TestCaseResult>>(
+                resultsElement.GetRawText(), 
+                jsonOptions);
 
-            var testResults = JsonSerializer.Deserialize<List<TestCaseResult>>(output, jsonOptions);
-
-            if (testResults == null || testResults.Count == 0)
+            if (testResultsList == null || testResultsList.Count == 0)
             {
                 result.Status = SubmissionStatus.RuntimeError;
                 result.RuntimeError = "No test results returned";
                 return result;
             }
 
-            // Check for compilation error (special case with "CompilationError" status string)
-            var compilationError = testResults.FirstOrDefault(t =>
-                t.ErrorMessage != null && t.StackTrace != null &&
-                t.TestCaseId == Guid.Empty);
-
-            if (compilationError != null)
-            {
-                result.Status = SubmissionStatus.CompilationError;
-                result.CompilationError = compilationError.ErrorMessage;
-
-                if (compilationError.ErrorLine.HasValue)
-                {
-                    result.CompilationError = $"Line {compilationError.ErrorLine}: {result.CompilationError}";
-                }
-
-                return result;
-            }
-
-            result.TestResults = testResults;
-            result.PassedTests = testResults.Count(t => t.Status == TestResultStatus.Passed);
-            result.Score = (int)((result.PassedTests / (double)result.TotalTests) * 100);
-
-            // Determine overall status
-            if (result.PassedTests == result.TotalTests)
-            {
-                result.Status = SubmissionStatus.Completed;
-            }
-            else if (testResults.Any(t => t.Status == TestResultStatus.RuntimeError))
-            {
-                result.Status = SubmissionStatus.RuntimeError;
-            }
-            else
-            {
-                result.Status = SubmissionStatus.Completed;  // Some tests failed but no errors
-            }
+            return ProcessTestResults(testResultsList, testCases, result);
         }
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse execution output: {Output}", output);
             result.Status = SubmissionStatus.RuntimeError;
-            result.RuntimeError = $"Failed to parse results: {ex.Message}\nOutput: {output}";
+            result.RuntimeError = $"Failed to parse results: {ex.Message}\nOutput: {output.Substring(0, Math.Min(500, output.Length))}";
+            return result;
+        }
+    }
+
+    private ExecutionResult ProcessTestResults(
+        List<TestCaseResult> testResults,
+        List<TestCase> testCases,
+        ExecutionResult result)
+    {
+        // Check for compilation error (special case with Guid.Empty)
+        var compilationError = testResults.FirstOrDefault(t =>
+            t.ErrorMessage != null && t.TestCaseId == Guid.Empty);
+
+        if (compilationError != null)
+        {
+            result.Status = SubmissionStatus.CompilationError;
+            result.CompilationError = compilationError.ErrorMessage;
+            
+            if (compilationError.ErrorLine.HasValue)
+            {
+                result.CompilationError = $"Line {compilationError.ErrorLine}: {result.CompilationError}";
+            }
+            
+            return result;
+        }
+
+        result.TestResults = testResults;
+        result.PassedTests = testResults.Count(t => t.Status == TestResultStatus.Passed);
+        result.Score = result.TotalTests > 0 
+            ? (int)((result.PassedTests / (double)result.TotalTests) * 100) 
+            : 0;
+
+        // Calculate total execution time (sum of all test times)
+        result.TotalExecutionTimeMs = testResults
+            .Where(t => t.ExecutionTimeMs.HasValue)
+            .Sum(t => t.ExecutionTimeMs!.Value);
+            
+        // Find peak memory usage (max across all tests)
+        result.MaxMemoryUsedKB = testResults
+            .Where(t => t.MemoryUsedKB.HasValue)
+            .Max(t => (int?)t.MemoryUsedKB!.Value);
+
+        // Determine overall status
+        if (result.PassedTests == result.TotalTests)
+        {
+            result.Status = SubmissionStatus.Completed;
+        }
+        else if (testResults.Any(t => t.Status == TestResultStatus.RuntimeError))
+        {
+            result.Status = SubmissionStatus.RuntimeError;
+            var firstError = testResults.First(t => t.Status == TestResultStatus.RuntimeError);
+            result.RuntimeError = firstError.ErrorMessage;
+        }
+        else
+        {
+            result.Status = SubmissionStatus.Completed;
         }
 
         return result;
