@@ -105,9 +105,13 @@ export interface Problem {
   id: string;
   description: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
-  timeLimit: number;
-  memoryLimit: number;
+  tags?: Tag[];
   starterCodes?: StarterCode[];
+}
+
+export interface Tag {
+  id: string;
+  name: string;
 }
 
 export interface StarterCode {

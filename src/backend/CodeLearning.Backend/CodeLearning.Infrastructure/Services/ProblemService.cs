@@ -86,10 +86,10 @@ public class ProblemService(
 
         await context.SaveChangesAsync();
 
-        return await MapToProblemResponseDto(problem);
+        return await MapToProblemResponseDto(problem, UserRole.Teacher);
     }
 
-    public async Task<ProblemResponseDto> GetProblemByIdAsync(Guid problemId)
+    public async Task<ProblemResponseDto> GetProblemByIdAsync(Guid problemId, Guid userId)
     {
         var problem = await context.Problems
             .Include(p => p.Author)
@@ -101,7 +101,10 @@ public class ProblemService(
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
-        return await MapToProblemResponseDto(problem);
+        var user = await context.Users.FindAsync(userId)
+            ?? throw new KeyNotFoundException($"User with ID {userId} not found");
+
+        return await MapToProblemResponseDto(problem, user.Role);
     }
 
     public async Task<IEnumerable<ProblemListDto>> GetProblemsAsync(string? difficulty = null, Guid? tagId = null, string? search = null)
@@ -158,7 +161,11 @@ public class ProblemService(
     {
         var problem = await context.Problems
             .Include(p => p.Author)
+            .Include(p => p.TestCases)
+            .Include(p => p.StarterCodes)
+                .ThenInclude(sc => sc.Language)
             .Include(p => p.ProblemTags)
+                .ThenInclude(pt => pt.Tag)
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
@@ -195,7 +202,7 @@ public class ProblemService(
 
         await context.SaveChangesAsync();
 
-        return await GetProblemByIdAsync(problemId);
+        return await MapToProblemResponseDto(problem, UserRole.Teacher);
     }
 
     public async Task DeleteProblemAsync(Guid problemId, Guid authorId)
@@ -480,9 +487,14 @@ public class ProblemService(
         await context.SaveChangesAsync();
     }
 
-    private async Task<ProblemResponseDto> MapToProblemResponseDto(Problem problem)
+    private async Task<ProblemResponseDto> MapToProblemResponseDto(Problem problem, UserRole userRole = UserRole.Teacher)
     {
         await EnsureNavigationPropertiesLoaded(problem);
+
+        // Students should only see public test cases
+        var testCases = userRole == UserRole.Student
+            ? problem.TestCases.Where(tc => tc.IsPublic)
+            : problem.TestCases;
 
         return new ProblemResponseDto
         {
@@ -493,7 +505,7 @@ public class ProblemService(
             AuthorId = problem.AuthorId,
             AuthorName = $"{problem.Author.FirstName} {problem.Author.LastName}",
             CreatedAt = problem.CreatedAt,
-            TestCases = problem.TestCases.Select(tc => new TestCaseResponseDto
+            TestCases = testCases.Select(tc => new TestCaseResponseDto
             {
                 Id = tc.Id,
                 Input = tc.Input,

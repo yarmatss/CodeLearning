@@ -4,8 +4,11 @@ export interface Submission {
   problemTitle: string;
   languageId: string;
   languageName: string;
+  code: string;
   status: SubmissionStatus;
   score: number;
+  totalTestCases: number;
+  passedTestCases: number;
   executionTimeMs: number;
   memoryUsedKB: number;
   compilationError?: string;

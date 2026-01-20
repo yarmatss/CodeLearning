@@ -84,6 +84,9 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
 
     private static SubmissionResponseDto MapToDto(Submission submission)
     {
+        var totalTests = submission.TestResults?.Count ?? 0;
+        var passedTests = submission.TestResults?.Count(tr => tr.Status == TestResultStatus.Passed) ?? 0;
+
         var dto = new SubmissionResponseDto
         {
             Id = submission.Id,
@@ -91,8 +94,11 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             ProblemTitle = submission.Problem?.Title ?? string.Empty,
             LanguageId = submission.LanguageId,
             LanguageName = submission.Language?.Name ?? string.Empty,
+            Code = submission.Code,
             Status = submission.Status,
             Score = submission.Score,
+            TotalTestCases = totalTests,
+            PassedTestCases = passedTests,
             ExecutionTimeMs = submission.ExecutionTimeMs,
             MemoryUsedKB = submission.MemoryUsedKB,
             CompilationError = submission.CompilationError,
@@ -103,18 +109,21 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
 
         if (submission.TestResults.Any())
         {
-            dto.TestResults = submission.TestResults.Select(tr => new TestResultDto
-            {
-                TestCaseId = tr.TestCaseId,
-                Status = tr.Status,
-                Input = tr.TestCase.IsPublic ? tr.TestCase.Input : null,
-                ExpectedOutput = tr.TestCase.IsPublic ? tr.TestCase.ExpectedOutput : null,
-                ActualOutput = tr.TestCase.IsPublic ? tr.ActualOutput : null,
-                ErrorMessage = tr.ErrorMessage,
-                ExecutionTimeMs = tr.ExecutionTimeMs,
-                MemoryUsedKB = tr.MemoryUsedKB,
-                IsPublic = tr.TestCase.IsPublic
-            }).ToList();
+            // Only return public test results to students
+            dto.TestResults = submission.TestResults
+                .Where(tr => tr.TestCase.IsPublic)
+                .Select(tr => new TestResultDto
+                {
+                    TestCaseId = tr.TestCaseId,
+                    Status = tr.Status,
+                    Input = tr.TestCase.Input,
+                    ExpectedOutput = tr.TestCase.ExpectedOutput,
+                    ActualOutput = tr.ActualOutput,
+                    ErrorMessage = tr.ErrorMessage,
+                    ExecutionTimeMs = tr.ExecutionTimeMs,
+                    MemoryUsedKB = tr.MemoryUsedKB,
+                    IsPublic = true
+                }).ToList();
         }
 
         return dto;

@@ -34,7 +34,8 @@ public class ProblemsController(
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetProblem(Guid id)
     {
-        var result = await problemService.GetProblemByIdAsync(id);
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var result = await problemService.GetProblemByIdAsync(id, userId);
         return Ok(result);
     }
 

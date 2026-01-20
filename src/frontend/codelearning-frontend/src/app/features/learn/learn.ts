@@ -47,18 +47,18 @@ export class Learn implements OnInit {
   readonly selectedLanguage = signal<string | null>(null);
   readonly userCode = signal<string>('');
   readonly currentSubmission = signal<Submission | null>(null);
+  readonly previousSubmissions = signal<Submission[]>([]);
   readonly isPolling = signal(false);
 
   // Computed helper for submission
   readonly passedTestCases = computed(() => {
     const submission = this.currentSubmission();
-    if (!submission || !submission.testResults) return 0;
-    return submission.testResults.filter(t => t.status === 1).length; // 1 = Accepted
+    return submission?.passedTestCases || 0;
   });
 
   readonly totalTestCases = computed(() => {
     const submission = this.currentSubmission();
-    return submission?.testResults?.length || 0;
+    return submission?.totalTestCases || 0;
   });
 
   readonly getStatusName = (status: number): string => {
@@ -167,6 +167,7 @@ export class Learn implements OnInit {
         this.selectedLanguage.set(null);
         this.userCode.set('');
         this.currentSubmission.set(null);
+        this.previousSubmissions.set([]);
         
         // If it's a quiz block, try to load previous attempt
         if (block.quiz) {
@@ -185,7 +186,8 @@ export class Learn implements OnInit {
         if (block.problem) {
           this.problemService.getProblem(block.problem.id).subscribe({
             next: (problemDetails) => {
-              // Update problem with full details including starterCodes
+              // Update problem with full details including starterCodes and tags
+              block.problem!.tags = problemDetails.tags;
               block.problem!.starterCodes = problemDetails.starterCodes.map(sc => ({
                 id: sc.id,
                 code: sc.code,
@@ -207,6 +209,17 @@ export class Learn implements OnInit {
               console.error('Failed to load problem details:', err);
             }
           });
+
+          // Load previous submissions for this problem
+          this.submissionService.getByProblem(block.problem.id).subscribe({
+            next: (submissions) => {
+              this.previousSubmissions.set(submissions);
+            },
+            error: (err) => {
+              console.error('Failed to load previous submissions:', err);
+              this.previousSubmissions.set([]);
+            }
+          });
         }
       },
       error: (error: any) => {
@@ -223,15 +236,27 @@ export class Learn implements OnInit {
       const nextBlock = blocks[currentIndex + 1];
       this.loadBlock(nextBlock.blockId);
       
-      // Mark current block as complete (except for unsolved quizzes)
+      // Mark current block as complete only if requirements are met
       const currentBlockId = this.currentBlock()?.id;
       const currentBlockData = this.currentBlock();
       
       if (currentBlockId && currentBlockData) {
-        // Don't mark quiz blocks as complete if not solved
-        const isUnsolvedQuiz = currentBlockData.type === BlockType.Quiz && !this.quizResult();
+        let shouldMarkComplete = true;
         
-        if (!isUnsolvedQuiz) {
+        // Don't mark quiz blocks as complete if not solved
+        if (currentBlockData.type === BlockType.Quiz && !this.quizResult()) {
+          shouldMarkComplete = false;
+        }
+        
+        // Don't mark problem blocks as complete if not solved with 100% score
+        if (currentBlockData.type === BlockType.Problem) {
+          const submission = this.currentSubmission();
+          if (!submission || submission.score !== 100) {
+            shouldMarkComplete = false;
+          }
+        }
+        
+        if (shouldMarkComplete) {
           this.markBlockComplete(currentBlockId);
         }
       }
@@ -276,14 +301,48 @@ export class Learn implements OnInit {
   }
 
   completeCourse(): void {
-    // Mark the last block as complete if not already
     const currentBlock = this.currentBlock();
-    if (currentBlock && !this.isBlockCompleted(currentBlock.id)) {
-      this.markBlockComplete(currentBlock.id);
+    
+    if (!currentBlock) {
+      this.router.navigate(['/dashboard']);
+      return;
     }
     
-    // Navigate back to dashboard with success message
-    this.router.navigate(['/dashboard']);
+    // Check if current block meets completion requirements
+    let canComplete = true;
+    
+    // Check if block is already completed
+    if (!this.isBlockCompleted(currentBlock.id)) {
+      // Don't complete if quiz is not solved
+      if (currentBlock.type === BlockType.Quiz && !this.quizResult()) {
+        canComplete = false;
+      }
+      
+      // Don't complete if problem doesn't have 100% score
+      if (currentBlock.type === BlockType.Problem) {
+        const submission = this.currentSubmission();
+        if (!submission || submission.score !== 100) {
+          canComplete = false;
+        }
+      }
+      
+      // If requirements are met, mark as complete
+      if (canComplete) {
+        this.markBlockComplete(currentBlock.id);
+      }
+    }
+    
+    // Only navigate to dashboard if all requirements are met OR block is already completed
+    if (canComplete || this.isBlockCompleted(currentBlock.id)) {
+      this.router.navigate(['/dashboard']);
+    } else {
+      // Show error message - block requirements not met
+      if (currentBlock.type === BlockType.Quiz) {
+        alert('Please complete the quiz before finishing the course.');
+      } else if (currentBlock.type === BlockType.Problem) {
+        alert('Please solve the problem with 100% score before finishing the course.');
+      }
+    }
   }
 
   renderMarkdown(content: string): SafeHtml {
@@ -484,6 +543,25 @@ export class Learn implements OnInit {
     }
   }
 
+  getStatusBadgeClass(status: number): string {
+    switch (status) {
+      case 2: // Completed
+        return 'bg-green-100 text-green-800';
+      case 0: // Pending
+      case 1: // Running
+        return 'bg-blue-100 text-blue-800';
+      case 3: // CompilationError
+      case 4: // RuntimeError
+        return 'bg-red-100 text-red-800';
+      case 5: // TimeLimitExceeded
+        return 'bg-orange-100 text-orange-800';
+      case 6: // MemoryLimitExceeded
+        return 'bg-purple-100 text-purple-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  }
+
   getLanguageName(languageId: string): 'python' | 'javascript' | 'csharp' | 'java' {
     // Map GUID to language name for Monaco Editor
     if (languageId === '11111111-1111-1111-1111-111111111111') return 'python';
@@ -491,5 +569,24 @@ export class Learn implements OnInit {
     if (languageId === '33333333-3333-3333-3333-333333333333') return 'csharp';
     if (languageId === '44444444-4444-4444-4444-444444444444') return 'java';
     return 'python'; // default
+  }
+
+  viewSubmissionDetails(submissionId: string): void {
+    this.submissionService.getById(submissionId).subscribe({
+      next: (submission) => {
+        // Set as current submission to display in the UI
+        this.currentSubmission.set(submission);
+        // Scroll to submission results
+        setTimeout(() => {
+          const element = document.querySelector('.submission-results');
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
+      },
+      error: (err) => {
+        console.error('Failed to load submission details:', err);
+      }
+    });
   }
 }

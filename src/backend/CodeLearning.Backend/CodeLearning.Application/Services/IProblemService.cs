@@ -5,7 +5,7 @@ namespace CodeLearning.Application.Services;
 public interface IProblemService
 {
     Task<ProblemResponseDto> CreateProblemAsync(CreateProblemDto dto, Guid authorId);
-    Task<ProblemResponseDto> GetProblemByIdAsync(Guid problemId);
+    Task<ProblemResponseDto> GetProblemByIdAsync(Guid problemId, Guid userId);
     Task<IEnumerable<ProblemListDto>> GetProblemsAsync(string? difficulty = null, Guid? tagId = null, string? search = null);
     Task<IEnumerable<ProblemListDto>> GetMyProblemsAsync(Guid authorId);
     Task<ProblemResponseDto> UpdateProblemAsync(Guid problemId, UpdateProblemDto dto, Guid authorId);
