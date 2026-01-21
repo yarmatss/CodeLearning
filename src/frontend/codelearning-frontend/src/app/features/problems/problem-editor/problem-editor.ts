@@ -14,11 +14,7 @@ import {
   CreateStarterCodeRequest,
   TagResponse
 } from '../../../core/services/problem.service';
-
-interface Language {
-  id: string;
-  name: string;
-}
+import { LanguageService } from '../../../core/services/language.service';
 
 @Component({
   selector: 'app-problem-editor',
@@ -32,6 +28,7 @@ export class ProblemEditor implements OnInit {
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
   private readonly problemService = inject(ProblemService);
+  private readonly languageService = inject(LanguageService);
 
   readonly problem = signal<ProblemResponse | null>(null);
   readonly testCases = signal<TestCaseResponse[]>([]);
@@ -49,12 +46,7 @@ export class ProblemEditor implements OnInit {
   readonly testCaseForm: FormGroup;
   readonly starterCodeForm: FormGroup;
   
-  readonly availableLanguages: Language[] = [
-    { id: '11111111-1111-1111-1111-111111111111', name: 'Python' },
-    { id: '22222222-2222-2222-2222-222222222222', name: 'JavaScript' },
-    { id: '33333333-3333-3333-3333-333333333333', name: 'C#' },
-    { id: '44444444-4444-4444-4444-444444444444', name: 'Java' }
-  ];
+  readonly availableLanguages = this.languageService.languages;
 
   problemId: string | null = null;
   returnUrl: string | null = null;
@@ -96,6 +88,9 @@ export class ProblemEditor implements OnInit {
   }
 
   ngOnInit(): void {
+    // Load languages first
+    this.languageService.getLanguages().subscribe();
+    
     this.loadTags();
     this.problemId = this.route.snapshot.paramMap.get('id');
     this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
@@ -406,7 +401,7 @@ export class ProblemEditor implements OnInit {
   }
 
   getLanguageNameById(languageId: string): string {
-    return this.availableLanguages.find(lang => lang.id === languageId)?.name || 'Unknown';
+    return this.languageService.getLanguageName(languageId);
   }
 
   // Starter Code Management (Edit Mode)
@@ -449,15 +444,16 @@ export class ProblemEditor implements OnInit {
   }
 
   getAvailableLanguagesForStarterCode() {
+    const languages = this.availableLanguages();
     if (this.isEditMode()) {
       const usedLanguageIds = this.starterCodes().map(sc => sc.languageId);
-      return this.availableLanguages.filter(lang => !usedLanguageIds.includes(lang.id));
+      return languages.filter(lang => !usedLanguageIds.includes(lang.id));
     } else {
       // Create mode - check FormArray
       const usedLanguageIds = this.starterCodesFormArray.controls.map(
         control => control.get('languageId')?.value
       );
-      return this.availableLanguages.filter(lang => !usedLanguageIds.includes(lang.id));
+      return languages.filter(lang => !usedLanguageIds.includes(lang.id));
     }
   }
 

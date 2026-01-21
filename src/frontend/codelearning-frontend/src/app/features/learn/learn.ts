@@ -8,6 +8,7 @@ import { MarkdownService } from '../../core/services/markdown.service';
 import { QuizService, QuizSubmission, QuizResult } from '../../core/services/quiz.service';
 import { SubmissionService } from '../../core/services/submission.service';
 import { ProblemService } from '../../core/services/problem.service';
+import { DialogService } from '../../core/services/dialog.service';
 import { CourseProgress, BlockProgress } from '../../core/models/progress.model';
 import { Block, BlockType } from '../../core/models/course.model';
 import { Submission, SubmitCodeRequest } from '../../core/models/submission.model';
@@ -31,6 +32,7 @@ export class Learn implements OnInit {
   private readonly submissionService = inject(SubmissionService);
   private readonly problemService = inject(ProblemService);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly dialogService = inject(DialogService);
 
   readonly courseProgress = signal<CourseProgress | null>(null);
   readonly currentBlock = signal<Block | null>(null);
@@ -42,6 +44,7 @@ export class Learn implements OnInit {
   readonly quizAnswers = signal<Map<string, Set<string>>>(new Map());
   readonly quizResult = signal<QuizResult | null>(null);
   readonly isSubmittingQuiz = signal(false);
+  readonly attemptedQuizSubmit = signal(false);
 
   // Problem state
   readonly selectedLanguage = signal<string | null>(null);
@@ -49,6 +52,30 @@ export class Learn implements OnInit {
   readonly currentSubmission = signal<Submission | null>(null);
   readonly previousSubmissions = signal<Submission[]>([]);
   readonly isPolling = signal(false);
+
+  // Computed helper for available languages (only from starter codes)
+  readonly availableLanguages = computed(() => {
+    const block = this.currentBlock();
+    if (!block?.problem?.starterCodes) return [];
+    return block.problem.starterCodes;
+  });
+
+  // Computed helper for unanswered quiz questions (only show if submit was attempted)
+  readonly unansweredQuestions = computed(() => {
+    const block = this.currentBlock();
+    const attempted = this.attemptedQuizSubmit();
+    
+    if (!block?.quiz || !attempted) return new Set<string>();
+    
+    const unanswered = new Set<string>();
+    block.quiz.questions.forEach(q => {
+      const answers = this.quizAnswers().get(q.id);
+      if (!answers || answers.size === 0) {
+        unanswered.add(q.id);
+      }
+    });
+    return unanswered;
+  });
 
   // Computed helper for submission
   readonly passedTestCases = computed(() => {
@@ -155,6 +182,9 @@ export class Learn implements OnInit {
   }
 
   loadBlock(blockId: string): void {
+    // Clear error message when changing blocks
+    this.errorMessage.set('');
+    
     this.blockService.getBlock(blockId).subscribe({
       next: (block: Block) => {
         this.currentBlock.set(block);
@@ -162,6 +192,7 @@ export class Learn implements OnInit {
         // Reset quiz state when loading new block
         this.quizAnswers.set(new Map());
         this.quizResult.set(null);
+        this.attemptedQuizSubmit.set(false);
         
         // Reset problem state when loading new block
         this.selectedLanguage.set(null);
@@ -228,17 +259,43 @@ export class Learn implements OnInit {
     });
   }
 
-  goToNextBlock(): void {
+  async goToNextBlock(): Promise<void> {
     const blocks = this.allBlocks();
     const currentIndex = this.currentBlockIndex();
+    const currentBlockData = this.currentBlock();
     
     if (currentIndex >= 0 && currentIndex < blocks.length - 1) {
+      // Validate current block before moving to next
+      if (currentBlockData) {
+        // Check if quiz is completed
+        if (currentBlockData.type === BlockType.Quiz && !this.quizResult()) {
+          await this.dialogService.alert(
+            'Please complete the quiz before moving to the next block.',
+            'Quiz Not Completed',
+            'warning'
+          );
+          return;
+        }
+        
+        // Check if problem is solved
+        if (currentBlockData.type === BlockType.Problem) {
+          const submission = this.currentSubmission();
+          if (!submission || submission.score !== 100) {
+            await this.dialogService.alert(
+              'Please solve the problem with 100% score before moving to the next block.',
+              'Problem Not Solved',
+              'warning'
+            );
+            return;
+          }
+        }
+      }
+      
       const nextBlock = blocks[currentIndex + 1];
       this.loadBlock(nextBlock.blockId);
       
       // Mark current block as complete only if requirements are met
       const currentBlockId = this.currentBlock()?.id;
-      const currentBlockData = this.currentBlock();
       
       if (currentBlockId && currentBlockData) {
         let shouldMarkComplete = true;
@@ -300,7 +357,7 @@ export class Learn implements OnInit {
     this.isSidebarOpen.update(v => !v);
   }
 
-  completeCourse(): void {
+  async completeCourse(): Promise<void> {
     const currentBlock = this.currentBlock();
     
     if (!currentBlock) {
@@ -338,9 +395,17 @@ export class Learn implements OnInit {
     } else {
       // Show error message - block requirements not met
       if (currentBlock.type === BlockType.Quiz) {
-        alert('Please complete the quiz before finishing the course.');
+        await this.dialogService.alert(
+          'Please complete the quiz before finishing the course.',
+          'Quiz Not Completed',
+          'warning'
+        );
       } else if (currentBlock.type === BlockType.Problem) {
-        alert('Please solve the problem with 100% score before finishing the course.');
+        await this.dialogService.alert(
+          'Please solve the problem with 100% score before finishing the course.',
+          'Problem Not Solved',
+          'warning'
+        );
       }
     }
   }
@@ -414,9 +479,30 @@ export class Learn implements OnInit {
     return answers.get(questionId)?.has(answerId) || false;
   }
 
-  submitQuiz(): void {
+  async submitQuiz(): Promise<void> {
     const block = this.currentBlock();
     if (!block || !block.quiz) return;
+
+    // Clear previous error
+    this.errorMessage.set('');
+    
+    // Mark that submit was attempted
+    this.attemptedQuizSubmit.set(true);
+
+    // Validate that all questions have at least one answer
+    const unansweredQuestions = block.quiz.questions.filter(q => {
+      const answers = this.quizAnswers().get(q.id);
+      return !answers || answers.size === 0;
+    });
+
+    if (unansweredQuestions.length > 0) {
+      await this.dialogService.alert(
+        `Please answer all questions before submitting. ${unansweredQuestions.length} question(s) remaining.`,
+        'Incomplete Quiz',
+        'warning'
+      );
+      return;
+    }
 
     const submission: QuizSubmission = {
       answers: block.quiz.questions.map(q => ({
@@ -450,6 +536,15 @@ export class Learn implements OnInit {
 
   // Problem block methods
   selectLanguage(languageId: string, starterCode: string): void {
+    // Validate that this language is available for the problem
+    const availableLangs = this.availableLanguages();
+    const isAvailable = availableLangs.some(lang => lang.languageId === languageId);
+    
+    if (!isAvailable) {
+      console.warn('Selected language is not available for this problem');
+      return;
+    }
+    
     this.selectedLanguage.set(languageId);
     this.userCode.set(starterCode);
     this.currentSubmission.set(null);
@@ -464,6 +559,22 @@ export class Learn implements OnInit {
     const languageId = this.selectedLanguage();
     
     if (!block || !block.problem || !languageId) return;
+
+    // Clear previous error
+    this.errorMessage.set('');
+
+    // Final validation - ensure language is in starter codes
+    const availableLangs = this.availableLanguages();
+    const isLanguageSupported = availableLangs.some(lang => lang.languageId === languageId);
+    
+    if (!isLanguageSupported) {
+      await this.dialogService.alert(
+        'Selected language is not supported for this problem.',
+        'Invalid Language',
+        'error'
+      );
+      return;
+    }
 
     const request: SubmitCodeRequest = {
       problemId: block.problem.id,

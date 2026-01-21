@@ -6,6 +6,7 @@ import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { MarkdownService } from '../../../core/services/markdown.service';
 import { ProgressService } from '../../../core/services/progress.service';
+import { DialogService } from '../../../core/services/dialog.service';
 import { Course, CourseStatus } from '../../../core/models/course.model';
 import { CourseProgress, CourseStructure } from '../../../core/models/progress.model';
 
@@ -22,6 +23,7 @@ export class CourseDetailComponent implements OnInit {
   readonly authService = inject(AuthService);
   readonly markdownService = inject(MarkdownService);
   readonly progressService = inject(ProgressService);
+  readonly dialogService = inject(DialogService);
 
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
@@ -135,12 +137,20 @@ export class CourseDetailComponent implements OnInit {
     });
   }
 
-  unenrollFromCourse(): void {
+  async unenrollFromCourse(): Promise<void> {
     const courseId = this.course()?.id;
     const courseTitle = this.course()?.title;
     if (!courseId) return;
 
-    if (confirm(`Are you sure you want to unenroll from "${courseTitle}"? Your progress will be lost.`)) {
+    const result = await this.dialogService.confirm({
+      title: `Unenroll from "${courseTitle}"?`,
+      message: 'Your progress will be permanently lost. This action cannot be undone.',
+      confirmText: 'Unenroll',
+      cancelText: 'Cancel',
+      type: 'warning'
+    });
+
+    if (result.confirmed) {
       this.isEnrolling.set(true);
       this.errorMessage.set('');
 

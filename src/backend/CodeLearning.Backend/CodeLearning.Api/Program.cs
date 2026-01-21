@@ -118,6 +118,7 @@ builder.Services.AddScoped<IProgressService, ProgressService>();
 builder.Services.AddScoped<IProblemService, ProblemService>();
 builder.Services.AddScoped<ISubmissionService, SubmissionService>();
 builder.Services.AddScoped<IQuizService, QuizService>();
+builder.Services.AddScoped<ILanguageService, LanguageService>();
 builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();

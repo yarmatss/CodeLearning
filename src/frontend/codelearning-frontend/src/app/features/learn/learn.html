@@ -163,9 +163,17 @@
               <!-- Quiz Questions -->
               <div class="space-y-6">
                 @for (question of currentBlock()!.quiz!.questions; track question.id; let i = $index) {
-                  <div class="rounded-lg border border-gray-200 bg-white p-6">
+                  <div [class]="'rounded-lg border p-6 ' + 
+                               (unansweredQuestions().has(question.id) 
+                                 ? 'border-red-300 bg-red-50' 
+                                 : 'border-gray-200 bg-white')">
                     <div class="mb-4">
-                      <span class="text-sm font-medium text-gray-500">Question {{ i + 1 }}</span>
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-gray-500">Question {{ i + 1 }}</span>
+                        @if (unansweredQuestions().has(question.id)) {
+                          <span class="text-xs font-semibold text-red-600">⚠ Not answered</span>
+                        }
+                      </div>
                       <h3 class="mt-1 text-lg font-semibold text-gray-900">{{ question.content }}</h3>
                       <p class="mt-1 text-sm text-gray-600">{{ question.points }} points</p>
                     </div>

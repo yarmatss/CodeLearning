@@ -3,6 +3,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ProblemService, ProblemResponse } from '../../../core/services/problem.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { LanguageService } from '../../../core/services/language.service';
 import { MarkdownPipe } from '../../../shared/pipes/markdown.pipe';
 
 @Component({
@@ -16,6 +17,7 @@ export class ProblemDetail implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly problemService = inject(ProblemService);
+  private readonly languageService = inject(LanguageService);
   readonly authService = inject(AuthService);
 
   readonly problem = signal<ProblemResponse | null>(null);
@@ -25,6 +27,9 @@ export class ProblemDetail implements OnInit {
   problemId: string | null = null;
 
   ngOnInit(): void {
+    // Load languages first
+    this.languageService.getLanguages().subscribe();
+    
     this.problemId = this.route.snapshot.paramMap.get('id');
     if (this.problemId) {
       this.loadProblem();
@@ -61,13 +66,7 @@ export class ProblemDetail implements OnInit {
   }
 
   getLanguageName(languageId: string): string {
-    const languages: { [key: string]: string } = {
-      '11111111-1111-1111-1111-111111111111': 'Python',
-      '22222222-2222-2222-2222-222222222222': 'JavaScript',
-      '33333333-3333-3333-3333-333333333333': 'C#',
-      '44444444-4444-4444-4444-444444444444': 'Java'
-    };
-    return languages[languageId] || 'Unknown';
+    return this.languageService.getLanguageName(languageId);
   }
 
   getPublicTestCasesCount(): number {

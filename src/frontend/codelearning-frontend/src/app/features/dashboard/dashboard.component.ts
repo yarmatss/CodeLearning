@@ -5,10 +5,11 @@ import { filter, Subscription } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
 import { CourseService } from '../../core/services/course.service';
 import { EnrolledCourse } from '../../core/models/course.model';
+import { CourseSkeletonComponent } from '../../shared/components/course-skeleton/course-skeleton.component';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [RouterLink, CommonModule],
+  imports: [RouterLink, CommonModule, CourseSkeletonComponent],
   templateUrl: './dashboard.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush
 })

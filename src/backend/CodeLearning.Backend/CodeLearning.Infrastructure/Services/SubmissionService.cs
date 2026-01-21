@@ -14,12 +14,20 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
     {
         var problem = await context.Problems
             .Include(p => p.TestCases)
+            .Include(p => p.StarterCodes)
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
             ?? throw new InvalidOperationException($"Problem {dto.ProblemId} not found");
 
         if (!problem.TestCases.Any())
         {
             throw new InvalidOperationException("Problem has no test cases");
+        }
+
+        // Validate that the language is supported for this problem
+        var hasStarterCodeForLanguage = problem.StarterCodes.Any(sc => sc.LanguageId == dto.LanguageId);
+        if (!hasStarterCodeForLanguage)
+        {
+            throw new InvalidOperationException($"Language is not supported for this problem. Available languages: {string.Join(", ", problem.StarterCodes.Select(sc => sc.LanguageId))}");
         }
 
         var language = await context.Languages
