@@ -1,6 +1,5 @@
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Runner.Services;
-using CodeLearning.Runner.Services.Executors;
 using CodeLearning.Runner.Workers;
 using Microsoft.EntityFrameworkCore;
 using Serilog;

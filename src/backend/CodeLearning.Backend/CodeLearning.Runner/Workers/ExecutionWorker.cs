@@ -1,6 +1,8 @@
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
+using CodeLearning.Core.Models;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Runner.Models;
 using CodeLearning.Runner.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
@@ -28,10 +30,11 @@ public class ExecutionWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "Execution Worker started with max {MaxConcurrent} concurrent executions",
+            "Execution Worker started with {MaxConcurrent} concurrent consumers processing the Redis Stream",
             _maxConcurrentExecutions);
 
-        var channel = Channel.CreateBounded<Guid>(new BoundedChannelOptions(_maxConcurrentExecutions)
+        // Update Channel to carry QueueMessage instead of just Guid
+        var channel = Channel.CreateBounded<QueueMessage>(new BoundedChannelOptions(_maxConcurrentExecutions)
         {
             FullMode = BoundedChannelFullMode.Wait
         });
@@ -45,14 +48,14 @@ public class ExecutionWorker : BackgroundService
 
         await producerTask;
         channel.Writer.Complete();
-        
+
         await Task.WhenAll(consumerTasks);
 
         _logger.LogInformation("Execution Worker stopped");
     }
 
     private async Task ProduceSubmissionsAsync(
-        ChannelWriter<Guid> writer,
+        ChannelWriter<QueueMessage> writer,
         CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -62,18 +65,21 @@ public class ExecutionWorker : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var queue = scope.ServiceProvider.GetRequiredService<ISubmissionQueue>();
 
-                var submissionId = await queue.DequeueAsync(stoppingToken);
+                // Get message (includes Stream ID for ACK)
+                var message = await queue.DequeueAsync(stoppingToken);
 
-                if (submissionId.HasValue)
+                if (message != null)
                 {
-                    await writer.WriteAsync(submissionId.Value, stoppingToken);
-                    
+                    await writer.WriteAsync(message, stoppingToken);
+
                     _logger.LogDebug(
-                        "Queued submission {SubmissionId} for processing",
-                        submissionId.Value);
+                        "Fetched submission {SubmissionId} (Stream: {StreamId})",
+                        message.SubmissionId,
+                        message.StreamId);
                 }
                 else
                 {
+                    // No new messages and no pending claims, wait before polling again
                     await Task.Delay(_pollIntervalMs, stoppingToken);
                 }
             }
@@ -90,18 +96,29 @@ public class ExecutionWorker : BackgroundService
     }
 
     private async Task ConsumeSubmissionsAsync(
-        ChannelReader<Guid> reader,
+        ChannelReader<QueueMessage> reader,
         CancellationToken stoppingToken)
     {
-        await foreach (var submissionId in reader.ReadAllAsync(stoppingToken))
+        await foreach (var message in reader.ReadAllAsync(stoppingToken))
         {
             try
             {
-                await ProcessSubmissionAsync(submissionId, stoppingToken);
+                // Process the submission
+                await ProcessSubmissionAsync(message.SubmissionId, stoppingToken);
+
+                // CRITICAL: Acknowledge message only after processing
+                // This removes it from the Pending Entries List (PEL) in Redis
+                using var scope = _serviceProvider.CreateScope();
+                var queue = scope.ServiceProvider.GetRequiredService<ISubmissionQueue>();
+                await queue.AcknowledgeAsync(message.StreamId, stoppingToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing submission {SubmissionId}", submissionId);
+                _logger.LogError(ex, "Error processing submission {SubmissionId}", message.SubmissionId);
+                // Note: We do NOT acknowledge here. 
+                // The message will stay in PEL and be picked up by auto-claim later (retry mechanism).
+                // Ideally, you should implement a "retry count" or Dead Letter Queue logic here 
+                // to avoid infinite loops for permanently broken submissions.
             }
         }
     }
@@ -122,7 +139,7 @@ public class ExecutionWorker : BackgroundService
 
         if (submission == null)
         {
-            _logger.LogWarning("Submission {SubmissionId} not found", submissionId);
+            _logger.LogWarning("Submission {SubmissionId} not found in DB", submissionId);
             return;
         }
 
@@ -156,13 +173,16 @@ public class ExecutionWorker : BackgroundService
         {
             _logger.LogError(ex, "Execution failed for submission {SubmissionId}", submissionId);
             await UpdateSubmissionStatusAsync(dbContext, submission, SubmissionStatus.RuntimeError, cancellationToken);
+            // We rethrow to ensure the generic catch block in ConsumeSubmissionsAsync sees the failure
+            // preventing the ACK (so it can be retried or inspected)
+            throw;
         }
     }
 
     private async Task SaveExecutionResultsAsync(
         ApplicationDbContext dbContext,
         Submission submission,
-        Models.ExecutionResult result,
+        ExecutionResult result,
         CancellationToken cancellationToken)
     {
         submission.Status = result.Status;

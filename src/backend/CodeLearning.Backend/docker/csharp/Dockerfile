@@ -1,36 +1,39 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS agent-build
 
-# Install required tools for test execution
-# - time: GNU time with -v flag for memory measurement
-# - coreutils: basic Unix utilities
-# - jq: JSON processor for shell scripts
-# - bc: calculator for floating-point math
-# Note: bash is already included in this image
-RUN apt-get update && apt-get install -y \
-    time \
-    coreutils \
-    jq \
-    bc \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       clang \
+       zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+WORKDIR /src
+COPY ["CodeLearning.TestRunner/CodeLearning.TestRunner.csproj", "CodeLearning.TestRunner/"]
+COPY ["CodeLearning.Core/CodeLearning.Core.csproj", "CodeLearning.Core/"]
+RUN dotnet restore "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj"
+COPY . .
+RUN dotnet publish "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj" \
+    -c Release -r linux-x64 --self-contained true \
+    -p:PublishAot=true -p:InvariantGlobalization=true -p:StackTraceSupport=false -p:OptimizationPreference=Size \
+    -o /out
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    time \
+    jq \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DOTNET_CLI_HOME=/tmp
+ENV DOTNET_NOLOGO=true
+ENV DOTNET_SKIP_FIRST_TIME_EXPERIENCE=true
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=true
+
 WORKDIR /app
 
-# Fix permissions: allow nobody user (65534) to write in /app
-RUN chmod 777 /app
 
-# Set environment variables for .NET CLI
-# - DOTNET_CLI_HOME: Home directory for .NET CLI cache/temp files
-# - DOTNET_SKIP_FIRST_TIME_EXPERIENCE: Skip first-run experience
-# - DOTNET_NOLOGO: Suppress .NET logo
-ENV DOTNET_CLI_HOME=/tmp \
-    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
-    DOTNET_NOLOGO=1
+COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 
-# Security: Run as non-privileged user (will be set by Docker runner)
-# Note: User will be set to nobody (65534:65534) by DockerRunner
+RUN chmod +x /app/runner && chmod 777 /app
 
-# Metadata
-LABEL org.opencontainers.image.title="CodeLearning C# Executor"
-LABEL org.opencontainers.image.description=".NET 10.0 SDK with test execution tools"
-LABEL org.opencontainers.image.version="10.0"
+CMD ["tail", "-f", "/dev/null"]

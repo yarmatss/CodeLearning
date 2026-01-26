@@ -1,6 +1,6 @@
 using CodeLearning.Core.Enums;
 
-namespace CodeLearning.Runner.Models;
+namespace CodeLearning.Core.Models;
 
 public class ExecutionResult
 {

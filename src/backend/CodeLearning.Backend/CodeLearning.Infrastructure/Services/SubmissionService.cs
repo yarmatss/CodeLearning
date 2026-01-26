@@ -1,5 +1,6 @@
 using CodeLearning.Application.DTOs.Submission;
 using CodeLearning.Application.Services;
+using CodeLearning.Core.Constants;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
@@ -61,7 +62,11 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
 
         // Enqueue to Redis
         var db = redis.GetDatabase();
-        await db.ListRightPushAsync("submissions:pending", submission.Id.ToString());
+        await db.StreamAddAsync(
+            StreamConstants.SubmissionsStreamKey,
+            StreamConstants.SubmissionIdField,
+            submission.Id.ToString()
+        );
 
         return MapToDto(submission);
     }

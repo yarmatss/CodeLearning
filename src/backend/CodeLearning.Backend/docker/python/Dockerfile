@@ -1,28 +1,32 @@
-FROM python:3.14.2-alpine
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS agent-build
 
-# Install required tools for test execution
-# - time: GNU time with -v flag for memory measurement
-# - coreutils: basic Unix utilities
-# - jq: JSON processor for shell scripts
-# - bc: calculator for floating-point math
-# - bash: shell for running test scripts
-RUN apk add --no-cache \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       clang \
+       zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY ["CodeLearning.TestRunner/CodeLearning.TestRunner.csproj", "CodeLearning.TestRunner/"]
+COPY ["CodeLearning.Core/CodeLearning.Core.csproj", "CodeLearning.Core/"]
+RUN dotnet restore "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj"
+COPY . .
+RUN dotnet publish "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj" \
+    -c Release -r linux-x64 --self-contained true \
+    -p:PublishAot=true -p:InvariantGlobalization=true -p:StackTraceSupport=false -p:OptimizationPreference=Size \
+    -o /out
+
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     time \
-    coreutils \
-    jq \
-    bc \
-    bash
+    && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
 WORKDIR /app
 
-# Fix permissions: allow nobody user (65534) to write in /app
-RUN chmod 777 /app
+COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 
-# Security: Run as non-privileged user (will be set by Docker runner)
-# Note: User will be set to nobody (65534:65534) by DockerRunner
+RUN chmod +x /app/runner && chmod 777 /app
 
-# Metadata
-LABEL org.opencontainers.image.title="CodeLearning Python Executor"
-LABEL org.opencontainers.image.description="Python 3.14.2 with test execution tools"
-LABEL org.opencontainers.image.version="3.14.2"
+CMD ["tail", "-f", "/dev/null"]

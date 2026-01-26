@@ -1,20 +1,32 @@
-FROM node:25.2.1-alpine
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS agent-build
 
-# Install required tools for test execution
-RUN apk add --no-cache \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       clang \
+       zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY ["CodeLearning.TestRunner/CodeLearning.TestRunner.csproj", "CodeLearning.TestRunner/"]
+COPY ["CodeLearning.Core/CodeLearning.Core.csproj", "CodeLearning.Core/"]
+RUN dotnet restore "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj"
+COPY . .
+RUN dotnet publish "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj" \
+    -c Release -r linux-x64 --self-contained true \
+    -p:PublishAot=true -p:InvariantGlobalization=true -p:StackTraceSupport=false -p:OptimizationPreference=Size \
+    -o /out
+
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     time \
-    coreutils \
-    jq \
-    bc \
-    bash
+    && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
 WORKDIR /app
 
-# Fix permissions: allow nobody user (65534) to write in /app
-RUN chmod 777 /app
+COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 
-# Metadata
-LABEL org.opencontainers.image.title="CodeLearning Node.js Executor"
-LABEL org.opencontainers.image.description="Node.js 25.2.1 with test execution tools"
-LABEL org.opencontainers.image.version="25.2.1"
+RUN chmod +x /app/runner && chmod 777 /app
+
+CMD ["tail", "-f", "/dev/null"]

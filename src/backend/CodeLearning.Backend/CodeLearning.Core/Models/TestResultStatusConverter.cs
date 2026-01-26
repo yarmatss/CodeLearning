@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodeLearning.Core.Enums;
 
-namespace CodeLearning.Runner.Models;
+namespace CodeLearning.Core.Models;
 
 public class TestResultStatusConverter : JsonConverter<TestResultStatus>
 {
@@ -21,7 +21,6 @@ public class TestResultStatusConverter : JsonConverter<TestResultStatus>
         {
             var value = reader.GetString();
             
-            // Handle string: "CompilationError" from Python wrapper
             return value switch
             {
                 "CompilationError" => TestResultStatus.RuntimeError, // Map to RuntimeError with special handling

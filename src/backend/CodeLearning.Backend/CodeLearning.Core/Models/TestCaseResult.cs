@@ -1,7 +1,7 @@
 using CodeLearning.Core.Enums;
 using System.Text.Json.Serialization;
 
-namespace CodeLearning.Runner.Models;
+namespace CodeLearning.Core.Models;
 
 public class TestCaseResult
 {

@@ -16,16 +16,14 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
 
     public IntegrationTestWebAppFactory()
     {
-        _postgresContainer = new PostgreSqlBuilder()
-            .WithImage("postgres:18-alpine")
+        _postgresContainer = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("integrationtestdb")
             .WithUsername("testuser")
             .WithPassword("testpass")
             .WithCleanUp(true)
             .Build();
 
-        _redisContainer = new RedisBuilder()
-            .WithImage("redis:8-alpine")
+        _redisContainer = new RedisBuilder("redis:8-alpine")
             .WithCleanUp(true)
             .Build();
     }

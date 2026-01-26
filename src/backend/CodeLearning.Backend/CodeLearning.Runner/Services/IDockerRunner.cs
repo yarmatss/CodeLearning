@@ -1,4 +1,4 @@
-using CodeLearning.Runner.Models;
+using CodeLearning.Core.Models;
 
 namespace CodeLearning.Runner.Services;
 
