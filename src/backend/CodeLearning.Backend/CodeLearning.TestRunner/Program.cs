@@ -73,6 +73,16 @@ class Program
             else if (hasRuntimeError) result.Status = SubmissionStatus.RuntimeError;
             else result.Status = SubmissionStatus.Completed;
 
+            // If there was a runtime error but no specific message, use the first test case error message
+            if (result.Status == SubmissionStatus.RuntimeError && string.IsNullOrWhiteSpace(result.RuntimeError))
+            {
+                var firstError = result.TestResults.FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage;
+                if (!string.IsNullOrWhiteSpace(firstError))
+                {
+                    result.RuntimeError = firstError;
+                }
+            }
+
             result.TotalExecutionTimeMs = (int?)totalSw.ElapsedMilliseconds;
             result.MaxMemoryUsedKB = (int?)maxMemoryUsed;
             result.Score = inputFiles.Count > 0 ? (int)((double)passedTests / inputFiles.Count * 100) : 0;

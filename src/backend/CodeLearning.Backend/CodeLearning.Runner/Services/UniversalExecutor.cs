@@ -118,10 +118,11 @@ public class UniversalExecutor(
                 sb.AppendLine($"mv {solutionFileName} Program.cs");
 
                 sb.AppendLine("if ! dotnet build -c Release > compile_log.txt 2>&1; then");
-
-                // If compilation fails, we read the error log and write result.json
-                sb.AppendLine("  ERR=$(cat compile_log.txt | jq -Rs .)"); // Escape JSON
+                sb.AppendLine("  ERR=$(cat compile_log.txt)");
+                sb.AppendLine("  # Escape double quotes and backslashes in error message");
+                sb.AppendLine("  ERR=$(cat compile_log.txt | jq -Rs .)");
                 sb.AppendLine("  echo \"{\\\"Status\\\":3, \\\"CompilationError\\\": $ERR, \\\"Score\\\":0}\" > /app/result.json");
+                sb.AppendLine("  cat /app/result.json");
                 sb.AppendLine("  exit 0");
                 sb.AppendLine("fi");
 
@@ -131,8 +132,11 @@ public class UniversalExecutor(
             else if (language.Name.Equals("Java", StringComparison.OrdinalIgnoreCase))
             {
                 sb.AppendLine($"if ! javac {solutionFileName} > compile_log.txt 2>&1; then");
+                sb.AppendLine("  ERR=$(cat compile_log.txt)");
+                sb.AppendLine("  # Escape double quotes and backslashes in error message");
                 sb.AppendLine("  ERR=$(cat compile_log.txt | jq -Rs .)");
                 sb.AppendLine("  echo \"{\\\"Status\\\":3, \\\"CompilationError\\\": $ERR, \\\"Score\\\":0}\" > /app/result.json");
+                sb.AppendLine("  cat /app/result.json");
                 sb.AppendLine("  exit 0");
                 sb.AppendLine("fi");
 

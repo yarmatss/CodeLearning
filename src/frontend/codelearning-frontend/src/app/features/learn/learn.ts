@@ -588,7 +588,6 @@ export class Learn implements OnInit {
       );
       
       this.currentSubmission.set(submission);
-      
       // Start polling
       await this.pollSubmission(submission.id);
     } catch (error: any) {
@@ -613,7 +612,9 @@ export class Learn implements OnInit {
 
         if (finalStatuses.includes(sub.status)) {
           this.isPolling.set(false);
-          
+          // Dodaj submission do previousSubmissions na początek listy
+          const prev = this.previousSubmissions();
+          this.previousSubmissions.set([sub, ...prev]);
           // If score is 100%, mark block as complete
           if (sub.status === 2 && sub.score === 100) {
             const blockId = this.currentBlock()?.id;
@@ -621,7 +622,6 @@ export class Learn implements OnInit {
               this.markBlockComplete(blockId);
             }
           }
-          
           break;
         }
 

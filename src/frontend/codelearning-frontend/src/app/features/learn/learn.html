@@ -349,7 +349,7 @@
                         @for (submission of previousSubmissions(); track submission.id) {
                           <tr class="hover:bg-gray-50 cursor-pointer transition-colors" (click)="viewSubmissionDetails(submission.id)">
                             <td class="px-2 py-2 whitespace-nowrap text-xs text-gray-900">
-                              {{ submission.createdAt | date:'short' }}
+                              {{ submission.createdAt | date:'dd/MM/yyyy HH:mm:ss' }}
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-xs text-gray-900">
                               {{ submission.languageName }}
