@@ -24,6 +24,7 @@ EXPOSE 8081
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
+COPY ["Directory.Packages.props", "."]
 COPY ["CodeLearning.Api/CodeLearning.Api.csproj", "CodeLearning.Api/"]
 COPY ["CodeLearning.Application/CodeLearning.Application.csproj", "CodeLearning.Application/"]
 COPY ["CodeLearning.Core/CodeLearning.Core.csproj", "CodeLearning.Core/"]

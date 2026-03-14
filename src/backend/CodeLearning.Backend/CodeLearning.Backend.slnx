@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Packages.props" />
+  </Folder>
   <Project Path="CodeLearning.Api/CodeLearning.Api.csproj" />
   <Project Path="CodeLearning.Application/CodeLearning.Application.csproj" />
   <Project Path="CodeLearning.Core/CodeLearning.Core.csproj" />

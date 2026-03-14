@@ -7,6 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+COPY ["Directory.Packages.props", "."]
 COPY ["CodeLearning.TestRunner/CodeLearning.TestRunner.csproj", "CodeLearning.TestRunner/"]
 COPY ["CodeLearning.Core/CodeLearning.Core.csproj", "CodeLearning.Core/"]
 RUN dotnet restore "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj"
