@@ -157,6 +157,26 @@ services:
           cpus: '2'      # Limit CPU usage
           memory: 2G     # Limit memory usage
 
+  frontend:
+    image: ${DOCKER_REGISTRY-}codelearningfrontend
+    container_name: codelearning-frontend
+    build:
+      context: ../../frontend/codelearning-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4200:4200"
+    volumes:
+      - ../../frontend/codelearning-frontend:/app
+      - /app/node_modules
+    environment:
+      WATCHPACK_POLLING: "true"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - codelearning-network
+    restart: unless-stopped
+
   # Executor Images (build-only, not running)
   # These images are used by Runner to execute student code
   # Build them with: docker compose build executor-python executor-node executor-csharp executor-java
