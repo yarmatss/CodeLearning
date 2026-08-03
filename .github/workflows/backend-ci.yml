@@ -1,0 +1,64 @@
+name: Backend CI
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["src/backend/CodeLearning.Backend/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    branches: ["main"]
+    paths: ["src/backend/CodeLearning.Backend/**"]
+
+defaults:
+  run:
+    working-directory: ./src/backend/CodeLearning.Backend
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Install SonarScanner
+      run: dotnet tool install --global dotnet-sonarscanner
+
+    - name: Begin SonarCloud Analysis
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        dotnet sonarscanner begin \
+          /k:"yarmatss_CodeLearning" \
+          /o:"yarmatss" \
+          /d:sonar.token="$SONAR_TOKEN" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.coverage.exclusions="**/*"
+
+    - name: Restore dependencies
+      run: dotnet restore CodeLearning.Backend.slnx
+
+    - name: Build
+      run: dotnet build CodeLearning.Backend.slnx --no-restore --configuration Release
+
+    - name: Run Tests
+      run: dotnet test --solution CodeLearning.Backend.slnx --no-build --configuration Release
+
+    - name: End SonarCloud Analysis
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
