@@ -56,7 +56,7 @@ jobs:
       run: dotnet build CodeLearning.Backend.slnx --no-restore --configuration Release
 
     - name: Run Tests
-      run: dotnet test --solution CodeLearning.Backend.slnx --no-build --configuration Release
+      run: dotnet test CodeLearning.Backend.slnx --no-build --configuration Release
 
     - name: End SonarCloud Analysis
       env:

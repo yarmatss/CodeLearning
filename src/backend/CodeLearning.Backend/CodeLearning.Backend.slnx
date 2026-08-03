@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/Solution Items/">
+    <File Path="../../../.github/workflows/backend-ci.yml" />
     <File Path="Directory.Packages.props" />
   </Folder>
   <Project Path="CodeLearning.Api/CodeLearning.Api.csproj" />
