@@ -134,9 +134,13 @@ builder.Services.AddCors(options =>
     });
 });
 
-builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
+var dataProtectionBuilder = builder.Services.AddDataProtection()
     .SetApplicationName("CodeLearning.Api");
+
+if (builder.Environment.EnvironmentName != "Testing")
+{
+    dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo("/app/keys"));
+}
 
 builder.Services.AddHealthChecks()
     .AddNpgSql(
