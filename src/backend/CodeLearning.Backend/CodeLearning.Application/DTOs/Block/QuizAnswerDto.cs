@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace CodeLearning.Application.DTOs.Block;
 
 public class QuizAnswerDto
@@ -7,5 +9,6 @@ public class QuizAnswerDto
     public required int OrderIndex { get; set; }
     // IsCorrect is only populated for instructors/admins editing blocks
     // Students should NOT see this field when viewing/attempting quizzes
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? IsCorrect { get; set; }
 }

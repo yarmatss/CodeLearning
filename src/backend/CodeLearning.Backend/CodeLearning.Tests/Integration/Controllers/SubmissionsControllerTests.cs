@@ -50,6 +50,17 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var createDto = TestDataBuilder.CreateValidCreateProblemDto(title);
+        createDto.StarterCodes.Add(new CreateStarterCodeDto
+        {
+            LanguageId = _pythonLanguageId,
+            Code = "def solution():\n    pass"
+        });
+        createDto.StarterCodes.Add(new CreateStarterCodeDto
+        {
+            LanguageId = _javascriptLanguageId,
+            Code = "function solution() {\n}"
+        });
+
         var response = await _client.PostAsJsonAsync("/api/problems", createDto);
 
         return await response.Content.ReadFromJsonAsync<ProblemResponseDto>()
