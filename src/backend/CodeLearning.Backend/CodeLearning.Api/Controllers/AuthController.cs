@@ -21,7 +21,7 @@ public class AuthController(
 {
     [HttpPost("register")]
     [AllowAnonymous]
-    public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
+    public async Task<IActionResult> Register(RegisterDto registerDto)
     {
         await registerValidator.ValidateAndThrowAsync(registerDto);
 
@@ -46,7 +46,7 @@ public class AuthController(
 
     [HttpPost("login")]
     [AllowAnonymous]
-    public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
+    public async Task<IActionResult> Login(LoginDto loginDto)
     {
         await loginValidator.ValidateAndThrowAsync(loginDto);
 
@@ -76,10 +76,8 @@ public class AuthController(
         var userId = GetCurrentUserId();
         var refreshToken = Request.Cookies["refresh_token"];
         
-        // Extract JTI from current access token
         var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
         
-        // Get access token expiration time
         var jwtSettings = configuration.GetSection("JwtSettings");
         var accessTokenExpirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "60");
         var accessTokenExpiration = TimeSpan.FromMinutes(accessTokenExpirationMinutes);
@@ -105,7 +103,6 @@ public class AuthController(
             return Unauthorized(new { message = "Refresh token not found" });
         }
 
-        // Extract userId from current access token (might be expired but we can still read claims)
         var userId = GetUserIdFromExpiredToken();
         if (userId == Guid.Empty)
         {
@@ -176,7 +173,6 @@ public class AuthController(
         var jwtSettings = configuration.GetSection("JwtSettings");
         var refreshTokenExpirationDays = int.Parse(jwtSettings["RefreshTokenExpirationDays"] ?? "7");
 
-        // Both cookies expire with refresh token - JWT validation checks if access token is still valid
         var cookieOptions = new CookieOptions
         {
             HttpOnly = true,
