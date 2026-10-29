@@ -175,16 +175,20 @@ public class BlockService(
         await context.SaveChangesAsync();
     }
 
-    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, bool includeCorrectAnswers = false)
+    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, Guid? viewerId = null)
     {
         var block = await GetBlockWithIncludesAsync(blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
+        var includeCorrectAnswers = await IsCourseInstructorAsync(block.SubchapterId, viewerId);
+
         return block.ToResponseDto(includeCorrectAnswers);
     }
 
-    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, bool includeCorrectAnswers = false)
+    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, Guid? viewerId = null)
     {
+        var includeCorrectAnswers = await IsCourseInstructorAsync(subchapterId, viewerId);
+
         var blocks = await context.CourseBlocks
             .Include(b => b.TheoryContent)
             .Include(b => b.VideoContent)
@@ -293,6 +297,17 @@ public class BlockService(
 
         await ReorderBlocks(block.SubchapterId, blockId, oldOrderIndex, newOrderIndex);
         await context.SaveChangesAsync();
+    }
+
+    private async Task<bool> IsCourseInstructorAsync(Guid subchapterId, Guid? viewerId)
+    {
+        if (viewerId is null)
+        {
+            return false;
+        }
+
+        return await context.Subchapters
+            .AnyAsync(s => s.Id == subchapterId && s.Chapter.Course.InstructorId == viewerId);
     }
 
     private async Task VerifyOwnershipAsync(Guid subchapterId, Guid instructorId)
