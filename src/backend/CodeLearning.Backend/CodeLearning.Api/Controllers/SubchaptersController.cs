@@ -1,4 +1,6 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Subchapter;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -28,7 +30,7 @@ public class SubchaptersController(
     [AllowAnonymous]
     public async Task<IActionResult> GetChapterSubchapters(Guid chapterId)
     {
-        var subchapters = await subchapterService.GetChapterSubchaptersAsync(chapterId);
+        var subchapters = await subchapterService.GetChapterSubchaptersAsync(chapterId, User.GetUserIdOrNull());
         return Ok(subchapters);
     }
 
@@ -53,7 +55,7 @@ public class SubchaptersController(
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new UnauthorizedAccessException("User not authenticated");
+            ?? throw new AuthenticationFailedException("User not authenticated");
         return Guid.Parse(userIdClaim);
     }
 }

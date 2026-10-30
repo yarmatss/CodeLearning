@@ -1,4 +1,6 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Chapter;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -28,7 +30,7 @@ public class ChaptersController(
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseChapters(Guid courseId)
     {
-        var chapters = await chapterService.GetCourseChaptersAsync(courseId);
+        var chapters = await chapterService.GetCourseChaptersAsync(courseId, User.GetUserIdOrNull());
         return Ok(chapters);
     }
 
@@ -53,7 +55,7 @@ public class ChaptersController(
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new UnauthorizedAccessException("User not authenticated");
+            ?? throw new AuthenticationFailedException("User not authenticated");
         return Guid.Parse(userIdClaim);
     }
 }

@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Problem;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Constants;
 using CodeLearning.Core.Entities;
@@ -17,7 +18,7 @@ public class ProblemService(
     public async Task<ProblemResponseDto> CreateProblemAsync(CreateProblemDto dto, Guid authorId)
     {
         var author = await context.Users.FindAsync(authorId)
-            ?? throw new KeyNotFoundException("Author not found");
+            ?? throw new NotFoundException("Author not found");
 
         var sanitizedDescription = sanitizationService.SanitizeMarkdown(dto.Description);
 
@@ -103,7 +104,7 @@ public class ProblemService(
                 .ThenInclude(pt => pt.Tag)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         return await MapToProblemResponseDto(problem, includeHiddenTestCases: problem.AuthorId == userId);
     }
@@ -167,11 +168,11 @@ public class ProblemService(
                 .ThenInclude(pt => pt.Tag)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only update your own problems");
+            throw new ForbiddenException("You can only update your own problems");
         }
 
         problem.Title = dto.Title;
@@ -212,21 +213,21 @@ public class ProblemService(
             .Include(p => p.Submissions)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only delete your own problems");
+            throw new ForbiddenException("You can only delete your own problems");
         }
 
         if (problem.Blocks.Count > 0)
         {
-            throw new InvalidOperationException("Cannot delete problem that is used in courses. Remove it from courses first.");
+            throw new BusinessRuleException("Cannot delete problem that is used in courses. Remove it from courses first.");
         }
 
         if (problem.Submissions.Count > 0)
         {
-            throw new InvalidOperationException("Cannot delete problem that has submissions.");
+            throw new BusinessRuleException("Cannot delete problem that has submissions.");
         }
 
         context.Problems.Remove(problem);
@@ -251,11 +252,11 @@ public class ProblemService(
         var problem = await context.Problems
             .Include(p => p.TestCases)
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         EnsureTestCaseLimit(problem.TestCases.Count + 1);
@@ -290,11 +291,11 @@ public class ProblemService(
         var problem = await context.Problems
             .Include(p => p.TestCases)
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         EnsureTestCaseLimit(problem.TestCases.Count + dto.TestCases.Count);
@@ -338,11 +339,11 @@ public class ProblemService(
         var testCase = await context.TestCases
             .Include(tc => tc.Problem)
             .FirstOrDefaultAsync(tc => tc.Id == testCaseId)
-            ?? throw new KeyNotFoundException($"Test case with ID {testCaseId} not found");
+            ?? throw new NotFoundException($"Test case with ID {testCaseId} not found");
 
         if (testCase.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         var wasPublic = testCase.IsPublic;
@@ -356,7 +357,7 @@ public class ProblemService(
 
             if (remainingPublicTests == 0)
             {
-                throw new InvalidOperationException("Cannot make the last public test case private");
+                throw new BusinessRuleException("Cannot make the last public test case private");
             }
         }
 
@@ -381,23 +382,23 @@ public class ProblemService(
         var problem = await context.Problems
             .Include(p => p.TestCases)
             .FirstOrDefaultAsync(p => p.Id == problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         var testCases = problem.TestCases.ToDictionary(tc => tc.Id);
 
         if (dto.TestCaseIds.Count != testCases.Count)
         {
-            throw new InvalidOperationException("All test cases must be included in reorder operation");
+            throw new BusinessRuleException("All test cases must be included in reorder operation");
         }
 
         if (dto.TestCaseIds.Any(id => !testCases.ContainsKey(id)))
         {
-            throw new InvalidOperationException("One or more test case IDs do not belong to this problem");
+            throw new BusinessRuleException("One or more test case IDs do not belong to this problem");
         }
 
         for (int i = 0; i < dto.TestCaseIds.Count; i++)
@@ -412,22 +413,22 @@ public class ProblemService(
     public async Task<StarterCodeResponseDto> AddStarterCodeAsync(Guid problemId, CreateStarterCodeDto dto, Guid authorId)
     {
         var problem = await context.Problems.FindAsync(problemId)
-            ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         var language = await context.Languages.FindAsync(dto.LanguageId)
-            ?? throw new KeyNotFoundException($"Language with ID {dto.LanguageId} not found");
+            ?? throw new NotFoundException($"Language with ID {dto.LanguageId} not found");
 
         var existingStarterCode = await context.StarterCodes
             .FirstOrDefaultAsync(sc => sc.ProblemId == problemId && sc.LanguageId == dto.LanguageId);
 
         if (existingStarterCode != null)
         {
-            throw new InvalidOperationException($"Starter code for {language.Name} already exists. Update it instead.");
+            throw new BusinessRuleException($"Starter code for {language.Name} already exists. Update it instead.");
         }
 
         var starterCode = new StarterCode
@@ -456,11 +457,11 @@ public class ProblemService(
         var testCase = await context.TestCases
             .Include(tc => tc.Problem)
             .FirstOrDefaultAsync(tc => tc.Id == testCaseId)
-            ?? throw new KeyNotFoundException($"Test case with ID {testCaseId} not found");
+            ?? throw new NotFoundException($"Test case with ID {testCaseId} not found");
 
         if (testCase.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         var remainingPublicTests = await context.TestCases
@@ -469,7 +470,7 @@ public class ProblemService(
 
         if (testCase.IsPublic && remainingPublicTests == 0)
         {
-            throw new InvalidOperationException("Cannot delete the last public test case");
+            throw new BusinessRuleException("Cannot delete the last public test case");
         }
 
         context.TestCases.Remove(testCase);
@@ -481,11 +482,11 @@ public class ProblemService(
         var starterCode = await context.StarterCodes
             .Include(sc => sc.Problem)
             .FirstOrDefaultAsync(sc => sc.Id == starterCodeId)
-            ?? throw new KeyNotFoundException($"Starter code with ID {starterCodeId} not found");
+            ?? throw new NotFoundException($"Starter code with ID {starterCodeId} not found");
 
         if (starterCode.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
+            throw new ForbiddenException(ModifyOwnProblemsOnlyMessage);
         }
 
         context.StarterCodes.Remove(starterCode);
@@ -537,7 +538,7 @@ public class ProblemService(
     {
         if (resultingCount > TestCaseLimits.MaxTestCasesPerProblem)
         {
-            throw new InvalidOperationException(
+            throw new BusinessRuleException(
                 $"A problem can have at most {TestCaseLimits.MaxTestCasesPerProblem} test cases");
         }
     }

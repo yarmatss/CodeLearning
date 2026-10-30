@@ -1,9 +1,11 @@
 using CodeLearning.Application.DTOs.Block;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Extensions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Infrastructure.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -47,7 +49,7 @@ public class BlockService(
         var videoId = dto.VideoUrl.ExtractYouTubeVideoId();
         if (string.IsNullOrEmpty(videoId))
         {
-            throw new ArgumentException("Invalid YouTube URL");
+            throw new BusinessRuleException("Invalid YouTube URL");
         }
 
         var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
@@ -108,7 +110,7 @@ public class BlockService(
         var problemExists = await context.Problems.AnyAsync(p => p.Id == dto.ProblemId);
         if (!problemExists)
         {
-            throw new KeyNotFoundException($"Problem with ID {dto.ProblemId} not found");
+            throw new NotFoundException($"Problem with ID {dto.ProblemId} not found");
         }
 
         var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
@@ -133,7 +135,7 @@ public class BlockService(
         var block = await context.CourseBlocks
             .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
         VerifyBlockOwnership(block, instructorId);
 
@@ -159,16 +161,22 @@ public class BlockService(
     public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, Guid? viewerId = null)
     {
         var block = await GetBlockWithIncludesAsync(blockId)
-            ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
-        var includeCorrectAnswers = await IsCourseInstructorAsync(block.SubchapterId, viewerId);
+        var instructorId = await GetVisibleCourseInstructorIdAsync(block.SubchapterId, viewerId)
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
+
+        var includeCorrectAnswers = instructorId == viewerId;
 
         return block.ToResponseDto(includeCorrectAnswers);
     }
 
     public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, Guid? viewerId = null)
     {
-        var includeCorrectAnswers = await IsCourseInstructorAsync(subchapterId, viewerId);
+        var instructorId = await GetVisibleCourseInstructorIdAsync(subchapterId, viewerId)
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
+
+        var includeCorrectAnswers = instructorId == viewerId;
 
         var blocks = await context.CourseBlocks
             .Include(b => b.TheoryContent)
@@ -204,7 +212,7 @@ public class BlockService(
         var videoId = dto.VideoUrl.ExtractYouTubeVideoId();
         if (string.IsNullOrEmpty(videoId))
         {
-            throw new ArgumentException("Invalid YouTube URL");
+            throw new BusinessRuleException("Invalid YouTube URL");
         }
 
         block.Title = dto.Title;
@@ -244,7 +252,7 @@ public class BlockService(
         var block = await context.CourseBlocks
             .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
         VerifyBlockOwnership(block, instructorId);
 
@@ -282,32 +290,30 @@ public class BlockService(
             }).ToList()
         }).ToList();
 
-    private async Task<bool> IsCourseInstructorAsync(Guid subchapterId, Guid? viewerId)
-    {
-        if (viewerId is null)
-        {
-            return false;
-        }
-
-        return await context.Subchapters
-            .AnyAsync(s => s.Id == subchapterId && s.Chapter.Course.InstructorId == viewerId);
-    }
+    // Null when the subchapter does not exist or belongs to a draft course the viewer does not own;
+    // the course instructor is also the only viewer who sees quiz answers
+    private async Task<Guid?> GetVisibleCourseInstructorIdAsync(Guid subchapterId, Guid? viewerId) =>
+        await context.Courses
+            .VisibleTo(viewerId)
+            .Where(c => c.Chapters.Any(ch => ch.Subchapters.Any(s => s.Id == subchapterId)))
+            .Select(c => (Guid?)c.InstructorId)
+            .FirstOrDefaultAsync();
 
     private async Task VerifyOwnershipAsync(Guid subchapterId, Guid instructorId)
     {
         var subchapter = await context.Subchapters
             .Include(s => s.Chapter.Course)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
 
         if (subchapter.Chapter.Course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only add blocks to your own courses");
+            throw new ForbiddenException("You can only add blocks to your own courses");
         }
 
         if (subchapter.Chapter.Course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot add blocks to a published course");
+            throw new BusinessRuleException("Cannot add blocks to a published course");
         }
     }
 
@@ -315,12 +321,12 @@ public class BlockService(
     {
         if (block.Subchapter.Chapter.Course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only modify blocks in your own courses");
+            throw new ForbiddenException("You can only modify blocks in your own courses");
         }
 
         if (block.Subchapter.Chapter.Course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot modify blocks in a published course");
+            throw new BusinessRuleException("Cannot modify blocks in a published course");
         }
     }
 
@@ -333,13 +339,13 @@ public class BlockService(
                 .ThenInclude(qq => qq.Answers)
             .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
         VerifyBlockOwnership(block, instructorId);
 
         if (block.Type != expectedType)
         {
-            throw new InvalidOperationException($"Block is not a {expectedType.ToString().ToLower()} block");
+            throw new BusinessRuleException($"Block is not a {expectedType.ToString().ToLower()} block");
         }
 
         return block;

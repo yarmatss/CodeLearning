@@ -1,4 +1,6 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Block;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -149,7 +151,7 @@ public class BlocksController(
     [AllowAnonymous]
     public async Task<IActionResult> GetBlockById(Guid blockId)
     {
-        var block = await blockService.GetBlockByIdAsync(blockId, GetOptionalUserId());
+        var block = await blockService.GetBlockByIdAsync(blockId, User.GetUserIdOrNull());
         return Ok(block);
     }
 
@@ -157,22 +159,16 @@ public class BlocksController(
     [AllowAnonymous]
     public async Task<IActionResult> GetSubchapterBlocks(Guid subchapterId)
     {
-        var blocks = await blockService.GetSubchapterBlocksAsync(subchapterId, GetOptionalUserId());
+        var blocks = await blockService.GetSubchapterBlocksAsync(subchapterId, User.GetUserIdOrNull());
         return Ok(blocks);
     }
 
     #endregion
 
-    private Guid? GetOptionalUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
-    }
-
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new UnauthorizedAccessException("User not authenticated");
+            ?? throw new AuthenticationFailedException("User not authenticated");
         return Guid.Parse(userIdClaim);
     }
 }

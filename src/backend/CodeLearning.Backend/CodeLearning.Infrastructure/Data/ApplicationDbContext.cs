@@ -1,5 +1,6 @@
 using CodeLearning.Core.Entities;
 using CodeLearning.Infrastructure.Data.Configurations;
+using MassTransit;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,11 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // Tables for the MassTransit transactional outbox, which publishes messages saved with the same transaction
+        builder.AddInboxStateEntity();
+        builder.AddOutboxMessageEntity();
+        builder.AddOutboxStateEntity();
 
         builder.ConfigureIdentityTables();
         builder.ConfigureTimestamps();

@@ -60,7 +60,7 @@ export class RegisterComponent {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Registration failed. Please try again.');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Registration failed. Please try again.');
       }
     });
   }

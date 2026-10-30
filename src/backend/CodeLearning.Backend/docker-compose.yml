@@ -36,6 +36,27 @@ services:
       retries: 5
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: codelearning-rabbitmq
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - codelearning-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # Docker Socket Proxy - Secure access to Docker API
   # This service filters Docker API calls and prevents dangerous operations
   # like mounting host volumes or running privileged containers
@@ -101,6 +122,9 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       ConnectionStrings__Redis: "redis:6379"
+      RabbitMqTransport__Host: rabbitmq
+      RabbitMqTransport__User: ${RABBITMQ_USER}
+      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
       Database__AutoMigrate: "true"
       JwtSettings__SecretKey: ${JWT_SECRET_KEY}
       JwtSettings__Issuer: "CodeLearningApi"
@@ -111,6 +135,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - codelearning-network
@@ -133,16 +159,17 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
-      ConnectionStrings__Redis: "redis:6379"
+      RabbitMqTransport__Host: rabbitmq
+      RabbitMqTransport__User: ${RABBITMQ_USER}
+      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
       ExecutionSettings__DockerHost: "tcp://docker-proxy:2375"
       ExecutionSettings__WorkspaceBasePath: "/tmp/submissions"
       ExecutionSettings__MaxConcurrentExecutions: "5"
-      ExecutionSettings__QueuePollIntervalMs: "1000"
       Serilog__MinimumLevel__Default: "Debug"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      rabbitmq:
         condition: service_healthy
       docker-proxy:
         condition: service_started
@@ -221,6 +248,8 @@ volumes:
   postgres-data:
     driver: local
   redis-data:
+    driver: local
+  rabbitmq-data:
     driver: local
   dataprotection-keys:
     driver: local

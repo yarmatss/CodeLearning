@@ -7,6 +7,7 @@ using CodeLearning.Core.Entities;
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Infrastructure.Services;
 using FluentValidation;
+using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
@@ -47,6 +48,20 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
             ?? throw new InvalidOperationException("Redis connection string not configured"));
 
     return ConnectionMultiplexer.Connect(configuration);
+});
+
+builder.Services.AddOptions<RabbitMqTransportOptions>().BindConfiguration("RabbitMqTransport");
+
+builder.Services.AddMassTransit(x =>
+{
+    // Messages published while handling a request are saved with its DbContext changes and delivered afterwards
+    x.AddEntityFrameworkOutbox<ApplicationDbContext>(o =>
+    {
+        o.UsePostgres();
+        o.UseBusOutbox();
+    });
+
+    x.UsingRabbitMq((context, cfg) => cfg.ConfigureEndpoints(context));
 });
 
 builder.Services.AddIdentity<User, IdentityRole<Guid>>(options =>

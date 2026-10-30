@@ -1,8 +1,10 @@
 using CodeLearning.Application.DTOs.Course;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Infrastructure.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -14,7 +16,7 @@ public class CourseService(
     public async Task<CourseResponseDto> CreateCourseAsync(CreateCourseDto dto, Guid instructorId)
     {
         var instructor = await context.Users.FindAsync(instructorId)
-            ?? throw new InvalidOperationException("Instructor not found");
+            ?? throw new BusinessRuleException("Instructor not found");
 
         var course = new Course
         {
@@ -28,30 +30,28 @@ public class CourseService(
         context.Courses.Add(course);
         await context.SaveChangesAsync();
 
-        return await MapToCourseResponseDto(course);
+        return MapToCourseResponseDto(course);
     }
 
-    public async Task<CourseResponseDto> GetCourseByIdAsync(Guid courseId)
+    public async Task<CourseResponseDto> GetCourseByIdAsync(Guid courseId, Guid? viewerId = null)
+    {
+        var course = await CoursesWithStructure()
+            .VisibleTo(viewerId)
+            .FirstOrDefaultAsync(c => c.Id == courseId)
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
+
+        return MapToCourseResponseDto(course);
+    }
+
+    public async Task<CourseStructureDto> GetCourseStructureAsync(Guid courseId, Guid? viewerId = null)
     {
         var course = await context.Courses
-            .Include(c => c.Instructor)
+            .VisibleTo(viewerId)
             .Include(c => c.Chapters)
                 .ThenInclude(ch => ch.Subchapters)
                     .ThenInclude(s => s.Blocks)
             .FirstOrDefaultAsync(c => c.Id == courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
-
-        return await MapToCourseResponseDto(course);
-    }
-
-    public async Task<CourseStructureDto> GetCourseStructureAsync(Guid courseId)
-    {
-        var course = await context.Courses
-            .Include(c => c.Chapters)
-                .ThenInclude(ch => ch.Subchapters)
-                    .ThenInclude(s => s.Blocks)
-            .FirstOrDefaultAsync(c => c.Id == courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
         var totalBlocks = course.Chapters
             .SelectMany(ch => ch.Subchapters)
@@ -88,47 +88,38 @@ public class CourseService(
 
     public async Task<IEnumerable<CourseResponseDto>> GetInstructorCoursesAsync(Guid instructorId)
     {
-        var courses = await context.Courses
-            .Include(c => c.Instructor)
-            .Include(c => c.Chapters)
-                .ThenInclude(ch => ch.Subchapters)
-                    .ThenInclude(s => s.Blocks)
+        var courses = await CoursesWithStructure()
             .Where(c => c.InstructorId == instructorId)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync();
 
-        return await Task.WhenAll(courses.Select(MapToCourseResponseDto));
+        return courses.Select(MapToCourseResponseDto);
     }
 
     public async Task<IEnumerable<CourseResponseDto>> GetPublishedCoursesAsync()
     {
-        var courses = await context.Courses
-            .Include(c => c.Instructor)
-            .Include(c => c.Chapters)
-                .ThenInclude(ch => ch.Subchapters)
-                    .ThenInclude(s => s.Blocks)
+        var courses = await CoursesWithStructure()
             .Where(c => c.Status == CourseStatus.Published)
             .OrderByDescending(c => c.PublishedAt)
             .ToListAsync();
 
-        return await Task.WhenAll(courses.Select(MapToCourseResponseDto));
+        return courses.Select(MapToCourseResponseDto);
     }
 
     public async Task<CourseResponseDto> UpdateCourseAsync(Guid courseId, UpdateCourseDto dto, Guid instructorId)
     {
-        var course = await context.Courses
-            .Include(c => c.Instructor)
+        var course = await CoursesWithStructure()
             .FirstOrDefaultAsync(c => c.Id == courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
         if (course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only update your own courses");
+            throw new ForbiddenException("You can only update your own courses");
         }
 
         if (course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot update a published course");
+            throw new BusinessRuleException("Cannot update a published course");
         }
 
         course.Title = dto.Title;
@@ -136,27 +127,23 @@ public class CourseService(
 
         await context.SaveChangesAsync();
 
-        return await MapToCourseResponseDto(course);
+        return MapToCourseResponseDto(course);
     }
 
     public async Task<CourseResponseDto> PublishCourseAsync(Guid courseId, Guid instructorId)
     {
-        var course = await context.Courses
-            .Include(c => c.Instructor)
-            .Include(c => c.Chapters)
-                .ThenInclude(ch => ch.Subchapters)
-                    .ThenInclude(s => s.Blocks)
+        var course = await CoursesWithStructure()
             .FirstOrDefaultAsync(c => c.Id == courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
         if (course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only publish your own courses");
+            throw new ForbiddenException("You can only publish your own courses");
         }
 
         if (course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Course is already published");
+            throw new BusinessRuleException("Course is already published");
         }
 
         ValidateCourseForPublishing(course);
@@ -166,22 +153,22 @@ public class CourseService(
 
         await context.SaveChangesAsync();
 
-        return await MapToCourseResponseDto(course);
+        return MapToCourseResponseDto(course);
     }
 
     public async Task DeleteCourseAsync(Guid courseId, Guid instructorId)
     {
         var course = await context.Courses.FindAsync(courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
         if (course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only delete your own courses");
+            throw new ForbiddenException("You can only delete your own courses");
         }
 
         if (course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot delete a published course");
+            throw new BusinessRuleException("Cannot delete a published course");
         }
 
         context.Courses.Remove(course);
@@ -211,14 +198,20 @@ public class CourseService(
 
         if (validationErrors.Count > 0)
         {
-            throw new InvalidOperationException($"Cannot publish course: {string.Join(", ", validationErrors)}");
+            throw new BusinessRuleException($"Cannot publish course: {string.Join(", ", validationErrors)}");
         }
     }
 
-    private async Task<CourseResponseDto> MapToCourseResponseDto(Course course)
-    {
-        await EnsureNavigationPropertiesLoaded(course);
+    // Loads everything MapToCourseResponseDto reads, so mapping never queries per course
+    private IQueryable<Course> CoursesWithStructure() =>
+        context.Courses
+            .Include(c => c.Instructor)
+            .Include(c => c.Chapters)
+                .ThenInclude(ch => ch.Subchapters)
+                    .ThenInclude(s => s.Blocks);
 
+    private static CourseResponseDto MapToCourseResponseDto(Course course)
+    {
         var totalBlocks = course.Chapters
             .SelectMany(ch => ch.Subchapters)
             .Sum(s => s.Blocks.Count);
@@ -236,29 +229,5 @@ public class CourseService(
             ChaptersCount = course.Chapters.Count,
             TotalBlocks = totalBlocks
         };
-    }
-
-    private async Task EnsureNavigationPropertiesLoaded(Course course)
-    {
-        if (!context.Entry(course).Collection(c => c.Chapters).IsLoaded)
-        {
-            await context.Entry(course).Collection(c => c.Chapters).LoadAsync();
-        }
-
-        foreach (var chapter in course.Chapters)
-        {
-            if (!context.Entry(chapter).Collection(ch => ch.Subchapters).IsLoaded)
-            {
-                await context.Entry(chapter).Collection(ch => ch.Subchapters).LoadAsync();
-            }
-
-            foreach (var subchapter in chapter.Subchapters)
-            {
-                if (!context.Entry(subchapter).Collection(s => s.Blocks).IsLoaded)
-                {
-                    await context.Entry(subchapter).Collection(s => s.Blocks).LoadAsync();
-                }
-            }
-        }
     }
 }

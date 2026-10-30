@@ -213,4 +213,77 @@ public class CoursesControllerTests : IClassFixture<IntegrationTestWebAppFactory
     }
 
     #endregion
+
+    #region Draft Visibility Tests
+
+    [Fact]
+    public async Task GetCourseById_DraftCourse_AsOwner_ShouldReturn200()
+    {
+        // Arrange
+        var courseId = await CreateDraftCourseAsync();
+
+        // Act
+        var response = await _client.GetAsync($"/api/courses/{courseId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task GetCourseById_DraftCourse_WithoutAuth_ShouldReturn404()
+    {
+        // Arrange
+        var courseId = await CreateDraftCourseAsync();
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        // Act
+        var response = await _client.GetAsync($"/api/courses/{courseId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetCourseStructure_DraftCourse_AsAnotherTeacher_ShouldReturn404()
+    {
+        // Arrange
+        var courseId = await CreateDraftCourseAsync();
+        var anotherTeacherToken = await GetTeacherToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/courses/{courseId}/structure");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetCourseChapters_DraftCourse_AsStudent_ShouldReturn404()
+    {
+        // Arrange
+        var courseId = await CreateDraftCourseAsync();
+        var studentToken = await GetStudentToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/courses/{courseId}/chapters");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // Leaves the client authenticated as the course owner
+    private async Task<Guid> CreateDraftCourseAsync()
+    {
+        var token = await GetTeacherToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var createResponse = await _client.PostAsJsonAsync("/api/courses", TestDataBuilder.CreateValidCreateCourseDto());
+        var createdCourse = await createResponse.Content.ReadFromJsonAsync<CourseResponseDto>();
+
+        return createdCourse!.Id;
+    }
+
+    #endregion
 }

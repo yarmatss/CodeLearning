@@ -1,3 +1,4 @@
+using CodeLearning.Application.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
@@ -15,14 +16,26 @@ internal sealed class GlobalExceptionHandler(
     {
         var traceId = Activity.Current?.Id ?? httpContext.TraceIdentifier;
 
-        logger.LogError(
-            exception,
-            "Unhandled exception occurred: {Message} | TraceId: {TraceId}",
-            exception.Message,
-            traceId
-        );
-
         var (statusCode, type, title, detail) = MapException(exception);
+
+        if (statusCode >= StatusCodes.Status500InternalServerError)
+        {
+            logger.LogError(
+                exception,
+                "Unhandled exception occurred: {Message} | TraceId: {TraceId}",
+                exception.Message,
+                traceId
+            );
+        }
+        else
+        {
+            logger.LogWarning(
+                "Request failed with {StatusCode}: {Message} | TraceId: {TraceId}",
+                statusCode,
+                exception.Message,
+                traceId
+            );
+        }
 
         httpContext.Response.StatusCode = statusCode;
 
@@ -55,31 +68,25 @@ internal sealed class GlobalExceptionHandler(
     {
         return exception switch
         {
-            KeyNotFoundException ex => (
+            NotFoundException ex => (
                 StatusCodes.Status404NotFound,
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.5",
                 "Not Found",
                 ex.Message
             ),
-            UnauthorizedAccessException ex when IsAuthenticationFailure(ex) => (
+            AuthenticationFailedException ex => (
                 StatusCodes.Status401Unauthorized,
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2",
                 "Unauthorized",
                 ex.Message
             ),
-            UnauthorizedAccessException ex => (
+            ForbiddenException ex => (
                 StatusCodes.Status403Forbidden,
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.4",
                 "Forbidden",
                 ex.Message
             ),
-            ArgumentException ex => (
-                StatusCodes.Status400BadRequest,
-                "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1",
-                "Bad Request",
-                ex.Message
-            ),
-            InvalidOperationException ex => (
+            BusinessRuleException ex => (
                 StatusCodes.Status400BadRequest,
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1",
                 "Bad Request",
@@ -92,14 +99,5 @@ internal sealed class GlobalExceptionHandler(
                 "An unexpected error occurred. Please try again later."
             )
         };
-    }
-
-    private static bool IsAuthenticationFailure(UnauthorizedAccessException ex)
-    {
-        var message = ex.Message.ToLowerInvariant();
-        return message.Contains("invalid email") ||
-               message.Contains("invalid password") ||
-               message.Contains("credentials") ||
-               message.Contains("not found");
     }
 }

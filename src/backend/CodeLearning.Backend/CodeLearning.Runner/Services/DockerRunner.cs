@@ -132,19 +132,12 @@ public class DockerRunner : IDockerRunner
 
             return result;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            // Host shutdown: not a verdict, let the unacknowledged message be retried
-            throw;
-        }
-        catch (Exception ex)
-        {
+            // Verdicts on the student's code are returned above, so this is an infrastructure failure (Docker, workspace).
+            // It propagates so the message is retried, and the submission is failed once the attempts run out
             _logger.LogError(ex, "Error executing submission {SubmissionId}", context.Submission.Id);
-            return new ExecutionResult
-            {
-                Status = SubmissionStatus.RuntimeError,
-                RuntimeError = ex.Message
-            };
+            throw;
         }
         finally
         {

@@ -8,7 +8,8 @@ public class CreateStarterCodeDtoValidator : AbstractValidator<CreateStarterCode
     public CreateStarterCodeDtoValidator()
     {
         RuleFor(x => x.Code)
-            .NotEmpty().WithMessage("Starter code is required");
+            .NotEmpty().WithMessage("Starter code is required")
+            .MaximumLength(100000).WithMessage("Starter code cannot exceed 100KB");
 
         RuleFor(x => x.LanguageId)
             .NotEmpty().WithMessage("Language is required");

@@ -175,7 +175,7 @@ export class Learn implements OnInit {
         this.isLoading.set(false);
       },
       error: (error) => {
-        this.errorMessage.set(error.error?.message || 'Failed to load course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load course');
         this.isLoading.set(false);
       }
     });
@@ -254,7 +254,7 @@ export class Learn implements OnInit {
         }
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to load block');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load block');
       }
     });
   }
@@ -528,7 +528,7 @@ export class Learn implements OnInit {
         }
       },
       error: (error) => {
-        this.errorMessage.set(error.error?.message || 'Failed to submit quiz');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to submit quiz');
         this.isSubmittingQuiz.set(false);
       }
     });

@@ -5,7 +5,7 @@ namespace CodeLearning.Application.Services;
 public interface IChapterService
 {
     Task<ChapterResponseDto> AddChapterAsync(Guid courseId, CreateChapterDto dto, Guid instructorId);
-    Task<IEnumerable<ChapterResponseDto>> GetCourseChaptersAsync(Guid courseId);
+    Task<IEnumerable<ChapterResponseDto>> GetCourseChaptersAsync(Guid courseId, Guid? viewerId = null);
     Task<ChapterResponseDto> UpdateChapterOrderAsync(Guid chapterId, int newOrderIndex, Guid instructorId);
     Task DeleteChapterAsync(Guid chapterId, Guid instructorId);
 }

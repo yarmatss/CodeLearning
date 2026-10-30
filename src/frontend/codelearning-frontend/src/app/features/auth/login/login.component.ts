@@ -43,7 +43,7 @@ export class LoginComponent {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Login failed. Please try again.');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Login failed. Please try again.');
       }
     });
   }

@@ -87,7 +87,7 @@ export class CourseListComponent implements OnInit {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to load courses');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load courses');
       }
     });
   }

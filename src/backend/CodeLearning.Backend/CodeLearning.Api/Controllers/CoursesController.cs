@@ -1,4 +1,6 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Course;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -30,7 +32,7 @@ public class CoursesController(
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseById(Guid id)
     {
-        var course = await courseService.GetCourseByIdAsync(id);
+        var course = await courseService.GetCourseByIdAsync(id, User.GetUserIdOrNull());
         return Ok(course);
     }
 
@@ -38,7 +40,7 @@ public class CoursesController(
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseStructure(Guid id)
     {
-        var structure = await courseService.GetCourseStructureAsync(id);
+        var structure = await courseService.GetCourseStructureAsync(id, User.GetUserIdOrNull());
         return Ok(structure);
     }
 
@@ -91,7 +93,7 @@ public class CoursesController(
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new UnauthorizedAccessException("User not authenticated");
+            ?? throw new AuthenticationFailedException("User not authenticated");
         return Guid.Parse(userIdClaim);
     }
 }

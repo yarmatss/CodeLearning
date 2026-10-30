@@ -1,9 +1,9 @@
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Runner.Consumers;
 using CodeLearning.Runner.Services;
-using CodeLearning.Runner.Workers;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
-using StackExchange.Redis;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -25,21 +25,19 @@ try
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-    builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-    {
-        var configuration = ConfigurationOptions.Parse(
-            builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379");
-        configuration.AbortOnConnectFail = false;
-        return ConnectionMultiplexer.Connect(configuration);
-    });
-
     // Services
-    builder.Services.AddSingleton<ISubmissionQueue, SubmissionQueue>();
     builder.Services.AddSingleton<IDockerRunner, DockerRunner>();
     builder.Services.AddSingleton<ICodeExecutor, UniversalExecutor>();
 
-    // Background Worker
-    builder.Services.AddHostedService<ExecutionWorker>();
+    builder.Services.AddOptions<RabbitMqTransportOptions>().BindConfiguration("RabbitMqTransport");
+
+    builder.Services.AddMassTransit(x =>
+    {
+        x.AddConsumer<SubmissionCreatedConsumer, SubmissionCreatedConsumerDefinition>();
+        x.AddConsumer<SubmissionFaultConsumer>();
+
+        x.UsingRabbitMq((context, cfg) => cfg.ConfigureEndpoints(context));
+    });
 
     var host = builder.Build();
 

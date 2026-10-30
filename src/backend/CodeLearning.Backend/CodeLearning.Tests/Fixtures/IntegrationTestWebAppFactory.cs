@@ -1,4 +1,5 @@
 using CodeLearning.Infrastructure.Data;
+using MassTransit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +66,9 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
                 return ConnectionMultiplexer.Connect(configuration);
             });
 
+            // Swaps RabbitMQ for the in-memory transport; published messages can be inspected through ITestHarness
+            services.AddMassTransitTestHarness();
+
             var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -94,10 +98,5 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
 
         await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Courses\", \"Chapters\", \"Subchapters\" CASCADE");
         await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Users\", \"UserRoles\", \"UserClaims\" CASCADE");
-
-        // Clear Redis queue
-        var redis = scope.ServiceProvider.GetRequiredService<IConnectionMultiplexer>();
-        var redisDb = redis.GetDatabase();
-        await redisDb.KeyDeleteAsync("submissions:pending");
     }
 }

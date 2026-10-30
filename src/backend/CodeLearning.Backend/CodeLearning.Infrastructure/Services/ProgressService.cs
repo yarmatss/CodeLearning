@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Progress;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -14,13 +15,13 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
         var block = await context.CourseBlocks
             .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
+            ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
         var courseId = block.Subchapter.Chapter.CourseId;
 
         var enrollment = await context.StudentCourseProgresses
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
-            ?? throw new InvalidOperationException("You must be enrolled in this course to mark blocks as completed");
+            ?? throw new BusinessRuleException("You must be enrolled in this course to mark blocks as completed");
 
         var existingProgress = await context.StudentBlockProgresses
             .FirstOrDefaultAsync(bp => bp.BlockId == blockId && bp.StudentId == studentId);
@@ -84,7 +85,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
         var enrollment = await context.StudentCourseProgresses
             .Include(p => p.Course)
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
-            ?? throw new InvalidOperationException("You are not enrolled in this course");
+            ?? throw new BusinessRuleException("You are not enrolled in this course");
 
         var blocks = await context.CourseBlocks
             .Include(b => b.Subchapter.Chapter)
@@ -148,7 +149,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
 
                 if (!hasQuizAttempt)
                 {
-                    throw new InvalidOperationException("Submit the quiz to complete this block");
+                    throw new BusinessRuleException("Submit the quiz to complete this block");
                 }
                 break;
 
@@ -161,7 +162,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
 
                 if (!hasAcceptedSubmission)
                 {
-                    throw new InvalidOperationException("Pass all test cases of the problem to complete this block");
+                    throw new BusinessRuleException("Pass all test cases of the problem to complete this block");
                 }
                 break;
         }

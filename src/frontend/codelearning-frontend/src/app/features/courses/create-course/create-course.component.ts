@@ -43,7 +43,7 @@ export class CreateCourseComponent {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to create course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to create course');
       }
     });
   }
