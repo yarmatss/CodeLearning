@@ -149,9 +149,7 @@ public class BlocksController(
     [AllowAnonymous]
     public async Task<IActionResult> GetBlockById(Guid blockId)
     {
-        // Include correct answers only for authenticated teachers
-        var isTeacher = User.IsInRole("Teacher");
-        var block = await blockService.GetBlockByIdAsync(blockId, includeCorrectAnswers: isTeacher);
+        var block = await blockService.GetBlockByIdAsync(blockId, GetOptionalUserId());
         return Ok(block);
     }
 
@@ -159,13 +157,17 @@ public class BlocksController(
     [AllowAnonymous]
     public async Task<IActionResult> GetSubchapterBlocks(Guid subchapterId)
     {
-        // Include correct answers only for authenticated teachers
-        var isTeacher = User.IsInRole("Teacher");
-        var blocks = await blockService.GetSubchapterBlocksAsync(subchapterId, includeCorrectAnswers: isTeacher);
+        var blocks = await blockService.GetSubchapterBlocksAsync(subchapterId, GetOptionalUserId());
         return Ok(blocks);
     }
 
     #endregion
+
+    private Guid? GetOptionalUserId()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
+    }
 
     private Guid GetCurrentUserId()
     {

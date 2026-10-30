@@ -1,16 +1,48 @@
 ﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodeLearning.Core.Enums;
 using CodeLearning.Core.Models;
 
+namespace CodeLearning.TestRunner;
+
 [JsonSerializable(typeof(ExecutionResult))]
 internal partial class AppJsonContext : JsonSerializerContext { }
 
-class Program
+static partial class Program
 {
     const int MAX_OUTPUT_CHARS = 10000;
+
+    // Lines that /usr/bin/time -v appends to stderr; everything else is the program's own error output
+    static readonly string[] TimeOutputMarkers =
+    [
+        "Command being timed:",
+        "User time (seconds):",
+        "System time (seconds):",
+        "Percent of CPU this job got:",
+        "Elapsed (wall clock) time",
+        "Average shared text size",
+        "Average unshared data size",
+        "Average stack size",
+        "Average total size",
+        "Average resident set size",
+        "Major (requiring I/O) page faults",
+        "Minor (reclaiming a frame) page faults",
+        "Voluntary context switches",
+        "Involuntary context switches",
+        "Swaps",
+        "File system inputs",
+        "File system outputs",
+        "Socket messages sent",
+        "Socket messages received",
+        "Signals delivered",
+        "Page size (bytes)",
+        "Exit status:"
+    ];
+
+    const string PeakMemoryMarker = "Maximum resident set size (kbytes):";
 
     static async Task<int> Main(string[] args)
     {
@@ -43,49 +75,26 @@ class Program
                 .OrderBy(f => int.Parse(Path.GetFileNameWithoutExtension(f).Split('_')[1]))
                 .ToList();
 
-            int passedTests = 0;
-            bool hasRuntimeError = false;
-            bool hasTimeLimitExceeded = false;
             long maxMemoryUsed = 0;
 
             foreach (var inputFile in inputFiles)
             {
-                var testIndexStr = Path.GetFileNameWithoutExtension(inputFile).Split('_')[1];
-                var expectedFile = Path.Combine(inputDir, $"expected_{testIndexStr}.txt");
-                if (!File.Exists(expectedFile)) continue;
-
+                var testIndex = int.Parse(Path.GetFileNameWithoutExtension(inputFile).Split('_')[1]);
                 var inputContent = await File.ReadAllTextAsync(inputFile);
-                var expectedOutput = (await File.ReadAllTextAsync(expectedFile)).Trim();
 
-                var testResult = await RunSingleTestAsync(runCommand, inputContent, expectedOutput, timeLimitMs);
+                var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs);
+                testResult.TestIndex = testIndex;
+                KillLeftoverProcesses();
 
                 if (testResult.MemoryUsedKB.HasValue && testResult.MemoryUsedKB.Value > maxMemoryUsed)
                     maxMemoryUsed = testResult.MemoryUsedKB.Value;
 
-                if (testResult.Status == TestResultStatus.Passed) passedTests++;
-                else if (testResult.Status == TestResultStatus.RuntimeError) hasRuntimeError = true;
-                else if (testResult.Status == TestResultStatus.TimeLimitExceeded) hasTimeLimitExceeded = true;
-
                 result.TestResults.Add(testResult);
             }
 
-            if (hasTimeLimitExceeded) result.Status = SubmissionStatus.TimeLimitExceeded;
-            else if (hasRuntimeError) result.Status = SubmissionStatus.RuntimeError;
-            else result.Status = SubmissionStatus.Completed;
-
-            // If there was a runtime error but no specific message, use the first test case error message
-            if (result.Status == SubmissionStatus.RuntimeError && string.IsNullOrWhiteSpace(result.RuntimeError))
-            {
-                var firstError = result.TestResults.FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage;
-                if (!string.IsNullOrWhiteSpace(firstError))
-                {
-                    result.RuntimeError = firstError;
-                }
-            }
-
+            result.Status = SubmissionStatus.Completed;
             result.TotalExecutionTimeMs = (int?)totalSw.ElapsedMilliseconds;
             result.MaxMemoryUsedKB = (int?)maxMemoryUsed;
-            result.Score = inputFiles.Count > 0 ? (int)((double)passedTests / inputFiles.Count * 100) : 0;
         }
         catch (Exception ex)
         {
@@ -99,7 +108,57 @@ class Program
         return 0;
     }
 
-    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, string expectedOutput, int timeoutMs)
+    [LibraryImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static partial int Kill(int pid, int sig);
+
+    const int SIGKILL = 9;
+
+    // Submission processes that daemonized escape Process.Kill(entireProcessTree).
+    // kill(-1) signals every process this user can reach except PID 1 and the runner itself.
+    static void KillLeftoverProcesses()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            // Fails with ESRCH when nothing is left to kill, which is the normal case
+            _ = Kill(-1, SIGKILL);
+        }
+    }
+
+    static void AppendLimited(StringBuilder builder, string? line, bool markTruncation)
+    {
+        if (line == null) return;
+
+        if (builder.Length < MAX_OUTPUT_CHARS) builder.AppendLine(line);
+        else if (markTruncation && builder.Length == MAX_OUTPUT_CHARS) builder.AppendLine("... [Output Truncated]");
+    }
+
+    static (long PeakMemoryKb, string ProgramErrors) ParseTimeOutput(string stderr)
+    {
+        long peakMemoryKb = 0;
+        var programErrors = new StringBuilder();
+
+        using var reader = new StringReader(stderr);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (line.Contains(PeakMemoryMarker))
+            {
+                var parts = line.Split(':', StringSplitOptions.TrimEntries);
+                if (parts.Length > 1 && long.TryParse(parts[1], out long kb))
+                {
+                    peakMemoryKb = kb;
+                }
+            }
+            else if (!TimeOutputMarkers.Any(line.Contains))
+            {
+                programErrors.AppendLine(line);
+            }
+        }
+
+        return (peakMemoryKb, programErrors.ToString().Trim());
+    }
+
+    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs)
     {
         var result = new TestCaseResult { ActualOutput = "" };
 
@@ -119,22 +178,8 @@ class Program
         var outputBuilder = new StringBuilder();
         var errorBuilder = new StringBuilder();
 
-        process.OutputDataReceived += (sender, e) =>
-        {
-            if (e.Data != null)
-            {
-                if (outputBuilder.Length < MAX_OUTPUT_CHARS) outputBuilder.AppendLine(e.Data);
-                else if (outputBuilder.Length == MAX_OUTPUT_CHARS) outputBuilder.AppendLine("... [Output Truncated]");
-            }
-        };
-
-        process.ErrorDataReceived += (sender, e) =>
-        {
-            if (e.Data != null)
-            {
-                if (errorBuilder.Length < MAX_OUTPUT_CHARS) errorBuilder.AppendLine(e.Data);
-            }
-        };
+        process.OutputDataReceived += (sender, e) => AppendLimited(outputBuilder, e.Data, markTruncation: true);
+        process.ErrorDataReceived += (sender, e) => AppendLimited(errorBuilder, e.Data, markTruncation: false);
 
         var sw = Stopwatch.StartNew();
 
@@ -154,7 +199,7 @@ class Program
             }
             catch (OperationCanceledException)
             {
-                process.Kill();
+                process.Kill(entireProcessTree: true);
                 result.Status = TestResultStatus.TimeLimitExceeded;
                 result.ExecutionTimeMs = timeoutMs;
                 return result;
@@ -163,76 +208,19 @@ class Program
             sw.Stop();
             result.ExecutionTimeMs = (int?)sw.ElapsedMilliseconds;
 
-            string errorOutput = errorBuilder.ToString();
-            long peakMemoryKb = 0;
-            var cleanErrorBuilder = new StringBuilder();
-
-            using (var reader = new StringReader(errorOutput))
-            {
-                string? line;
-                while ((line = reader.ReadLine()) != null)
-                {
-                    if (line.Contains("Maximum resident set size (kbytes):"))
-                    {
-                        var parts = line.Split(':', StringSplitOptions.TrimEntries);
-                        if (parts.Length > 1 && long.TryParse(parts[1], out long kb))
-                        {
-                            peakMemoryKb = kb;
-                        }
-                    }
-                    else if (line.Contains("Command being timed:") ||
-                             line.Contains("User time (seconds):") ||
-                             line.Contains("System time (seconds):") ||
-                             line.Contains("Percent of CPU this job got:") ||
-                             line.Contains("Elapsed (wall clock) time") ||
-                             line.Contains("Average shared text size") ||
-                             line.Contains("Average unshared data size") ||
-                             line.Contains("Average stack size") ||
-                             line.Contains("Average total size") ||
-                             line.Contains("Average resident set size") ||
-                             line.Contains("Major (requiring I/O) page faults") ||
-                             line.Contains("Minor (reclaiming a frame) page faults") ||
-                             line.Contains("Voluntary context switches") ||
-                             line.Contains("Involuntary context switches") ||
-                             line.Contains("Swaps") ||
-                             line.Contains("File system inputs") ||
-                             line.Contains("File system outputs") ||
-                             line.Contains("Socket messages sent") ||
-                             line.Contains("Socket messages received") ||
-                             line.Contains("Signals delivered") ||
-                             line.Contains("Page size (bytes)") ||
-                             line.Contains("Exit status:"))
-                    {
-                        // lines from time, ignore
-                    }
-                    else
-                    {
-                        // actual error message from the program
-                        cleanErrorBuilder.AppendLine(line);
-                    }
-                }
-            }
-
+            var (peakMemoryKb, programErrors) = ParseTimeOutput(errorBuilder.ToString());
             result.MemoryUsedKB = (int)peakMemoryKb;
 
             if (process.ExitCode != 0)
             {
                 result.Status = TestResultStatus.RuntimeError;
-                result.ErrorMessage = cleanErrorBuilder.ToString().Trim();
+                result.ErrorMessage = programErrors;
                 return result;
             }
 
-            var actualOutput = outputBuilder.ToString().Trim();
-            result.ActualOutput = actualOutput;
-
-            if (actualOutput.Replace("\r\n", "\n") == expectedOutput.Replace("\r\n", "\n"))
-            {
-                result.Status = TestResultStatus.Passed;
-            }
-            else
-            {
-                result.Status = TestResultStatus.Failed;
-            }
+            result.ActualOutput = outputBuilder.ToString().Trim();
+            // Judged by SubmissionGrader outside the sandbox
+            result.Status = TestResultStatus.Failed;
         }
         catch (Exception ex)
         {

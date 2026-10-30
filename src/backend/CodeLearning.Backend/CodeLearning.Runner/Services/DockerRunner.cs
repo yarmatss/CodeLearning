@@ -11,6 +11,10 @@ namespace CodeLearning.Runner.Services;
 
 public class DockerRunner : IDockerRunner
 {
+    private const long MaxFileSizeBytes = 64L * 1024 * 1024;
+    // ~10KB stdout + ~10KB stderr per test, up to 6x after JSON escaping
+    private const int MaxLogBytes = 16 * 1024 * 1024;
+
     private readonly DockerClient _client;
     private readonly ILogger<DockerRunner> _logger;
 
@@ -58,7 +62,7 @@ public class DockerRunner : IDockerRunner
                 await _client.Containers.WaitContainerAsync(containerId, cts.Token);
                 completed = true;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 completed = false;
             }
@@ -70,33 +74,55 @@ public class DockerRunner : IDockerRunner
                     containerId,
                     totalTimeout);
 
-                await _client.Containers.KillContainerAsync(
-                    containerId,
-                    new ContainerKillParameters(),
-                    cancellationToken);
+                try
+                {
+                    await _client.Containers.KillContainerAsync(
+                        containerId,
+                        new ContainerKillParameters(),
+                        CancellationToken.None);
+                }
+                catch (DockerApiException ex)
+                {
+                    // Container may have exited between the timeout and the kill; cleanup removes it anyway
+                    _logger.LogWarning(ex, "Failed to kill timed out container {ContainerId}", containerId);
+                }
 
                 return new ExecutionResult
                 {
                     Status = SubmissionStatus.TimeLimitExceeded,
-                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000
+                    TotalExecutionTimeMs = totalTimeout * 1000
                 };
             }
 
-            var logs = await GetContainerLogsAsync(containerId, cancellationToken);
+            var (logs, truncated) = await GetContainerLogsAsync(containerId, cancellationToken);
 
             _logger.LogDebug("Container output (first 1000 chars): {Output}",
                 logs.Length > 1000 ? logs.Substring(0, 1000) : logs);
 
+            if (truncated)
+            {
+                _logger.LogWarning("Container {ContainerId} output exceeded {MaxLogBytes} bytes", containerId, MaxLogBytes);
+                return new ExecutionResult
+                {
+                    Status = SubmissionStatus.RuntimeError,
+                    RuntimeError = $"Execution output exceeded the {MaxLogBytes / (1024 * 1024)} MB limit"
+                };
+            }
+
             var result = ParseExecutionOutput(logs, context.TestCases);
 
             _logger.LogInformation(
-                "Container {ContainerId} completed with status {Status}, score {Score}%, time {Time}ms",
+                "Container {ContainerId} completed with status {Status}, time {Time}ms",
                 containerId,
                 result.Status,
-                result.Score,
                 result.TotalExecutionTimeMs ?? 0);
 
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host shutdown: not a verdict, let the unacknowledged message be retried
+            throw;
         }
         catch (Exception ex)
         {
@@ -111,7 +137,7 @@ public class DockerRunner : IDockerRunner
         {
             if (containerId != null)
             {
-                await CleanupContainerAsync(containerId, cancellationToken);
+                await CleanupContainerAsync(containerId, CancellationToken.None);
             }
         }
     }
@@ -156,24 +182,11 @@ public class DockerRunner : IDockerRunner
             }
 
             result.Status = deserializedResult.Status;
-            result.Score = deserializedResult.Score;
             result.TotalExecutionTimeMs = deserializedResult.TotalExecutionTimeMs;
             result.MaxMemoryUsedKB = deserializedResult.MaxMemoryUsedKB;
             result.CompilationError = deserializedResult.CompilationError;
             result.RuntimeError = deserializedResult.RuntimeError;
             result.TestResults = deserializedResult.TestResults ?? new List<TestCaseResult>();
-
-            // map actual TestCaseIds from db
-            if (result.TestResults.Count <= testCases.Count)
-            {
-                for (int i = 0; i < result.TestResults.Count; i++)
-                {
-                    result.TestResults[i].TestCaseId = testCases[i].Id;
-                }
-            }
-
-            result.TotalTests = testCases.Count;
-            result.PassedTests = result.TestResults.Count(t => t.Status == TestResultStatus.Passed);
 
             return result;
         }
@@ -207,10 +220,18 @@ public class DockerRunner : IDockerRunner
             HostConfig = new HostConfig
             {
                 NetworkMode = "none",
-                Memory = context.Language.MemoryLimitMB * 1024 * 1024,
+                Memory = context.Language.MemoryLimitMB * 1024L * 1024,
                 NanoCPUs = (long)(context.Language.CpuLimit * 1_000_000_000),
+                MemorySwap = context.Language.MemoryLimitMB * 1024L * 1024,
                 PidsLimit = 100, // expanded for java/c#
                 Tmpfs = new Dictionary<string, string> { { "/tmp", "size=50m,mode=1777" } }, // expanded tmpfs
+                CapDrop = new List<string> { "ALL" },
+                SecurityOpt = new List<string> { "no-new-privileges" },
+                Ulimits = new List<Ulimit>
+                {
+                    new() { Name = "fsize", Soft = MaxFileSizeBytes, Hard = MaxFileSizeBytes },
+                    new() { Name = "nofile", Soft = 1024, Hard = 1024 }
+                },
                 AutoRemove = false,
             }
         };
@@ -236,7 +257,7 @@ public class DockerRunner : IDockerRunner
                                                                 cancellationToken);
     }
 
-    private async Task<string> GetContainerLogsAsync(string containerId, CancellationToken cancellationToken)
+    private async Task<(string Logs, bool Truncated)> GetContainerLogsAsync(string containerId, CancellationToken cancellationToken)
     {
         var logsParams = new ContainerLogsParameters
         {
@@ -249,8 +270,23 @@ public class DockerRunner : IDockerRunner
                                                                           logsParams,
                                                                           cancellationToken);
         using var ms = new MemoryStream();
-        await stream.CopyOutputToAsync(Stream.Null, ms, ms, cancellationToken);
-        return Encoding.UTF8.GetString(ms.ToArray());
+        var buffer = new byte[81920];
+
+        while (true)
+        {
+            var read = await stream.ReadOutputAsync(buffer, 0, buffer.Length, cancellationToken);
+            if (read.EOF)
+            {
+                return (Encoding.UTF8.GetString(ms.ToArray()), false);
+            }
+
+            if (ms.Length + read.Count > MaxLogBytes)
+            {
+                return (Encoding.UTF8.GetString(ms.ToArray()), true);
+            }
+
+            await ms.WriteAsync(buffer.AsMemory(0, read.Count), cancellationToken);
+        }
     }
 
     private async Task EnsureImageExistsAsync(string imageName, CancellationToken cancellationToken)

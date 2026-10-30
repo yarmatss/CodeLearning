@@ -697,6 +697,59 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
+    public async Task GetBlockById_QuizBlock_AsCourseOwner_ShouldIncludeCorrectAnswers()
+    {
+        // Arrange
+        var blockId = await CreateSimpleQuizBlockAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var block = await response.Content.ReadFromJsonAsync<BlockResponseDto>();
+        block!.Quiz!.Questions.First().Answers.Should().ContainSingle(a => a.IsCorrect == true);
+    }
+
+    [Fact]
+    public async Task GetBlockById_QuizBlock_AsAnotherTeacher_ShouldHideCorrectAnswers()
+    {
+        // Arrange
+        var blockId = await CreateSimpleQuizBlockAsync();
+        var anotherTeacherToken = await GetTeacherTokenAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var jsonString = await response.Content.ReadAsStringAsync();
+        jsonString.Should().NotContain("isCorrect");
+    }
+
+    [Fact]
+    public async Task GetSubchapterBlocks_QuizBlock_AsAnotherTeacher_ShouldHideCorrectAnswers()
+    {
+        // Arrange
+        await CreateSimpleQuizBlockAsync();
+        var anotherTeacherToken = await GetTeacherTokenAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/subchapters/{_subchapterId}/blocks");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var jsonString = await response.Content.ReadAsStringAsync();
+        jsonString.Should().NotContain("isCorrect");
+    }
+
+    [Fact]
     public async Task GetBlockById_NonExisting_ShouldReturn404()
     {
         // Act
@@ -1085,6 +1138,34 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     #endregion
 
     #region Helper Methods
+
+    private async Task<Guid> CreateSimpleQuizBlockAsync()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        var dto = new CreateQuizBlockDto
+        {
+            Title = "Ownership Quiz",
+            Questions = new List<CreateQuizQuestionDto>
+            {
+                new()
+                {
+                    QuestionText = "What is 2+2?",
+                    Type = "SingleChoice",
+                    Points = 10,
+                    Answers = new List<CreateQuizAnswerDto>
+                    {
+                        new() { AnswerText = "3", IsCorrect = false },
+                        new() { AnswerText = "4", IsCorrect = true }
+                    }
+                }
+            }
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/quiz", dto);
+        var created = await response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
+        return created!.Id;
+    }
 
     private async Task<string> GetTeacherTokenAsync()
     {

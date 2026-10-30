@@ -1,4 +1,5 @@
 using CodeLearning.Core.Entities;
+using CodeLearning.Core.Grading;
 using CodeLearning.Core.Models;
 using System.Text;
 
@@ -43,7 +44,9 @@ public class UniversalExecutor(
                 WorkspaceDirectory = workspaceDir
             };
 
-            return await dockerRunner.ExecuteAsync(context, cancellationToken);
+            var sandboxResult = await dockerRunner.ExecuteAsync(context, cancellationToken);
+
+            return SubmissionGrader.Grade(sandboxResult, testCases);
         }
         finally
         {
@@ -84,11 +87,6 @@ public class UniversalExecutor(
             await File.WriteAllTextAsync(
                 Path.Combine(workspaceDir, $"input_{i}.txt"),
                 testCases[i].Input,
-                cancellationToken);
-
-            await File.WriteAllTextAsync(
-                Path.Combine(workspaceDir, $"expected_{i}.txt"),
-                testCases[i].ExpectedOutput,
                 cancellationToken);
         }
 

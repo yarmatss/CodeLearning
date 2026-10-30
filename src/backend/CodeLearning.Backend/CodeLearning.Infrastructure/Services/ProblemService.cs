@@ -86,7 +86,7 @@ public class ProblemService(
 
         await context.SaveChangesAsync();
 
-        return await MapToProblemResponseDto(problem, UserRole.Teacher);
+        return await MapToProblemResponseDto(problem, includeHiddenTestCases: true);
     }
 
     public async Task<ProblemResponseDto> GetProblemByIdAsync(Guid problemId, Guid userId)
@@ -101,10 +101,7 @@ public class ProblemService(
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
-        var user = await context.Users.FindAsync(userId)
-            ?? throw new KeyNotFoundException($"User with ID {userId} not found");
-
-        return await MapToProblemResponseDto(problem, user.Role);
+        return await MapToProblemResponseDto(problem, includeHiddenTestCases: problem.AuthorId == userId);
     }
 
     public async Task<IEnumerable<ProblemListDto>> GetProblemsAsync(string? difficulty = null, Guid? tagId = null, string? search = null)
@@ -202,7 +199,7 @@ public class ProblemService(
 
         await context.SaveChangesAsync();
 
-        return await MapToProblemResponseDto(problem, UserRole.Teacher);
+        return await MapToProblemResponseDto(problem, includeHiddenTestCases: true);
     }
 
     public async Task DeleteProblemAsync(Guid problemId, Guid authorId)
@@ -487,14 +484,14 @@ public class ProblemService(
         await context.SaveChangesAsync();
     }
 
-    private async Task<ProblemResponseDto> MapToProblemResponseDto(Problem problem, UserRole userRole = UserRole.Teacher)
+    private async Task<ProblemResponseDto> MapToProblemResponseDto(Problem problem, bool includeHiddenTestCases)
     {
         await EnsureNavigationPropertiesLoaded(problem);
 
-        // Students should only see public test cases
-        var testCases = userRole == UserRole.Student
-            ? problem.TestCases.Where(tc => tc.IsPublic)
-            : problem.TestCases;
+        // Only the problem author may see hidden test cases
+        var testCases = includeHiddenTestCases
+            ? problem.TestCases
+            : problem.TestCases.Where(tc => tc.IsPublic);
 
         return new ProblemResponseDto
         {

@@ -242,6 +242,62 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
+    public async Task GetProblemById_AsAuthor_ShouldIncludeHiddenTestCases()
+    {
+        // Arrange - CreateProblemAsTeacher leaves the author's token on the client
+        var problem = await CreateProblemAsTeacher();
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
+        content!.TestCases.Should().HaveCount(2);
+        content.TestCases.Should().Contain(tc => !tc.IsPublic);
+    }
+
+    [Fact]
+    public async Task GetProblemById_AsAnotherTeacher_ShouldHideHiddenTestCases()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+
+        var anotherToken = await GetTeacherToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
+        content!.TestCases.Should().HaveCount(1);
+        content.TestCases.Should().OnlyContain(tc => tc.IsPublic);
+    }
+
+    [Fact]
+    public async Task GetProblemById_AsStudent_ShouldHideHiddenTestCases()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+
+        var studentToken = await GetStudentToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
+        content!.TestCases.Should().OnlyContain(tc => tc.IsPublic);
+    }
+
+    [Fact]
     public async Task GetProblemById_NonExistingProblem_ShouldReturn404()
     {
         // Arrange
