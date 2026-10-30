@@ -6,10 +6,12 @@ using System.Text.Json.Serialization;
 using CodeLearning.Core.Enums;
 using CodeLearning.Core.Models;
 
+namespace CodeLearning.TestRunner;
+
 [JsonSerializable(typeof(ExecutionResult))]
 internal partial class AppJsonContext : JsonSerializerContext { }
 
-partial class Program
+static partial class Program
 {
     const int MAX_OUTPUT_CHARS = 10000;
 
