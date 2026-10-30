@@ -1,12 +1,12 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.DTOs.Submission;
 using CodeLearning.Core.Enums;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 
 namespace CodeLearning.Tests.Integration.Controllers;

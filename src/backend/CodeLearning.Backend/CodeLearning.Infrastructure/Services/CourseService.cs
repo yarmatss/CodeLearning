@@ -192,25 +192,21 @@ public class CourseService(
     {
         var validationErrors = new List<string>();
 
-        if (!course.Chapters.Any())
+        if (course.Chapters.Count == 0)
         {
             validationErrors.Add("Course must have at least one chapter");
         }
 
         foreach (var chapter in course.Chapters)
         {
-            if (!chapter.Subchapters.Any())
+            if (chapter.Subchapters.Count == 0)
             {
                 validationErrors.Add($"Chapter '{chapter.Title}' must have at least one subchapter");
             }
 
-            foreach (var subchapter in chapter.Subchapters)
-            {
-                if (!subchapter.Blocks.Any())
-                {
-                    validationErrors.Add($"Subchapter '{subchapter.Title}' in chapter '{chapter.Title}' must have at least one block");
-                }
-            }
+            validationErrors.AddRange(chapter.Subchapters
+                .Where(subchapter => subchapter.Blocks.Count == 0)
+                .Select(subchapter => $"Subchapter '{subchapter.Title}' in chapter '{chapter.Title}' must have at least one block"));
         }
 
         if (validationErrors.Count > 0)

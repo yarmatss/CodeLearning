@@ -1,5 +1,4 @@
 using CodeLearning.Application.DTOs.Quiz;
-using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
@@ -14,7 +13,7 @@ namespace CodeLearning.Tests.Unit.Services;
 public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
 {
     private readonly DatabaseFixture _fixture;
-    private readonly IQuizService _quizService;
+    private readonly QuizService _quizService;
     private readonly UserManager<User> _userManager;
     private User _testStudent = null!;
     private User _testTeacher = null!;
@@ -31,9 +30,9 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     {
         _fixture = fixture;
         _quizService = new QuizService(_fixture.DbContext);
-        
+
         var userStore = new UserStore<User, IdentityRole<Guid>, ApplicationDbContext, Guid>(_fixture.DbContext);
-        
+
         _userManager = new UserManager<User>(
             userStore,
             null!,
@@ -406,7 +405,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
 
         // Assert
         Assert.NotNull(result);
-        
+
         foreach (var questionResult in result.QuestionResults)
         {
             Assert.NotEmpty(questionResult.Answers);

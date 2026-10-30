@@ -4,7 +4,7 @@ using CodeLearning.Core.Models;
 namespace CodeLearning.Runner.Services;
 
 public interface ICodeExecutor
-{  
+{
     Task<ExecutionResult> ExecuteAsync(
         Submission submission,
         Language language,

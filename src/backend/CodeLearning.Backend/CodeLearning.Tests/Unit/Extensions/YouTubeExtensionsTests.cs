@@ -31,7 +31,7 @@ public class YouTubeExtensionsTests
     [InlineData("not a url")]
     [InlineData("")]
     [InlineData(null)]
-    public void ExtractYouTubeVideoId_InvalidUrls_ShouldReturnNull(string url)
+    public void ExtractYouTubeVideoId_InvalidUrls_ShouldReturnNull(string? url)
     {
         // Act
         var result = url?.ExtractYouTubeVideoId();
@@ -90,10 +90,10 @@ public class YouTubeExtensionsTests
     [InlineData("not a url")]
     [InlineData("")]
     [InlineData(null)]
-    public void IsValidYouTubeUrl_InvalidUrls_ShouldReturnFalse(string url)
+    public void IsValidYouTubeUrl_InvalidUrls_ShouldReturnFalse(string? url)
     {
         // Act
-        var result = url.IsValidYouTubeUrl();
+        var result = url!.IsValidYouTubeUrl();
 
         // Assert
         result.Should().BeFalse();
@@ -120,10 +120,10 @@ public class YouTubeExtensionsTests
     [InlineData("")]
     [InlineData(null)]
     [InlineData("   ")]
-    public void ToYouTubeEmbedUrl_EmptyOrNullVideoId_ShouldThrowException(string videoId)
+    public void ToYouTubeEmbedUrl_EmptyOrNullVideoId_ShouldThrowException(string? videoId)
     {
         // Act
-        var act = () => videoId.ToYouTubeEmbedUrl();
+        var act = () => videoId!.ToYouTubeEmbedUrl();
 
         // Assert
         act.Should().Throw<ArgumentException>();

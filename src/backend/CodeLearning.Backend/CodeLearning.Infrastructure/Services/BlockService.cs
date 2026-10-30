@@ -87,8 +87,8 @@ public class BlockService(
                 Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
                 Type = Enum.Parse<QuestionType>(q.Type),
                 Points = q.Points,
-                Explanation = string.IsNullOrWhiteSpace(q.Explanation) 
-                    ? null 
+                Explanation = string.IsNullOrWhiteSpace(q.Explanation)
+                    ? null
                     : sanitizationService.SanitizeMarkdown(q.Explanation),
                 OrderIndex = qIndex + 1,
                 Quiz = null!,
@@ -148,9 +148,7 @@ public class BlockService(
     public async Task DeleteBlockAsync(Guid blockId, Guid instructorId)
     {
         var block = await context.CourseBlocks
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
-                    .ThenInclude(ch => ch.Course)
+            .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
@@ -192,9 +190,8 @@ public class BlockService(
         var blocks = await context.CourseBlocks
             .Include(b => b.TheoryContent)
             .Include(b => b.VideoContent)
-            .Include(b => b.Quiz)
-                .ThenInclude(q => q!.Questions.OrderBy(qq => qq.OrderIndex))
-                    .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
+            .Include(b => b.Quiz!.Questions.OrderBy(qq => qq.OrderIndex))
+                .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
             .Include(b => b.Problem)
             .Where(b => b.SubchapterId == subchapterId)
             .OrderBy(b => b.OrderIndex)
@@ -278,9 +275,7 @@ public class BlockService(
     public async Task UpdateBlockOrderAsync(Guid blockId, int newOrderIndex, Guid instructorId)
     {
         var block = await context.CourseBlocks
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
-                    .ThenInclude(ch => ch.Course)
+            .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
@@ -313,8 +308,7 @@ public class BlockService(
     private async Task VerifyOwnershipAsync(Guid subchapterId, Guid instructorId)
     {
         var subchapter = await context.Subchapters
-            .Include(s => s.Chapter)
-                .ThenInclude(ch => ch.Course)
+            .Include(s => s.Chapter.Course)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
             ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
 
@@ -347,12 +341,9 @@ public class BlockService(
         var block = await context.CourseBlocks
             .Include(b => b.TheoryContent)
             .Include(b => b.VideoContent)
-            .Include(b => b.Quiz)
-                .ThenInclude(q => q!.Questions)
-                    .ThenInclude(qq => qq.Answers)
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
-                    .ThenInclude(ch => ch.Course)
+            .Include(b => b.Quiz!.Questions)
+                .ThenInclude(qq => qq.Answers)
+            .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
@@ -371,9 +362,8 @@ public class BlockService(
         return await context.CourseBlocks
             .Include(b => b.TheoryContent)
             .Include(b => b.VideoContent)
-            .Include(b => b.Quiz)
-                .ThenInclude(q => q!.Questions.OrderBy(qq => qq.OrderIndex))
-                    .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
+            .Include(b => b.Quiz!.Questions.OrderBy(qq => qq.OrderIndex))
+                .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
             .Include(b => b.Problem)
             .FirstOrDefaultAsync(b => b.Id == blockId);
     }
@@ -384,21 +374,18 @@ public class BlockService(
             .Where(b => b.SubchapterId == subchapterId && b.Id != excludeBlockId)
             .ToListAsync();
 
-        foreach (var other in otherBlocks)
+        if (newOrderIndex < oldOrderIndex)
         {
-            if (newOrderIndex < oldOrderIndex)
+            foreach (var other in otherBlocks.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
             {
-                if (other.OrderIndex >= newOrderIndex && other.OrderIndex < oldOrderIndex)
-                {
-                    other.OrderIndex++;
-                }
+                other.OrderIndex++;
             }
-            else
+        }
+        else
+        {
+            foreach (var other in otherBlocks.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
             {
-                if (other.OrderIndex > oldOrderIndex && other.OrderIndex <= newOrderIndex)
-                {
-                    other.OrderIndex--;
-                }
+                other.OrderIndex--;
             }
         }
     }

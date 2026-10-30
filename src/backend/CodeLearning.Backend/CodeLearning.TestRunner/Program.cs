@@ -1,10 +1,10 @@
-﻿using System.Diagnostics;
+﻿using CodeLearning.Core.Enums;
+using CodeLearning.Core.Models;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using CodeLearning.Core.Enums;
-using CodeLearning.Core.Models;
 
 namespace CodeLearning.TestRunner;
 
@@ -46,20 +46,52 @@ static partial class Program
 
     static async Task<int> Main(string[] args)
     {
-        string runCommand = "";
-        string inputDir = "/app/io";
-        string outputFile = "/app/result.json";
-        int timeLimitMs = 2000;
+        var options = ParseArgs(args);
+        if (string.IsNullOrEmpty(options.RunCommand)) return 1;
 
-        for (int i = 0; i < args.Length; i++)
+        var result = await RunAllTestsAsync(options);
+
+        var json = JsonSerializer.Serialize(result, AppJsonContext.Default.ExecutionResult);
+        await File.WriteAllTextAsync(options.OutputFile, json);
+
+        return 0;
+    }
+
+    sealed record RunnerOptions(string RunCommand, string InputDir, string OutputFile, int TimeLimitMs);
+
+    static RunnerOptions ParseArgs(string[] args)
+    {
+        var values = new Dictionary<string, string>();
+        var i = 0;
+        while (i < args.Length)
         {
-            if (args[i] == "--run" && i + 1 < args.Length) runCommand = args[++i];
-            if (args[i] == "--input" && i + 1 < args.Length) inputDir = args[++i];
-            if (args[i] == "--out" && i + 1 < args.Length) outputFile = args[++i];
-            if (args[i] == "--timelimit" && i + 1 < args.Length) int.TryParse(args[++i], out timeLimitMs);
+            if (args[i].StartsWith("--") && i + 1 < args.Length)
+            {
+                values[args[i]] = args[i + 1];
+                i += 2;
+            }
+            else
+            {
+                i++;
+            }
         }
 
-        if (string.IsNullOrEmpty(runCommand)) return 1;
+        var timeLimitMs = values.TryGetValue("--timelimit", out var limit) && int.TryParse(limit, out var parsed)
+            ? parsed
+            : 2000;
+
+        return new RunnerOptions(
+            values.GetValueOrDefault("--run", ""),
+            values.GetValueOrDefault("--input", "/app/io"),
+            values.GetValueOrDefault("--out", "/app/result.json"),
+            timeLimitMs);
+    }
+
+    static async Task<ExecutionResult> RunAllTestsAsync(RunnerOptions options)
+    {
+        var runCommand = options.RunCommand;
+        var inputDir = options.InputDir;
+        var timeLimitMs = options.TimeLimitMs;
 
         var result = new ExecutionResult
         {
@@ -102,10 +134,7 @@ static partial class Program
             result.RuntimeError = "Internal Runner Error: " + ex.Message;
         }
 
-        var json = JsonSerializer.Serialize(result, AppJsonContext.Default.ExecutionResult);
-        await File.WriteAllTextAsync(outputFile, json);
-
-        return 0;
+        return result;
     }
 
     [LibraryImport("libc", EntryPoint = "kill", SetLastError = true)]

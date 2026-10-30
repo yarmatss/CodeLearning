@@ -9,7 +9,7 @@ public class BlockResponseDto
     public required BlockType Type { get; set; }
     public required int OrderIndex { get; set; }
     public required Guid SubchapterId { get; set; }
-    
+
     public TheoryContentDto? TheoryContent { get; set; }
     public VideoContentDto? VideoContent { get; set; }
     public QuizDto? Quiz { get; set; }

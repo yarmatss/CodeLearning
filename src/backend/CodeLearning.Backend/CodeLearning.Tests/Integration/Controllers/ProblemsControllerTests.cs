@@ -1,11 +1,11 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -49,7 +49,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
         var createDto = TestDataBuilder.CreateValidCreateProblemDto(title);
         var response = await _client.PostAsJsonAsync("/api/problems", createDto);
-        
+
         return await response.Content.ReadFromJsonAsync<ProblemResponseDto>()
             ?? throw new Exception("Failed to create problem");
     }
@@ -303,7 +303,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         // Arrange
         var token = await GetTeacherToken();
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        
+
         var nonExistingId = Guid.NewGuid();
 
         // Act
@@ -336,7 +336,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         // Arrange
         await CreateProblemAsTeacher("Easy Problem");
-        
+
         var token = await GetTeacherToken();
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var hardProblem = TestDataBuilder.CreateValidCreateProblemDto("Hard Problem", "Hard");
@@ -389,7 +389,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
         // Act - create one more to ensure we have at least one
         await _client.PostAsJsonAsync("/api/problems", TestDataBuilder.CreateValidCreateProblemDto("My Second Problem"));
-        
+
         var response = await _client.GetAsync("/api/problems/my");
 
         // Assert

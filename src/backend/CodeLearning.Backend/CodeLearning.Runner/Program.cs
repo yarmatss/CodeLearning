@@ -44,9 +44,9 @@ try
     var host = builder.Build();
 
     // Ensure workspace directory exists
-    var workspaceBasePath = builder.Configuration["ExecutionSettings:WorkspaceBasePath"] 
-        ?? "/tmp/submissions";
-    
+    var workspaceBasePath = builder.Configuration["ExecutionSettings:WorkspaceBasePath"]
+        ?? throw new InvalidOperationException("WorkspaceBasePath not configured");
+
     if (!Directory.Exists(workspaceBasePath))
     {
         Directory.CreateDirectory(workspaceBasePath);
@@ -60,9 +60,9 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "CodeLearning Runner Service terminated unexpectedly");
-    throw;
+    Environment.ExitCode = 1;
 }
 finally
 {
-    Log.CloseAndFlush();
+    await Log.CloseAndFlushAsync();
 }

@@ -35,7 +35,7 @@ public class CreateQuizQuestionDtoValidator : AbstractValidator<CreateQuizQuesti
             .When(x => x.Type == "SingleChoice" || x.Type == "TrueFalse");
     }
 
-    private bool BeValidQuestionType(string? type)
+    private static bool BeValidQuestionType(string? type)
     {
         if (string.IsNullOrWhiteSpace(type))
             return false;
@@ -43,12 +43,12 @@ public class CreateQuizQuestionDtoValidator : AbstractValidator<CreateQuizQuesti
         return type is "SingleChoice" or "MultipleChoice" or "TrueFalse";
     }
 
-    private bool HaveAtLeastOneCorrectAnswer(CreateQuizQuestionDto question)
+    private static bool HaveAtLeastOneCorrectAnswer(CreateQuizQuestionDto question)
     {
         return question.Answers.Any(a => a.IsCorrect);
     }
 
-    private bool HaveExactlyOneCorrectAnswer(CreateQuizQuestionDto question)
+    private static bool HaveExactlyOneCorrectAnswer(CreateQuizQuestionDto question)
     {
         return question.Answers.Count(a => a.IsCorrect) == 1;
     }

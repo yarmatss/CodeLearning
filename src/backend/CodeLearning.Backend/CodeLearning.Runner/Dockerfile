@@ -17,11 +17,11 @@ COPY ["CodeLearning.Infrastructure/CodeLearning.Infrastructure.csproj", "CodeLea
 RUN dotnet restore "CodeLearning.Runner/CodeLearning.Runner.csproj"
 COPY . .
 WORKDIR "/src/CodeLearning.Runner"
-RUN dotnet build "CodeLearning.Runner.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "CodeLearning.Runner.csproj" -c "$BUILD_CONFIGURATION" -o /app/build
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "CodeLearning.Runner.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "CodeLearning.Runner.csproj" -c "$BUILD_CONFIGURATION" -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 # NOTE: Running as non-root user for security
@@ -30,7 +30,7 @@ USER $APP_UID
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-# Create workspace directory with proper permissions
-RUN mkdir -p /tmp/submissions && chmod 777 /tmp/submissions
+# Create workspace directory owned by the app user
+RUN mkdir -p /tmp/submissions
 
 ENTRYPOINT ["dotnet", "CodeLearning.Runner.dll"]

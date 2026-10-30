@@ -54,7 +54,7 @@ public class UniversalExecutor(
         }
     }
 
-    private async Task PrepareWorkspaceAsync(
+    private static async Task PrepareWorkspaceAsync(
         string workspaceDir,
         string code,
         List<TestCase> testCases,
@@ -98,7 +98,7 @@ public class UniversalExecutor(
             cancellationToken);
     }
 
-    private string GenerateShellScript(Language language, string solutionFileName)
+    private static string GenerateShellScript(Language language, string solutionFileName)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#!/bin/bash");
@@ -168,7 +168,7 @@ public class UniversalExecutor(
         }
         catch (Exception ex)
         {
-            logger.LogWarning("Failed to cleanup workspace {WorkspaceDir}: {Message}", workspaceDir, ex.Message);
+            logger.LogWarning(ex, "Failed to cleanup workspace {WorkspaceDir}", workspaceDir);
         }
     }
 }

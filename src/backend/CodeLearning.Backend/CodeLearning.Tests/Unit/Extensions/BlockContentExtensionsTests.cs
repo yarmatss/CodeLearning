@@ -118,7 +118,7 @@ public class BlockContentExtensionsTests
         result.Should().NotBeNull();
         result!.Id.Should().Be(quiz.Id);
         result.Questions.Should().HaveCount(1);
-        
+
         var question = result.Questions.First();
         question.Content.Should().Be("What is C#?");
         question.Type.Should().Be("SingleChoice");
@@ -148,7 +148,7 @@ public class BlockContentExtensionsTests
 
         // Assert
         result.Answers.Should().HaveCount(2);
-        
+
         // Verify IsCorrect is NOT in DTO
         result.Answers.Should().AllSatisfy(a =>
         {

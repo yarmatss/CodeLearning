@@ -37,6 +37,8 @@ WORKDIR /app
 
 COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 
-RUN chmod +x /app/runner && chmod 777 /app
+RUN chmod +x /app/runner && chown 65534:65534 /app
+
+USER 65534:65534
 
 CMD ["tail", "-f", "/dev/null"]

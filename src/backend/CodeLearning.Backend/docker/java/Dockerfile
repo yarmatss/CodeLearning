@@ -22,14 +22,16 @@ FROM eclipse-temurin:21-jdk-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
-    time \
     jq \
+    time \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 
-RUN chmod +x /app/runner && chmod 777 /app
+RUN chmod +x /app/runner && chown 65534:65534 /app
+
+USER 65534:65534
 
 CMD ["tail", "-f", "/dev/null"]

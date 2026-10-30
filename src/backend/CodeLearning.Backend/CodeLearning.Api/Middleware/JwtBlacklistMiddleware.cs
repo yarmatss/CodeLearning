@@ -8,7 +8,7 @@ public class JwtBlacklistMiddleware(RequestDelegate next, ILogger<JwtBlacklistMi
     public async Task InvokeAsync(HttpContext context, ITokenService tokenService)
     {
         var token = context.Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-        
+
         if (string.IsNullOrEmpty(token))
         {
             token = context.Request.Cookies["access_token"] ?? string.Empty;
@@ -20,18 +20,18 @@ public class JwtBlacklistMiddleware(RequestDelegate next, ILogger<JwtBlacklistMi
             {
                 var handler = new JwtSecurityTokenHandler();
                 var jwtToken = handler.ReadJwtToken(token);
-                
+
                 var jti = jwtToken.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Jti)?.Value;
-                
+
                 if (!string.IsNullOrEmpty(jti))
                 {
                     var isRevoked = await tokenService.IsAccessTokenRevokedAsync(jti);
-                    
+
                     if (isRevoked)
                     {
                         logger.LogWarning("Attempt to use revoked JWT token: {Jti}", jti);
                         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                        await context.Response.WriteAsJsonAsync(new { message = "Token has been revoked" });
+                        await context.Response.WriteAsJsonAsync(new { message = "Token has been revoked" }, context.RequestAborted);
                         return;
                     }
                 }

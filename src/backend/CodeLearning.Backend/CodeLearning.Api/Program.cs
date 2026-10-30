@@ -1,3 +1,4 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Api.Middleware;
 using CodeLearning.Application.Services;
 using CodeLearning.Application.Validators.Auth;
@@ -16,8 +17,9 @@ using StackExchange.Redis;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+var isTesting = builder.Environment.IsEnvironment("Testing");
 
-if (builder.Environment.EnvironmentName != "Testing")
+if (!isTesting)
 {
     Log.Logger = new LoggerConfiguration()
         .WriteTo.Console()
@@ -137,7 +139,7 @@ builder.Services.AddCors(options =>
 var dataProtectionBuilder = builder.Services.AddDataProtection()
     .SetApplicationName("CodeLearning.Api");
 
-if (builder.Environment.EnvironmentName != "Testing")
+if (!isTesting)
 {
     dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo("/app/keys"));
 }
@@ -147,12 +149,12 @@ builder.Services.AddHealthChecks()
         builder.Configuration.GetConnectionString("DefaultConnection")!,
         name: "postgres",
         timeout: TimeSpan.FromSeconds(3),
-        tags: new[] { "db", "sql", "postgres" })
+        tags: ["db", "sql", "postgres"])
     .AddRedis(
         builder.Configuration.GetConnectionString("Redis")!,
         name: "redis",
         timeout: TimeSpan.FromSeconds(3),
-        tags: new[] { "cache", "redis" });
+        tags: ["cache", "redis"]);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -184,40 +186,10 @@ var app = builder.Build();
 var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate", app.Environment.IsDevelopment());
 if (autoMigrate)
 {
-    try
-    {
-        using var scope = app.Services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        
-        logger.LogInformation("Checking for pending database migrations...");
-        
-        var pendingMigrations = await dbContext.Database.GetPendingMigrationsAsync();
-        if (pendingMigrations.Any())
-        {
-            logger.LogInformation("Applying {Count} pending migration(s): {Migrations}", 
-                pendingMigrations.Count(), 
-                string.Join(", ", pendingMigrations));
-            
-            await dbContext.Database.MigrateAsync();
-            
-            logger.LogInformation("Database migrations applied successfully");
-        }
-        else
-        {
-            logger.LogInformation("Database is up to date. No pending migrations");
-        }
-    }
-    catch (Exception ex)
-    {
-        var logger = app.Services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while migrating the database");
-        
-        // allow app to start even if migrations fail
-    }
+    await app.ApplyPendingMigrationsAsync();
 }
 
-if (app.Environment.EnvironmentName != "Testing")
+if (!isTesting)
 {
     app.UseSerilogRequestLogging(options =>
     {
@@ -259,18 +231,18 @@ app.MapHealthChecks("/health");
 
 app.MapControllers();
 
-if (app.Environment.EnvironmentName != "Testing")
+if (!isTesting)
 {
     Log.Information("CodeLearning API started successfully");
 }
 
 try
 {
-    app.Run();
+    await app.RunAsync();
 }
 catch (Exception ex)
 {
-    if (app.Environment.EnvironmentName != "Testing")
+    if (!isTesting)
     {
         Log.Fatal(ex, "Application terminated unexpectedly");
     }
@@ -278,11 +250,8 @@ catch (Exception ex)
 }
 finally
 {
-    if (app.Environment.EnvironmentName != "Testing")
+    if (!isTesting)
     {
-        Log.CloseAndFlush();
+        await Log.CloseAndFlushAsync();
     }
 }
-
-// for integration tests
-public partial class Program { }

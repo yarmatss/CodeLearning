@@ -11,6 +11,8 @@ public class ProblemService(
     ApplicationDbContext context,
     ISanitizationService sanitizationService) : IProblemService
 {
+    private const string ModifyOwnProblemsOnlyMessage = "You can only modify your own problems";
+
     public async Task<ProblemResponseDto> CreateProblemAsync(CreateProblemDto dto, Guid authorId)
     {
         var author = await context.Users.FindAsync(authorId)
@@ -47,7 +49,7 @@ public class ProblemService(
         if (dto.StarterCodes.Count > 0)
         {
             var starterCodes = new List<StarterCode>();
-            
+
             foreach (var sc in dto.StarterCodes)
             {
                 var language = await context.Languages.FindAsync(sc.LanguageId);
@@ -70,7 +72,7 @@ public class ProblemService(
         if (dto.TagIds.Count > 0)
         {
             var tags = await context.Tags.Where(t => dto.TagIds.Contains(t.Id)).ToListAsync();
-            
+
             foreach (var tag in tags)
             {
                 var problemTag = new ProblemTag
@@ -98,6 +100,7 @@ public class ProblemService(
                 .ThenInclude(sc => sc.Language)
             .Include(p => p.ProblemTags)
                 .ThenInclude(pt => pt.Tag)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
@@ -111,14 +114,11 @@ public class ProblemService(
             .Include(p => p.TestCases)
             .Include(p => p.ProblemTags)
                 .ThenInclude(pt => pt.Tag)
-            .AsQueryable();
+            .AsSplitQuery();
 
-        if (!string.IsNullOrEmpty(difficulty))
+        if (!string.IsNullOrEmpty(difficulty) && Enum.TryParse<DifficultyLevel>(difficulty, out var difficultyLevel))
         {
-            if (Enum.TryParse<DifficultyLevel>(difficulty, out var difficultyLevel))
-            {
-                query = query.Where(p => p.Difficulty == difficultyLevel);
-            }
+            query = query.Where(p => p.Difficulty == difficultyLevel);
         }
 
         if (tagId.HasValue)
@@ -128,9 +128,9 @@ public class ProblemService(
 
         if (!string.IsNullOrEmpty(search))
         {
-            var searchLower = search.ToLower();
-            query = query.Where(p => p.Title.ToLower().Contains(searchLower) ||
-                                    p.Description.ToLower().Contains(searchLower));
+            var pattern = $"%{EscapeLikePattern(search)}%";
+            query = query.Where(p => EF.Functions.ILike(p.Title, pattern) ||
+                                    EF.Functions.ILike(p.Description, pattern));
         }
 
         var problems = await query
@@ -147,6 +147,7 @@ public class ProblemService(
             .Include(p => p.TestCases)
             .Include(p => p.ProblemTags)
                 .ThenInclude(pt => pt.Tag)
+            .AsSplitQuery()
             .Where(p => p.AuthorId == authorId)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
@@ -163,6 +164,7 @@ public class ProblemService(
                 .ThenInclude(sc => sc.Language)
             .Include(p => p.ProblemTags)
                 .ThenInclude(pt => pt.Tag)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
@@ -183,7 +185,7 @@ public class ProblemService(
         if (dto.TagIds.Count > 0)
         {
             var tags = await context.Tags.Where(t => dto.TagIds.Contains(t.Id)).ToListAsync();
-            
+
             foreach (var tag in tags)
             {
                 var problemTag = new ProblemTag
@@ -207,6 +209,7 @@ public class ProblemService(
         var problem = await context.Problems
             .Include(p => p.Blocks)
             .Include(p => p.Submissions)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == problemId)
             ?? throw new KeyNotFoundException($"Problem with ID {problemId} not found");
 
@@ -251,7 +254,7 @@ public class ProblemService(
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var maxOrder = problem.TestCases.Count > 0 ? problem.TestCases.Max(tc => tc.OrderIndex) : 0;
@@ -288,7 +291,7 @@ public class ProblemService(
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var maxOrder = problem.TestCases.Count > 0 ? problem.TestCases.Max(tc => tc.OrderIndex) : 0;
@@ -334,7 +337,7 @@ public class ProblemService(
 
         if (testCase.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var wasPublic = testCase.IsPublic;
@@ -377,7 +380,7 @@ public class ProblemService(
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var testCases = problem.TestCases.ToDictionary(tc => tc.Id);
@@ -408,7 +411,7 @@ public class ProblemService(
 
         if (problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var language = await context.Languages.FindAsync(dto.LanguageId)
@@ -452,7 +455,7 @@ public class ProblemService(
 
         if (testCase.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         var remainingPublicTests = await context.TestCases
@@ -477,7 +480,7 @@ public class ProblemService(
 
         if (starterCode.Problem.AuthorId != authorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own problems");
+            throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
         context.StarterCodes.Remove(starterCode);
@@ -524,6 +527,10 @@ public class ProblemService(
             }).ToList()
         };
     }
+
+    // ILIKE treats % and _ as wildcards; backslash is the default escape character in PostgreSQL
+    private static string EscapeLikePattern(string value) =>
+        value.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
 
     private static ProblemListDto MapToProblemListDto(Problem problem) => new()
     {

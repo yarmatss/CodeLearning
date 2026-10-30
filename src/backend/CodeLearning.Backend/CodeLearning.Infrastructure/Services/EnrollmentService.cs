@@ -75,20 +75,16 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
     public async Task<IEnumerable<EnrolledCourseDto>> GetEnrolledCoursesAsync(Guid studentId)
     {
         var enrollments = await context.StudentCourseProgresses
-            .Include(p => p.Course)
-                .ThenInclude(c => c.Instructor)
-            .Include(p => p.Course)
-                .ThenInclude(c => c.Chapters)
-                    .ThenInclude(ch => ch.Subchapters)
-                        .ThenInclude(s => s.Blocks)
+            .Include(p => p.Course.Instructor)
+            .Include(p => p.Course.Chapters)
+                .ThenInclude(ch => ch.Subchapters)
+                    .ThenInclude(s => s.Blocks)
             .Where(p => p.StudentId == studentId)
             .ToListAsync();
 
         var completedBlocksByCourse = await context.StudentBlockProgresses
             .Where(bp => bp.StudentId == studentId && bp.IsCompleted)
-            .Include(bp => bp.Block)
-                .ThenInclude(b => b.Subchapter)
-                    .ThenInclude(s => s.Chapter)
+            .Include(bp => bp.Block.Subchapter.Chapter)
             .ToListAsync();
 
         var completedBlocksCountByCourse = completedBlocksByCourse

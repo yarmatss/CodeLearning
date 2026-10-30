@@ -247,7 +247,7 @@ public class BulkAddTestCasesDtoValidatorTests
     {
         // Arrange
         var testCases = new List<CreateTestCaseDto>();
-        
+
         // Add 99 private test cases
         for (int i = 0; i < 99; i++)
         {
@@ -258,7 +258,7 @@ public class BulkAddTestCasesDtoValidatorTests
                 IsPublic = false
             });
         }
-        
+
         // Add 1 public test case
         testCases.Add(new CreateTestCaseDto
         {

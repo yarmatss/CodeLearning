@@ -133,8 +133,7 @@ public class ExecutionWorker : BackgroundService
 
         var submission = await dbContext.Submissions
             .Include(s => s.Language)
-            .Include(s => s.Problem)
-                .ThenInclude(p => p.TestCases.OrderBy(tc => tc.OrderIndex))
+            .Include(s => s.Problem.TestCases.OrderBy(tc => tc.OrderIndex))
             .FirstOrDefaultAsync(s => s.Id == submissionId, cancellationToken);
 
         if (submission == null)
@@ -143,7 +142,7 @@ public class ExecutionWorker : BackgroundService
             return;
         }
 
-        if (!submission.Problem.TestCases.Any())
+        if (submission.Problem.TestCases.Count == 0)
         {
             _logger.LogWarning("Problem {ProblemId} has no test cases", submission.ProblemId);
             await UpdateSubmissionStatusAsync(dbContext, submission, SubmissionStatus.RuntimeError, cancellationToken);
@@ -169,17 +168,16 @@ public class ExecutionWorker : BackgroundService
                 "Submission {SubmissionId} completed with status {Status}, score {Score}%",
                 submission.Id, result.Status, result.Score);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "Execution failed for submission {SubmissionId}", submissionId);
             await UpdateSubmissionStatusAsync(dbContext, submission, SubmissionStatus.RuntimeError, cancellationToken);
-            // We rethrow to ensure the generic catch block in ConsumeSubmissionsAsync sees the failure
+            // We rethrow to ensure the generic catch block in ConsumeSubmissionsAsync sees (and logs) the failure,
             // preventing the ACK (so it can be retried or inspected)
             throw;
         }
     }
 
-    private async Task SaveExecutionResultsAsync(
+    private static async Task SaveExecutionResultsAsync(
         ApplicationDbContext dbContext,
         Submission submission,
         ExecutionResult result,

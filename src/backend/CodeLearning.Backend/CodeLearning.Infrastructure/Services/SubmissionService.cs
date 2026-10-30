@@ -16,10 +16,11 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
         var problem = await context.Problems
             .Include(p => p.TestCases)
             .Include(p => p.StarterCodes)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
             ?? throw new InvalidOperationException($"Problem {dto.ProblemId} not found");
 
-        if (!problem.TestCases.Any())
+        if (problem.TestCases.Count == 0)
         {
             throw new InvalidOperationException("Problem has no test cases");
         }
@@ -97,8 +98,8 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
 
     private static SubmissionResponseDto MapToDto(Submission submission)
     {
-        var totalTests = submission.TestResults?.Count ?? 0;
-        var passedTests = submission.TestResults?.Count(tr => tr.Status == TestResultStatus.Passed) ?? 0;
+        var totalTests = submission.TestResults.Count;
+        var passedTests = submission.TestResults.Count(tr => tr.Status == TestResultStatus.Passed);
 
         var dto = new SubmissionResponseDto
         {
@@ -120,7 +121,7 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             CompletedAt = submission.CompletedAt
         };
 
-        if (submission.TestResults.Any())
+        if (submission.TestResults.Count > 0)
         {
             // Only return public test results to students
             dto.TestResults = submission.TestResults
