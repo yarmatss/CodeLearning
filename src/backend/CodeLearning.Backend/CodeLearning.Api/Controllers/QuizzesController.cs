@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Quiz;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,30 +23,17 @@ public class QuizzesController(
     {
         var studentId = GetCurrentUserId();
 
-        try
-        {
-            var result = await quizService.SubmitQuizAsync(quizId, dto, studentId);
+        var result = await quizService.SubmitQuizAsync(quizId, dto, studentId);
 
-            logger.LogInformation(
-                "Student {StudentId} submitted quiz {QuizId} with score {Score}/{MaxScore} ({Percentage}%)",
-                studentId,
-                quizId,
-                result.Score,
-                result.MaxScore,
-                result.Percentage);
+        logger.LogInformation(
+            "Student {StudentId} submitted quiz {QuizId} with score {Score}/{MaxScore} ({Percentage}%)",
+            studentId,
+            quizId,
+            result.Score,
+            result.MaxScore,
+            result.Percentage);
 
-            return Ok(result);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            logger.LogWarning(ex, "Quiz {QuizId} not found", quizId);
-            return NotFound(new { message = ex.Message });
-        }
-        catch (InvalidOperationException ex)
-        {
-            logger.LogWarning(ex, "Invalid quiz submission by student {StudentId}", studentId);
-            return BadRequest(new { message = ex.Message });
-        }
+        return Ok(result);
     }
 
     [HttpGet("{quizId}/attempt")]
@@ -69,7 +57,7 @@ public class QuizzesController(
     private Guid GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new UnauthorizedAccessException("User not authenticated");
+            ?? throw new AuthenticationFailedException("User not authenticated");
         return Guid.Parse(userIdClaim);
     }
 }

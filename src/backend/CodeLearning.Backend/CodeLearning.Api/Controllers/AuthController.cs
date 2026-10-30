@@ -61,16 +61,12 @@ public class AuthController(
     public async Task<IActionResult> Logout()
     {
         var userId = GetCurrentUserId();
-        var refreshToken = Request.Cookies[RefreshTokenCookie];
 
         var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
 
         var accessTokenExpiration = TimeSpan.FromMinutes(jwtOptions.Value.AccessTokenExpirationMinutes);
 
-        if (!string.IsNullOrEmpty(refreshToken))
-        {
-            await authService.LogoutAsync(refreshToken, userId, jti, accessTokenExpiration);
-        }
+        await authService.LogoutAsync(userId, jti, accessTokenExpiration);
 
         ClearTokenCookies();
 

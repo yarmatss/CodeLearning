@@ -139,7 +139,7 @@ export class SubchapterEditor implements OnInit {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to load blocks');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load blocks');
       }
     });
   }
@@ -434,7 +434,7 @@ export class SubchapterEditor implements OnInit {
         this.loadBlocks();
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder block');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder block');
       }
     });
   }
@@ -449,7 +449,7 @@ export class SubchapterEditor implements OnInit {
         this.loadBlocks();
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder block');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder block');
       }
     });
   }
@@ -466,7 +466,7 @@ export class SubchapterEditor implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to delete block');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to delete block');
       }
     });
   }

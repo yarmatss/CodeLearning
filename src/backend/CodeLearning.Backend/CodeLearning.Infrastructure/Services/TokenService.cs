@@ -70,7 +70,7 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, IConnectionMultiplex
         await _db.StringSetAsync(key, refreshToken, expiration);
     }
 
-    public async Task RevokeRefreshTokenAsync(string refreshToken, Guid userId)
+    public async Task RevokeRefreshTokenAsync(Guid userId)
     {
         var key = $"refresh_token:{userId}";
         await _db.KeyDeleteAsync(key);

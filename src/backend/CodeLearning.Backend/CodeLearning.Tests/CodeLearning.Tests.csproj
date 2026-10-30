@@ -31,6 +31,8 @@
     <ProjectReference Include="..\CodeLearning.Application\CodeLearning.Application.csproj" />
     <ProjectReference Include="..\CodeLearning.Core\CodeLearning.Core.csproj" />
     <ProjectReference Include="..\CodeLearning.Infrastructure\CodeLearning.Infrastructure.csproj" />
+    <!-- Aliased because the Runner, like the Api, has a public Program class -->
+    <ProjectReference Include="..\CodeLearning.Runner\CodeLearning.Runner.csproj" Aliases="Runner" />
   </ItemGroup>
 
   <ItemGroup>

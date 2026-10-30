@@ -779,6 +779,25 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
+    public async Task AddStarterCode_WithTooLongCode_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher("Problem for oversized Starter Code");
+
+        var starterCodeDto = new CreateStarterCodeDto
+        {
+            LanguageId = _pythonLanguageId,
+            Code = new string('x', 100_001)
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes", starterCodeDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task DeleteStarterCode_NonExisting_ShouldReturn404()
     {
         // Arrange

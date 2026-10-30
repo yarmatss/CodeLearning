@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Quiz;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
@@ -151,7 +152,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_SecondAttempt_ThrowsInvalidOperationException()
+    public async Task SubmitQuizAsync_SecondAttempt_ThrowsBusinessRuleException()
     {
         // Arrange
         var dto = new SubmitQuizDto
@@ -174,7 +175,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         await _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
 
         Assert.Contains("already attempted", exception.Message);
@@ -209,7 +210,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         await enrollmentService.EnrollAsync(_testCourse.Id, _testStudent.Id);
 
         // Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
         Assert.Contains("already attempted", exception.Message);
 
@@ -219,7 +220,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_NotEnrolled_ThrowsInvalidOperationException()
+    public async Task SubmitQuizAsync_NotEnrolled_ThrowsBusinessRuleException()
     {
         // Arrange
         var unenrolledStudent = new User
@@ -252,14 +253,14 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, unenrolledStudent.Id));
 
         Assert.Contains("must be enrolled", exception.Message);
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_WrongNumberOfAnswers_ThrowsInvalidOperationException()
+    public async Task SubmitQuizAsync_WrongNumberOfAnswers_ThrowsBusinessRuleException()
     {
         // Arrange
         var dto = new SubmitQuizDto
@@ -276,14 +277,14 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
 
         Assert.Contains("Expected 2 answers", exception.Message);
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_MultipleAnswersForSingleChoice_ThrowsInvalidOperationException()
+    public async Task SubmitQuizAsync_MultipleAnswersForSingleChoice_ThrowsBusinessRuleException()
     {
         // Arrange
         var dto = new SubmitQuizDto
@@ -304,14 +305,14 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
 
         Assert.Contains("single choice", exception.Message);
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_InvalidAnswerId_ThrowsInvalidOperationException()
+    public async Task SubmitQuizAsync_InvalidAnswerId_ThrowsBusinessRuleException()
     {
         // Arrange
         var dto = new SubmitQuizDto
@@ -332,7 +333,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
 
         Assert.Contains("Invalid answer IDs", exception.Message);

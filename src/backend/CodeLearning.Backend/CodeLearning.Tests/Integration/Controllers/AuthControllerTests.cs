@@ -1,7 +1,9 @@
 using CodeLearning.Application.DTOs.Auth;
+using CodeLearning.Application.Services;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -280,6 +282,37 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.Contains("Logout successful", content, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Logout_WithoutRefreshCookie_ShouldStillRevokeTokens()
+    {
+        // Arrange - only the bearer header is sent, as by a client that lost its refresh cookie
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "logout-no-cookie@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+        var accessToken = loginResponse.GetAccessToken();
+        var refreshToken = loginResponse.GetSetCookie("refresh_token").Value;
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        // Act
+        var logoutResponse = await client.PostAsync("/api/auth/logout", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, logoutResponse.StatusCode);
+
+        var meResponse = await client.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, meResponse.StatusCode);
+
+        // Checked directly: a refresh request would already be rejected for its revoked access token
+        var loginBody = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        using var scope = _factory.Services.CreateScope();
+        var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        Assert.False(await tokenService.ValidateRefreshTokenAsync(refreshToken, Guid.Parse(loginBody!.UserId)));
+    }
+
     #endregion
 
     #region Refresh Tests
@@ -315,6 +348,28 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.DoesNotContain(newAccessToken, body);
         Assert.DoesNotContain(newRefreshToken, body);
         Assert.Contains("accessTokenExpiresAt", body);
+    }
+
+    [Fact]
+    public async Task Refresh_WithInvalidRefreshToken_ShouldReturn401()
+    {
+        // Arrange
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "refresh-invalid@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginResponse.GetAccessToken());
+        request.Headers.Add("Cookie", "refresh_token=not-the-stored-token");
+
+        // Act
+        var response = await client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     #endregion

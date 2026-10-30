@@ -34,23 +34,15 @@ public class SubmissionsController(
             return Unauthorized();
         }
 
-        try
-        {
-            var submission = await submissionService.SubmitCodeAsync(dto, studentId);
+        var submission = await submissionService.SubmitCodeAsync(dto, studentId);
 
-            logger.LogInformation(
-                "Submission {SubmissionId} created by student {StudentId} for problem {ProblemId}",
-                submission.Id,
-                studentId,
-                dto.ProblemId);
+        logger.LogInformation(
+            "Submission {SubmissionId} created by student {StudentId} for problem {ProblemId}",
+            submission.Id,
+            studentId,
+            dto.ProblemId);
 
-            return Accepted(submission);
-        }
-        catch (InvalidOperationException ex)
-        {
-            logger.LogWarning(ex, "Invalid submission by student {StudentId}", studentId);
-            return BadRequest(new { message = ex.Message });
-        }
+        return Accepted(submission);
     }
 
     [HttpGet("{id}")]

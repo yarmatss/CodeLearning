@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Quiz;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -16,7 +17,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 .ThenInclude(qq => qq.Answers)
             .Include(q => q.Block.Subchapter.Chapter)
             .FirstOrDefaultAsync(q => q.Id == quizId)
-            ?? throw new KeyNotFoundException($"Quiz with ID {quizId} not found");
+            ?? throw new NotFoundException($"Quiz with ID {quizId} not found");
 
         var courseId = quiz.Block.Subchapter.Chapter.CourseId;
 
@@ -25,7 +26,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
         if (!isEnrolled)
         {
-            throw new InvalidOperationException("You must be enrolled in this course to submit quiz");
+            throw new BusinessRuleException("You must be enrolled in this course to submit quiz");
         }
 
         var existingAttempt = await context.StudentQuizAttempts
@@ -33,7 +34,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
         if (existingAttempt != null)
         {
-            throw new InvalidOperationException("You have already attempted this quiz. Only one attempt is allowed.");
+            throw new BusinessRuleException("You have already attempted this quiz. Only one attempt is allowed.");
         }
 
         ValidateSubmission(quiz, dto);
@@ -52,7 +53,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
             Id = Guid.NewGuid(),
             StudentId = studentId,
             Student = await context.Users.FindAsync(studentId)
-                ?? throw new InvalidOperationException($"Student {studentId} not found"),
+                ?? throw new BusinessRuleException($"Student {studentId} not found"),
             QuizId = quizId,
             Quiz = quiz,
             Score = (int)Math.Round(percentage),
@@ -177,7 +178,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
     {
         if (dto.Answers.Count != quiz.Questions.Count)
         {
-            throw new InvalidOperationException(
+            throw new BusinessRuleException(
                 $"Expected {quiz.Questions.Count} answers but received {dto.Answers.Count}");
         }
 
@@ -186,7 +187,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
         if (!questionIds.SetEquals(submittedQuestionIds))
         {
-            throw new InvalidOperationException("Answer question IDs do not match quiz questions");
+            throw new BusinessRuleException("Answer question IDs do not match quiz questions");
         }
 
         foreach (var answer in dto.Answers)
@@ -195,19 +196,19 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
             if (answer.SelectedAnswerIds.Count == 0)
             {
-                throw new InvalidOperationException($"Question {question.Id} must have at least one answer selected");
+                throw new BusinessRuleException($"Question {question.Id} must have at least one answer selected");
             }
 
             var validAnswerIds = question.Answers.Select(a => a.Id).ToHashSet();
 
             if (answer.SelectedAnswerIds.Any(id => !validAnswerIds.Contains(id)))
             {
-                throw new InvalidOperationException($"Invalid answer IDs for question {question.Id}");
+                throw new BusinessRuleException($"Invalid answer IDs for question {question.Id}");
             }
 
             if (question.Type == QuestionType.SingleChoice && answer.SelectedAnswerIds.Count > 1)
             {
-                throw new InvalidOperationException(
+                throw new BusinessRuleException(
                     $"Question {question.Id} is single choice but multiple answers were selected");
             }
         }

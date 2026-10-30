@@ -1,3 +1,4 @@
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Services;
@@ -85,7 +86,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var act = async () => await _courseService.CreateCourseAsync(dto, invalidInstructorId);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
+        await act.Should().ThrowAsync<BusinessRuleException>()
             .WithMessage("*Instructor not found*");
     }
 
@@ -94,7 +95,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     #region Get Course Tests
 
     [Fact]
-    public async Task GetCourseByIdAsync_WithExistingCourse_ShouldReturnCourse()
+    public async Task GetCourseByIdAsync_AsInstructor_ShouldReturnDraftCourse()
     {
         // Arrange
         var course = TestDataBuilder.CreateValidCourse(_testInstructor);
@@ -102,7 +103,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         await _fixture.DbContext.SaveChangesAsync();
 
         // Act
-        var result = await _courseService.GetCourseByIdAsync(course.Id);
+        var result = await _courseService.GetCourseByIdAsync(course.Id, _testInstructor.Id);
 
         // Assert
         result.Should().NotBeNull();
@@ -112,7 +113,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetCourseByIdAsync_WithNonExistingCourse_ShouldThrowKeyNotFoundException()
+    public async Task GetCourseByIdAsync_WithNonExistingCourse_ShouldThrowNotFoundException()
     {
         // Arrange
         var nonExistingId = Guid.NewGuid();
@@ -121,8 +122,38 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var act = async () => await _courseService.GetCourseByIdAsync(nonExistingId);
 
         // Assert
-        await act.Should().ThrowAsync<KeyNotFoundException>()
+        await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage($"Course with ID {nonExistingId} not found");
+    }
+
+    [Fact]
+    public async Task GetCourseByIdAsync_DraftCourseWithoutViewer_ShouldThrowNotFoundException()
+    {
+        // Arrange
+        var course = TestDataBuilder.CreateValidCourse(_testInstructor);
+        _fixture.DbContext.Courses.Add(course);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        // Act
+        var act = async () => await _courseService.GetCourseByIdAsync(course.Id);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task GetCourseByIdAsync_PublishedCourseWithoutViewer_ShouldReturnCourse()
+    {
+        // Arrange
+        var course = TestDataBuilder.CreateValidCourse(_testInstructor, CourseStatus.Published);
+        _fixture.DbContext.Courses.Add(course);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _courseService.GetCourseByIdAsync(course.Id);
+
+        // Assert
+        result.Id.Should().Be(course.Id);
     }
 
     #endregion
@@ -156,7 +187,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
-    public async Task UpdateCourseAsync_WithPublishedCourse_ShouldThrowInvalidOperationException()
+    public async Task UpdateCourseAsync_WithPublishedCourse_ShouldThrowBusinessRuleException()
     {
         // Arrange
         var course = TestDataBuilder.CreateValidCourse(_testInstructor, CourseStatus.Published);
@@ -173,12 +204,12 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         }, _testInstructor.Id);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
+        await act.Should().ThrowAsync<BusinessRuleException>()
             .WithMessage("Cannot update a published course");
     }
 
     [Fact]
-    public async Task UpdateCourseAsync_WithWrongInstructor_ShouldThrowUnauthorizedAccessException()
+    public async Task UpdateCourseAsync_WithWrongInstructor_ShouldThrowForbiddenException()
     {
         // Arrange
         var course = TestDataBuilder.CreateValidCourse(_testInstructor);
@@ -198,7 +229,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         }, otherInstructor.Id);
 
         // Assert
-        await act.Should().ThrowAsync<UnauthorizedAccessException>()
+        await act.Should().ThrowAsync<ForbiddenException>()
             .WithMessage("You can only update your own courses");
     }
 
@@ -207,7 +238,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     #region Publish Course Tests
 
     [Fact]
-    public async Task PublishCourseAsync_WithoutChapters_ShouldThrowInvalidOperationException()
+    public async Task PublishCourseAsync_WithoutChapters_ShouldThrowBusinessRuleException()
     {
         // Arrange
         var course = TestDataBuilder.CreateValidCourse(_testInstructor);
@@ -218,7 +249,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var act = async () => await _courseService.PublishCourseAsync(course.Id, _testInstructor.Id);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
+        await act.Should().ThrowAsync<BusinessRuleException>()
             .WithMessage("*must have at least one chapter*");
     }
 
@@ -277,7 +308,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
-    public async Task DeleteCourseAsync_WithPublishedCourse_ShouldThrowInvalidOperationException()
+    public async Task DeleteCourseAsync_WithPublishedCourse_ShouldThrowBusinessRuleException()
     {
         // Arrange
         var course = TestDataBuilder.CreateValidCourse(_testInstructor, CourseStatus.Published);
@@ -288,7 +319,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var act = async () => await _courseService.DeleteCourseAsync(course.Id, _testInstructor.Id);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
+        await act.Should().ThrowAsync<BusinessRuleException>()
             .WithMessage("Cannot delete a published course");
     }
 

@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Enrollment;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -12,11 +13,11 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
     public async Task<EnrollmentResponseDto> EnrollAsync(Guid courseId, Guid studentId)
     {
         var course = await context.Courses.FirstOrDefaultAsync(c => c.Id == courseId)
-            ?? throw new KeyNotFoundException($"Course with ID {courseId} not found");
+            ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
         if (course.Status != CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot enroll in unpublished course");
+            throw new BusinessRuleException("Cannot enroll in unpublished course");
         }
 
         var existingEnrollment = await context.StudentCourseProgresses
@@ -24,7 +25,7 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
 
         if (existingEnrollment != null)
         {
-            throw new InvalidOperationException("Already enrolled in this course");
+            throw new BusinessRuleException("Already enrolled in this course");
         }
 
         var enrollment = new StudentCourseProgress
@@ -70,7 +71,7 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
     {
         var enrollment = await context.StudentCourseProgresses
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
-            ?? throw new KeyNotFoundException("Enrollment not found");
+            ?? throw new NotFoundException("Enrollment not found");
 
         // Remove block progress; quiz attempts are kept so re-enrolling cannot reset the one-attempt rule
         var blockProgress = await context.StudentBlockProgresses

@@ -65,7 +65,7 @@ export class CourseEditorComponent implements OnInit {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to load course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load course');
       }
     });
   }
@@ -116,7 +116,7 @@ export class CourseEditorComponent implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to update course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to update course');
       }
     });
   }
@@ -148,7 +148,7 @@ export class CourseEditorComponent implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to add chapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to add chapter');
       }
     });
   }
@@ -165,7 +165,7 @@ export class CourseEditorComponent implements OnInit {
         this.loadChapters(courseId);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder chapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder chapter');
       }
     });
   }
@@ -183,7 +183,7 @@ export class CourseEditorComponent implements OnInit {
         this.loadChapters(courseId);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder chapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder chapter');
       }
     });
   }
@@ -204,7 +204,7 @@ export class CourseEditorComponent implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to delete chapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to delete chapter');
       }
     });
   }

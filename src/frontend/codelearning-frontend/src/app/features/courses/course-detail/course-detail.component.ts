@@ -68,7 +68,7 @@ export class CourseDetailComponent implements OnInit {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to load course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load course');
       }
     });
   }
@@ -132,7 +132,7 @@ export class CourseDetailComponent implements OnInit {
       },
       error: (error: any) => {
         this.isEnrolling.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to enroll in course');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to enroll in course');
       }
     });
   }
@@ -164,7 +164,7 @@ export class CourseDetailComponent implements OnInit {
         },
         error: (error: any) => {
           this.isEnrolling.set(false);
-          this.errorMessage.set(error.error?.message || 'Failed to unenroll from course');
+          this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to unenroll from course');
         }
       });
     }

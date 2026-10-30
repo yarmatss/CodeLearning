@@ -3,9 +3,12 @@ using CodeLearning.Application.DTOs.Submission;
 using CodeLearning.Application.Settings;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
+using CodeLearning.Core.Messages;
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
+using MassTransit.Testing;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -156,6 +159,35 @@ def solution():
     }
 
     [Fact]
+    public async Task SubmitCode_ValidSubmission_ShouldPublishSubmissionCreated()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+
+        var submitDto = new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+        var submission = await response.Content.ReadFromJsonAsync<SubmissionResponseDto>();
+
+        // Assert - delivered from the outbox once the submission is saved
+        var harness = _factory.Services.GetTestHarness();
+        var published = await harness.Published.Any<SubmissionCreated>(
+            m => m.Context.Message.SubmissionId == submission!.Id);
+
+        Assert.True(published);
+    }
+
+    [Fact]
     public async Task SubmitCode_ValidJavaScriptCode_ShouldReturn202Accepted()
     {
         // Arrange
@@ -227,9 +259,9 @@ function solution() {
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(error);
-        Assert.Contains("not found", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", error.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -303,9 +335,9 @@ function solution() {
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(error);
-        Assert.Contains("enrolled", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("enrolled", error.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -513,6 +545,61 @@ function solution() {
     }
 
     [Fact]
+    public async Task GetMySubmissions_GradedSubmission_ShouldReportTestCounts()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken, "Graded Submission Test");
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+
+        var submitResponse = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        });
+        var submitted = await submitResponse.Content.ReadFromJsonAsync<SubmissionResponseDto>();
+
+        // Grade it as the runner would: only the first test case passes
+        int testCaseCount;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var submission = await dbContext.Submissions.FirstAsync(sub => sub.Id == submitted!.Id);
+            var testCases = await dbContext.TestCases
+                .Where(tc => tc.ProblemId == problem.Id)
+                .OrderBy(tc => tc.OrderIndex)
+                .ToListAsync();
+
+            testCaseCount = testCases.Count;
+            submission.Status = SubmissionStatus.Completed;
+            dbContext.SubmissionTestResults.AddRange(testCases.Select((tc, i) => new SubmissionTestResult
+            {
+                SubmissionId = submission.Id,
+                TestCaseId = tc.Id,
+                Status = i == 0 ? TestResultStatus.Passed : TestResultStatus.Failed,
+                Submission = submission,
+                TestCase = tc
+            }));
+            await dbContext.SaveChangesAsync();
+        }
+
+        // Act
+        var response = await _client.GetAsync($"/api/submissions/problem/{problem.Id}");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var submissions = await response.Content.ReadFromJsonAsync<List<SubmissionResponseDto>>();
+        var listed = Assert.Single(submissions!);
+        Assert.True(testCaseCount > 1);
+        Assert.Equal(testCaseCount, listed.TotalTestCases);
+        Assert.Equal(1, listed.PassedTestCases);
+    }
+
+    [Fact]
     public async Task GetMySubmissions_NoProblem_ShouldReturnEmptyList()
     {
         // Arrange
@@ -544,9 +631,4 @@ function solution() {
     }
 
     #endregion
-
-    private class ErrorResponse
-    {
-        public string Message { get; set; } = string.Empty;
-    }
 }

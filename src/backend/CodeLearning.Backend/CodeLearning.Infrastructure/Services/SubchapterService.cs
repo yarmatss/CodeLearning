@@ -1,8 +1,10 @@
 using CodeLearning.Application.DTOs.Subchapter;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Infrastructure.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -15,16 +17,16 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
             .Include(c => c.Course)
             .Include(c => c.Subchapters)
             .FirstOrDefaultAsync(c => c.Id == chapterId)
-            ?? throw new KeyNotFoundException($"Chapter with ID {chapterId} not found");
+            ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
 
         if (chapter.Course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only add subchapters to your own courses");
+            throw new ForbiddenException("You can only add subchapters to your own courses");
         }
 
         if (chapter.Course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot modify a published course");
+            throw new BusinessRuleException("Cannot modify a published course");
         }
 
         var maxOrder = chapter.Subchapters.Count > 0 ? chapter.Subchapters.Max(s => s.OrderIndex) : 0;
@@ -43,8 +45,13 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
         return MapToSubchapterResponseDto(subchapter);
     }
 
-    public async Task<IEnumerable<SubchapterResponseDto>> GetChapterSubchaptersAsync(Guid chapterId)
+    public async Task<IEnumerable<SubchapterResponseDto>> GetChapterSubchaptersAsync(Guid chapterId, Guid? viewerId = null)
     {
+        if (!await context.Courses.VisibleTo(viewerId).AnyAsync(c => c.Chapters.Any(ch => ch.Id == chapterId)))
+        {
+            throw new NotFoundException($"Chapter with ID {chapterId} not found");
+        }
+
         var subchapters = await context.Subchapters
             .Include(s => s.Blocks)
             .Where(s => s.ChapterId == chapterId)
@@ -60,16 +67,16 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
             .Include(s => s.Chapter.Course)
             .Include(s => s.Blocks)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
 
         if (subchapter.Chapter.Course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only modify your own course subchapters");
+            throw new ForbiddenException("You can only modify your own course subchapters");
         }
 
         if (subchapter.Chapter.Course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot modify a published course");
+            throw new BusinessRuleException("Cannot modify a published course");
         }
 
         await ReorderSubchapters(subchapter, newOrderIndex);
@@ -83,16 +90,16 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
         var subchapter = await context.Subchapters
             .Include(s => s.Chapter.Course)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
 
         if (subchapter.Chapter.Course.InstructorId != instructorId)
         {
-            throw new UnauthorizedAccessException("You can only delete subchapters from your own courses");
+            throw new ForbiddenException("You can only delete subchapters from your own courses");
         }
 
         if (subchapter.Chapter.Course.Status == CourseStatus.Published)
         {
-            throw new InvalidOperationException("Cannot delete subchapters from a published course");
+            throw new BusinessRuleException("Cannot delete subchapters from a published course");
         }
 
         context.Subchapters.Remove(subchapter);

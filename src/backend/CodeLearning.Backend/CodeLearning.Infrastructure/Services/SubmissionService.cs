@@ -1,15 +1,16 @@
 using CodeLearning.Application.DTOs.Submission;
+using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
-using CodeLearning.Core.Constants;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
+using CodeLearning.Core.Messages;
 using CodeLearning.Infrastructure.Data;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class SubmissionService(ApplicationDbContext context, IConnectionMultiplexer redis) : ISubmissionService
+public class SubmissionService(ApplicationDbContext context, IPublishEndpoint publishEndpoint) : ISubmissionService
 {
     public async Task<SubmissionResponseDto> SubmitCodeAsync(SubmitCodeDto dto, Guid studentId)
     {
@@ -18,32 +19,32 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             .Include(p => p.StarterCodes)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
-            ?? throw new InvalidOperationException($"Problem {dto.ProblemId} not found");
+            ?? throw new BusinessRuleException($"Problem {dto.ProblemId} not found");
 
         if (!await CanSubmitAsync(problem, studentId))
         {
-            throw new InvalidOperationException("You must be enrolled in a course that contains this problem to submit solutions");
+            throw new BusinessRuleException("You must be enrolled in a course that contains this problem to submit solutions");
         }
 
         if (problem.TestCases.Count == 0)
         {
-            throw new InvalidOperationException("Problem has no test cases");
+            throw new BusinessRuleException("Problem has no test cases");
         }
 
         // Validate that the language is supported for this problem
         var hasStarterCodeForLanguage = problem.StarterCodes.Any(sc => sc.LanguageId == dto.LanguageId);
         if (!hasStarterCodeForLanguage)
         {
-            throw new InvalidOperationException($"Language is not supported for this problem. Available languages: {string.Join(", ", problem.StarterCodes.Select(sc => sc.LanguageId))}");
+            throw new BusinessRuleException($"Language is not supported for this problem. Available languages: {string.Join(", ", problem.StarterCodes.Select(sc => sc.LanguageId))}");
         }
 
         var language = await context.Languages
             .FirstOrDefaultAsync(l => l.Id == dto.LanguageId)
-            ?? throw new InvalidOperationException($"Language {dto.LanguageId} not found");
+            ?? throw new BusinessRuleException($"Language {dto.LanguageId} not found");
 
         if (!language.IsEnabled)
         {
-            throw new InvalidOperationException($"Language {language.Name} is disabled");
+            throw new BusinessRuleException($"Language {language.Name} is disabled");
         }
 
         var submission = new Submission
@@ -53,7 +54,7 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             Problem = problem,
             StudentId = studentId,
             Student = await context.Users.FindAsync(studentId)
-                ?? throw new InvalidOperationException($"Student {studentId} not found"),
+                ?? throw new BusinessRuleException($"Student {studentId} not found"),
             LanguageId = dto.LanguageId,
             Language = language,
             Code = dto.Code,
@@ -64,15 +65,10 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
         };
 
         context.Submissions.Add(submission);
-        await context.SaveChangesAsync();
 
-        // Enqueue to Redis
-        var db = redis.GetDatabase();
-        await db.StreamAddAsync(
-            StreamConstants.SubmissionsStreamKey,
-            StreamConstants.SubmissionIdField,
-            submission.Id.ToString()
-        );
+        // The bus outbox stores the message in the same transaction as the submission and delivers it afterwards
+        await publishEndpoint.Publish(new SubmissionCreated(submission.Id));
+        await context.SaveChangesAsync();
 
         return MapToDto(submission);
     }
@@ -91,14 +87,29 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
 
     public async Task<List<SubmissionResponseDto>> GetMySubmissionsAsync(Guid problemId, Guid studentId)
     {
-        var submissions = await context.Submissions
-            .Include(s => s.Problem)
-            .Include(s => s.Language)
+        return await context.Submissions
             .Where(s => s.ProblemId == problemId && s.StudentId == studentId)
             .OrderByDescending(s => s.CreatedAt)
+            .Select(s => new SubmissionResponseDto
+            {
+                Id = s.Id,
+                ProblemId = s.ProblemId,
+                ProblemTitle = s.Problem.Title,
+                LanguageId = s.LanguageId,
+                LanguageName = s.Language.Name,
+                Code = s.Code,
+                Status = s.Status,
+                Score = s.Score,
+                TotalTestCases = s.TestResults.Count,
+                PassedTestCases = s.TestResults.Count(tr => tr.Status == TestResultStatus.Passed),
+                ExecutionTimeMs = s.ExecutionTimeMs,
+                MemoryUsedKB = s.MemoryUsedKB,
+                CompilationError = s.CompilationError,
+                RuntimeError = s.RuntimeError,
+                CreatedAt = s.CreatedAt,
+                CompletedAt = s.CompletedAt
+            })
             .ToListAsync();
-
-        return submissions.Select(MapToDto).ToList();
     }
 
     // Every submission occupies a sandbox container, so only the problem's author (testing it)

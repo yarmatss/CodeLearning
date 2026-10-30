@@ -57,7 +57,7 @@ export class ChapterEditor implements OnInit {
       },
       error: (error: any) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || 'Failed to load subchapters');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load subchapters');
       }
     });
   }
@@ -86,7 +86,7 @@ export class ChapterEditor implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to add subchapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to add subchapter');
       }
     });
   }
@@ -100,7 +100,7 @@ export class ChapterEditor implements OnInit {
         this.loadSubchapters();
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder subchapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder subchapter');
       }
     });
   }
@@ -115,7 +115,7 @@ export class ChapterEditor implements OnInit {
         this.loadSubchapters();
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to reorder subchapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder subchapter');
       }
     });
   }
@@ -132,7 +132,7 @@ export class ChapterEditor implements OnInit {
         setTimeout(() => this.successMessage.set(''), 3000);
       },
       error: (error: any) => {
-        this.errorMessage.set(error.error?.message || 'Failed to delete subchapter');
+        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to delete subchapter');
       }
     });
   }

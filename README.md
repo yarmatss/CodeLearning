@@ -24,7 +24,7 @@ The system implements Role-Based Access Control (RBAC) to distinguish between co
 
 ### Security & Architecture
 * **Secure Authentication:** JWT-based auth with **HttpOnly Cookies**, Refresh Token Rotation, and server-side token blacklisting (Redis).
-* **Microservices-ready:** Asynchronous communication between the API and the Runner service using **Redis Streams**.
+* **Microservices-ready:** Asynchronous communication between the API and the Runner service using **RabbitMQ** via **MassTransit**, with a transactional outbox so no submission is lost between the database and the queue.
 * **Clean Architecture:** Separation of concerns in the backend (.NET) and modern signal-based state management in the frontend (Angular).
 
 ---
@@ -36,7 +36,8 @@ The system implements Role-Based Access Control (RBAC) to distinguish between co
 * **.NET Native AOT:** Used for the `TestRunner` agent (high-performance execution probe).
 * **xUnit & Testcontainers:** For robust integration testing.
 * **Docker Compose:** Orchestration of the entire stack.
-* **Redis Streams:** Asynchronous task queue for code execution.
+* **RabbitMQ + MassTransit:** Asynchronous task queue for code execution (quorum queue, retries, transactional outbox).
+* **Redis:** Refresh tokens and the JWT blacklist.
 * **PostgreSQL:** Primary relational database (with JSONB support)
 
 ### Frontend
@@ -61,12 +62,12 @@ graph TD
 
     subgraph Backend [Backend Infrastructure]
         API[ASP.NET Core API]
-        Worker[Execution Worker Service]
+        Worker[Runner Service]
     end
 
     subgraph Data [Data & Messaging]
         DB[(PostgreSQL)]
-        Redis[(Redis Streams)]
+        RabbitMQ[(RabbitMQ)]
     end
 
     subgraph Execution [Sandboxed Environment]
@@ -78,9 +79,9 @@ graph TD
     SPA -->|REST / JWT| API
     
     API -->|Read/Write Data| DB
-    API -->|Enqueue Submission| Redis
+    API -->|Publish SubmissionCreated| RabbitMQ
     
-    Worker -->|Dequeue Task| Redis
+    Worker -->|Consume Submission| RabbitMQ
     Worker -->|Update Status/Results| DB
     Worker -->|Manage Containers| Docker
     
@@ -115,21 +116,20 @@ A detailed look at how a user's code is processed. The `Runner` service uses Doc
 sequenceDiagram
     autonumber
     participant API as API (SubmissionService)
-    participant Redis as Redis Stream
+    participant MQ as RabbitMQ
     participant DB as PostgreSQL
-    participant Worker as Runner Service (ExecutionWorker)
+    participant Worker as Runner Service (SubmissionCreatedConsumer)
     participant Docker as Docker Daemon
     participant Container as Isolated Container
 
-    Note over API, Redis: 1. Submission Phase
-    API->>DB: Insert Submission (Status: Pending)
-    API->>Redis: XADD submission_id
+    Note over API, MQ: 1. Submission Phase
+    API->>DB: Insert Submission (Pending) + Outbox message, one transaction
+    API->>MQ: Outbox delivery publishes SubmissionCreated
     
     Note over Worker, Container: 2. Processing Phase
-    loop Background Polling
-        Worker->>Redis: XREADGROUP (Dequeue)
+    loop For Each Message
+        MQ->>Worker: Deliver SubmissionCreated
         activate Worker
-        Redis-->>Worker: Returns submission_id
         
         Worker->>DB: Fetch Submission, Language & Test Cases
         Worker->>DB: Update Status to "Running"
@@ -165,10 +165,12 @@ sequenceDiagram
             Worker->>DB: Update Status (RuntimeError / TimeLimitExceeded)
         end
         
-        Worker->>Redis: XACK (Acknowledge Message)
+        Worker->>MQ: Ack
         deactivate Worker
     end
 ```
+
+Submissions are delivered at least once. The API saves the submission and the `SubmissionCreated` message in one transaction (MassTransit EF Core outbox), and a background service forwards the message to RabbitMQ, so a broker outage cannot leave a submission without a message. The Runner consumes from the `submissions` quorum queue, at most `MaxConcurrentExecutions` at a time, and acknowledges a message only once its result is stored; if the runner crashes, RabbitMQ redelivers the message. A failed attempt is retried after `RetryDelaySeconds` (5 s), and after `MaxDeliveryAttempts` (3) the message moves to `submissions_error` and a fault consumer marks the submission as failed. A redelivered message whose submission already has a result is acknowledged without running it again. On a brand-new broker the Runner must have started once, since it declares the queue that receives the published messages.
 
 ### Authentication Flow (Secure Cookie Strategy)
 The system uses a "Silent Refresh" strategy. Tokens are stored in HttpOnly cookies, making them inaccessible to JavaScript (XSS protection). The frontend uses an Interceptor to automatically refresh tokens when a 401 error occurs.
