@@ -43,49 +43,25 @@ class Program
                 .OrderBy(f => int.Parse(Path.GetFileNameWithoutExtension(f).Split('_')[1]))
                 .ToList();
 
-            int passedTests = 0;
-            bool hasRuntimeError = false;
-            bool hasTimeLimitExceeded = false;
             long maxMemoryUsed = 0;
 
             foreach (var inputFile in inputFiles)
             {
-                var testIndexStr = Path.GetFileNameWithoutExtension(inputFile).Split('_')[1];
-                var expectedFile = Path.Combine(inputDir, $"expected_{testIndexStr}.txt");
-                if (!File.Exists(expectedFile)) continue;
-
+                var testIndex = int.Parse(Path.GetFileNameWithoutExtension(inputFile).Split('_')[1]);
                 var inputContent = await File.ReadAllTextAsync(inputFile);
-                var expectedOutput = (await File.ReadAllTextAsync(expectedFile)).Trim();
 
-                var testResult = await RunSingleTestAsync(runCommand, inputContent, expectedOutput, timeLimitMs);
+                var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs);
+                testResult.TestIndex = testIndex;
 
                 if (testResult.MemoryUsedKB.HasValue && testResult.MemoryUsedKB.Value > maxMemoryUsed)
                     maxMemoryUsed = testResult.MemoryUsedKB.Value;
 
-                if (testResult.Status == TestResultStatus.Passed) passedTests++;
-                else if (testResult.Status == TestResultStatus.RuntimeError) hasRuntimeError = true;
-                else if (testResult.Status == TestResultStatus.TimeLimitExceeded) hasTimeLimitExceeded = true;
-
                 result.TestResults.Add(testResult);
             }
 
-            if (hasTimeLimitExceeded) result.Status = SubmissionStatus.TimeLimitExceeded;
-            else if (hasRuntimeError) result.Status = SubmissionStatus.RuntimeError;
-            else result.Status = SubmissionStatus.Completed;
-
-            // If there was a runtime error but no specific message, use the first test case error message
-            if (result.Status == SubmissionStatus.RuntimeError && string.IsNullOrWhiteSpace(result.RuntimeError))
-            {
-                var firstError = result.TestResults.FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage;
-                if (!string.IsNullOrWhiteSpace(firstError))
-                {
-                    result.RuntimeError = firstError;
-                }
-            }
-
+            result.Status = SubmissionStatus.Completed;
             result.TotalExecutionTimeMs = (int?)totalSw.ElapsedMilliseconds;
             result.MaxMemoryUsedKB = (int?)maxMemoryUsed;
-            result.Score = inputFiles.Count > 0 ? (int)((double)passedTests / inputFiles.Count * 100) : 0;
         }
         catch (Exception ex)
         {
@@ -99,7 +75,7 @@ class Program
         return 0;
     }
 
-    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, string expectedOutput, int timeoutMs)
+    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs)
     {
         var result = new TestCaseResult { ActualOutput = "" };
 
@@ -154,7 +130,7 @@ class Program
             }
             catch (OperationCanceledException)
             {
-                process.Kill();
+                process.Kill(entireProcessTree: true);
                 result.Status = TestResultStatus.TimeLimitExceeded;
                 result.ExecutionTimeMs = timeoutMs;
                 return result;
@@ -222,17 +198,9 @@ class Program
                 return result;
             }
 
-            var actualOutput = outputBuilder.ToString().Trim();
-            result.ActualOutput = actualOutput;
-
-            if (actualOutput.Replace("\r\n", "\n") == expectedOutput.Replace("\r\n", "\n"))
-            {
-                result.Status = TestResultStatus.Passed;
-            }
-            else
-            {
-                result.Status = TestResultStatus.Failed;
-            }
+            result.ActualOutput = outputBuilder.ToString().Trim();
+            // Judged by SubmissionGrader outside the sandbox
+            result.Status = TestResultStatus.Failed;
         }
         catch (Exception ex)
         {

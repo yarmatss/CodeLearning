@@ -11,6 +11,9 @@ namespace CodeLearning.Runner.Services;
 
 public class DockerRunner : IDockerRunner
 {
+    private const long MaxFileSizeBytes = 64L * 1024 * 1024;
+    private const int MaxLogBytes = 1024 * 1024;
+
     private readonly DockerClient _client;
     private readonly ILogger<DockerRunner> _logger;
 
@@ -73,12 +76,12 @@ public class DockerRunner : IDockerRunner
                 await _client.Containers.KillContainerAsync(
                     containerId,
                     new ContainerKillParameters(),
-                    cancellationToken);
+                    CancellationToken.None);
 
                 return new ExecutionResult
                 {
                     Status = SubmissionStatus.TimeLimitExceeded,
-                    TotalExecutionTimeMs = context.Language.TimeoutSeconds * 1000
+                    TotalExecutionTimeMs = totalTimeout * 1000
                 };
             }
 
@@ -111,7 +114,7 @@ public class DockerRunner : IDockerRunner
         {
             if (containerId != null)
             {
-                await CleanupContainerAsync(containerId, cancellationToken);
+                await CleanupContainerAsync(containerId, CancellationToken.None);
             }
         }
     }
@@ -156,24 +159,11 @@ public class DockerRunner : IDockerRunner
             }
 
             result.Status = deserializedResult.Status;
-            result.Score = deserializedResult.Score;
             result.TotalExecutionTimeMs = deserializedResult.TotalExecutionTimeMs;
             result.MaxMemoryUsedKB = deserializedResult.MaxMemoryUsedKB;
             result.CompilationError = deserializedResult.CompilationError;
             result.RuntimeError = deserializedResult.RuntimeError;
             result.TestResults = deserializedResult.TestResults ?? new List<TestCaseResult>();
-
-            // map actual TestCaseIds from db
-            if (result.TestResults.Count <= testCases.Count)
-            {
-                for (int i = 0; i < result.TestResults.Count; i++)
-                {
-                    result.TestResults[i].TestCaseId = testCases[i].Id;
-                }
-            }
-
-            result.TotalTests = testCases.Count;
-            result.PassedTests = result.TestResults.Count(t => t.Status == TestResultStatus.Passed);
 
             return result;
         }
@@ -209,8 +199,16 @@ public class DockerRunner : IDockerRunner
                 NetworkMode = "none",
                 Memory = context.Language.MemoryLimitMB * 1024 * 1024,
                 NanoCPUs = (long)(context.Language.CpuLimit * 1_000_000_000),
+                MemorySwap = context.Language.MemoryLimitMB * 1024 * 1024,
                 PidsLimit = 100, // expanded for java/c#
                 Tmpfs = new Dictionary<string, string> { { "/tmp", "size=50m,mode=1777" } }, // expanded tmpfs
+                CapDrop = new List<string> { "ALL" },
+                SecurityOpt = new List<string> { "no-new-privileges" },
+                Ulimits = new List<Ulimit>
+                {
+                    new() { Name = "fsize", Soft = MaxFileSizeBytes, Hard = MaxFileSizeBytes },
+                    new() { Name = "nofile", Soft = 1024, Hard = 1024 }
+                },
                 AutoRemove = false,
             }
         };
@@ -249,7 +247,19 @@ public class DockerRunner : IDockerRunner
                                                                           logsParams,
                                                                           cancellationToken);
         using var ms = new MemoryStream();
-        await stream.CopyOutputToAsync(Stream.Null, ms, ms, cancellationToken);
+        var buffer = new byte[81920];
+
+        while (ms.Length < MaxLogBytes)
+        {
+            var read = await stream.ReadOutputAsync(buffer, 0, buffer.Length, cancellationToken);
+            if (read.EOF)
+            {
+                break;
+            }
+
+            ms.Write(buffer, 0, (int)Math.Min(read.Count, MaxLogBytes - ms.Length));
+        }
+
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 
