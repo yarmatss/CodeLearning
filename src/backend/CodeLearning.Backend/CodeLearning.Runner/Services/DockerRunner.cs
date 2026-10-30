@@ -285,7 +285,7 @@ public class DockerRunner : IDockerRunner
                 return (Encoding.UTF8.GetString(ms.ToArray()), true);
             }
 
-            ms.Write(buffer, 0, read.Count);
+            await ms.WriteAsync(buffer.AsMemory(0, read.Count), cancellationToken);
         }
     }
 

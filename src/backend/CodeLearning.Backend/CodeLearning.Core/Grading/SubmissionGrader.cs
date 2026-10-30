@@ -48,11 +48,7 @@ public static class SubmissionGrader
 
         var passedTests = gradedResults.Count(tr => tr.Status == TestResultStatus.Passed);
 
-        var status = gradedResults.Any(tr => tr.Status == TestResultStatus.TimeLimitExceeded)
-            ? SubmissionStatus.TimeLimitExceeded
-            : gradedResults.Any(tr => tr.Status == TestResultStatus.RuntimeError)
-                ? SubmissionStatus.RuntimeError
-                : SubmissionStatus.Completed;
+        var status = GetOverallStatus(gradedResults);
 
         var runtimeError = status == SubmissionStatus.RuntimeError
             ? sandboxResult.RuntimeError
@@ -75,6 +71,17 @@ public static class SubmissionGrader
     public static bool OutputsMatch(string? actualOutput, string expectedOutput)
     {
         return Normalize(actualOutput ?? string.Empty) == Normalize(expectedOutput);
+    }
+
+    private static SubmissionStatus GetOverallStatus(List<TestCaseResult> gradedResults)
+    {
+        if (gradedResults.Any(tr => tr.Status == TestResultStatus.TimeLimitExceeded))
+            return SubmissionStatus.TimeLimitExceeded;
+
+        if (gradedResults.Any(tr => tr.Status == TestResultStatus.RuntimeError))
+            return SubmissionStatus.RuntimeError;
+
+        return SubmissionStatus.Completed;
     }
 
     private static TestCaseResult GradeTestCase(TestCase testCase, TestCaseResult? reported, int index)
