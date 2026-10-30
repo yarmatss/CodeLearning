@@ -1,10 +1,12 @@
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.Services;
+using CodeLearning.Application.Settings;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
@@ -15,7 +17,7 @@ namespace CodeLearning.Api.Controllers;
 public class AuthController(
     IAuthService authService,
     ITokenService tokenService,
-    IConfiguration configuration,
+    IOptions<JwtSettings> jwtOptions,
     IValidator<RegisterDto> registerValidator,
     IValidator<LoginDto> loginValidator) : ControllerBase
 {
@@ -81,9 +83,7 @@ public class AuthController(
 
         var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
 
-        var jwtSettings = configuration.GetSection("JwtSettings");
-        var accessTokenExpirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "60");
-        var accessTokenExpiration = TimeSpan.FromMinutes(accessTokenExpirationMinutes);
+        var accessTokenExpiration = TimeSpan.FromMinutes(jwtOptions.Value.AccessTokenExpirationMinutes);
 
         if (!string.IsNullOrEmpty(refreshToken))
         {
@@ -155,8 +155,7 @@ public class AuthController(
         var accessToken = tokenService.GenerateAccessToken(user);
         var refreshToken = tokenService.GenerateRefreshToken();
 
-        var jwtSettings = configuration.GetSection("JwtSettings");
-        var refreshTokenExpirationDays = int.Parse(jwtSettings["RefreshTokenExpirationDays"] ?? "7");
+        var refreshTokenExpirationDays = jwtOptions.Value.RefreshTokenExpirationDays;
 
         await tokenService.StoreRefreshTokenAsync(
             refreshToken,
@@ -168,8 +167,7 @@ public class AuthController(
 
     private void SetTokenCookies(string accessToken, string refreshToken)
     {
-        var jwtSettings = configuration.GetSection("JwtSettings");
-        var refreshTokenExpirationDays = int.Parse(jwtSettings["RefreshTokenExpirationDays"] ?? "7");
+        var refreshTokenExpirationDays = jwtOptions.Value.RefreshTokenExpirationDays;
 
         var cookieOptions = new CookieOptions
         {

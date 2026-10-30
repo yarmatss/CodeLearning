@@ -1,6 +1,7 @@
 using CodeLearning.Application.Services;
+using CodeLearning.Application.Settings;
 using CodeLearning.Core.Entities;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 using System.IdentityModel.Tokens.Jwt;
@@ -10,19 +11,17 @@ using System.Text;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class TokenService(IConfiguration configuration, IConnectionMultiplexer redis) : ITokenService
+public class TokenService(IOptions<JwtSettings> jwtOptions, IConnectionMultiplexer redis) : ITokenService
 {
+    private readonly JwtSettings _jwtSettings = jwtOptions.Value;
     private readonly IDatabase _db = redis.GetDatabase();
 
     public string GenerateAccessToken(User user)
     {
-        var jwtSettings = configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey not configured");
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var tokenId = Guid.NewGuid().ToString();
-        var expirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "60");
 
         var claims = new[]
         {
@@ -35,10 +34,10 @@ public class TokenService(IConfiguration configuration, IConnectionMultiplexer r
         };
 
         var token = new JwtSecurityToken(
-            issuer: jwtSettings["Issuer"],
-            audience: jwtSettings["Audience"],
+            issuer: _jwtSettings.Issuer,
+            audience: _jwtSettings.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
+            expires: DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
             signingCredentials: credentials
         );
 
