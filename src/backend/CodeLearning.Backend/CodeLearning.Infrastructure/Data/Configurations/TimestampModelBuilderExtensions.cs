@@ -8,18 +8,19 @@ public static class TimestampModelBuilderExtensions
     // BaseEntity configuration (CreatedAt, UpdatedAt auto-set)
     public static void ConfigureTimestamps(this ModelBuilder builder)
     {
-        var baseEntityTypes = builder.Model.GetEntityTypes()
-            .Where(entityType => typeof(BaseEntity).IsAssignableFrom(entityType.ClrType))
+        var baseEntityClrTypes = builder.Model.GetEntityTypes()
+            .Select(entityType => entityType.ClrType)
+            .Where(clrType => typeof(BaseEntity).IsAssignableFrom(clrType))
             .ToList();
 
-        foreach (var entityType in baseEntityTypes)
+        foreach (var clrType in baseEntityClrTypes)
         {
-            builder.Entity(entityType.ClrType)
+            builder.Entity(clrType)
                 .Property<DateTimeOffset>("CreatedAt")
                 .HasDefaultValueSql("NOW()")
                 .ValueGeneratedOnAdd();
 
-            builder.Entity(entityType.ClrType)
+            builder.Entity(clrType)
                 .Property<DateTimeOffset>("UpdatedAt")
                 .HasDefaultValueSql("NOW()")
                 .ValueGeneratedOnAddOrUpdate();
