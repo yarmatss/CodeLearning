@@ -6,14 +6,25 @@ namespace CodeLearning.Core.Grading;
 
 public static class SubmissionGrader
 {
+    private static readonly HashSet<SubmissionStatus> FailureStatuses =
+    [
+        SubmissionStatus.CompilationError,
+        SubmissionStatus.RuntimeError,
+        SubmissionStatus.TimeLimitExceeded,
+        SubmissionStatus.MemoryLimitExceeded
+    ];
+
     public static ExecutionResult Grade(ExecutionResult sandboxResult, IReadOnlyList<TestCase> testCases)
     {
-        if (sandboxResult.TestResults.Count == 0 && sandboxResult.Status != SubmissionStatus.Completed
+        if ((sandboxResult.TestResults.Count == 0 && sandboxResult.Status != SubmissionStatus.Completed)
             || sandboxResult.Status == SubmissionStatus.CompilationError)
         {
             return new ExecutionResult
             {
-                Status = sandboxResult.Status,
+                // Pending/Running would leave the submission unfinished forever
+                Status = FailureStatuses.Contains(sandboxResult.Status)
+                    ? sandboxResult.Status
+                    : SubmissionStatus.RuntimeError,
                 Score = 0,
                 TotalTests = testCases.Count,
                 PassedTests = 0,

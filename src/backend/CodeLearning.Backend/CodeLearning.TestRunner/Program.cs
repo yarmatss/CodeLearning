@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -52,6 +53,7 @@ class Program
 
                 var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs);
                 testResult.TestIndex = testIndex;
+                KillLeftoverProcesses();
 
                 if (testResult.MemoryUsedKB.HasValue && testResult.MemoryUsedKB.Value > maxMemoryUsed)
                     maxMemoryUsed = testResult.MemoryUsedKB.Value;
@@ -73,6 +75,21 @@ class Program
         await File.WriteAllTextAsync(outputFile, json);
 
         return 0;
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int kill(int pid, int sig);
+
+    const int SIGKILL = 9;
+
+    // Submission processes that daemonized escape Process.Kill(entireProcessTree).
+    // kill(-1) signals every process this user can reach except PID 1 and the runner itself.
+    static void KillLeftoverProcesses()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            kill(-1, SIGKILL);
+        }
     }
 
     static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs)

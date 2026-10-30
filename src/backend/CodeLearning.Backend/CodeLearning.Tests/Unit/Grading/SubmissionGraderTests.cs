@@ -146,9 +146,49 @@ public class SubmissionGraderTests
         result.Score.Should().Be(50);
     }
 
+    [Theory]
+    [InlineData(SubmissionStatus.Pending)]
+    [InlineData(SubmissionStatus.Running)]
+    public void Grade_NonTerminalStatusWithoutTestResults_ShouldBecomeRuntimeError(SubmissionStatus forgedStatus)
+    {
+        // Arrange - a forged report that would leave the submission unfinished
+        var testCases = CreateTestCases("3");
+        var sandbox = new ExecutionResult { Status = forgedStatus };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.RuntimeError);
+        result.Score.Should().Be(0);
+    }
+
     #endregion
 
     #region Error Status Tests
+
+    [Fact]
+    public void Grade_SandboxRuntimeErrorWithPartialResults_ShouldGradeReportedAndFailMissing()
+    {
+        // Arrange - runner crashed after the first test
+        var testCases = CreateTestCases("3", "15");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.RuntimeError,
+            RuntimeError = "Internal Runner Error: boom",
+            TestResults = [Ran(0, "3")]
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.RuntimeError);
+        result.RuntimeError.Should().Be("Internal Runner Error: boom");
+        result.TestResults[0].Status.Should().Be(TestResultStatus.Passed);
+        result.TestResults[1].Status.Should().Be(TestResultStatus.RuntimeError);
+        result.Score.Should().Be(50);
+    }
 
     [Fact]
     public void Grade_TimeLimitExceededOnOneTest_ShouldReportTimeLimitExceeded()
