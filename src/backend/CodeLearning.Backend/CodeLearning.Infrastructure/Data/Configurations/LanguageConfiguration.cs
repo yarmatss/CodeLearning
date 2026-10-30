@@ -8,6 +8,10 @@ public class LanguageConfiguration : IEntityTypeConfiguration<Language>
 {
     private const string RunTestsCommand = "/bin/bash /app/run_tests.sh";
 
+    private sealed record Runtime(string DockerImage, string FileExtension, string ExecutableCommand, string? CompileCommand);
+
+    private sealed record Limits(int TimeoutSeconds, int MemoryLimitMb, decimal CpuLimit);
+
     public void Configure(EntityTypeBuilder<Language> builder)
     {
         builder.HasIndex(l => new { l.Name, l.Version })
@@ -15,44 +19,34 @@ public class LanguageConfiguration : IEntityTypeConfiguration<Language>
 
         builder.HasData(
             CreateLanguage("11111111-1111-1111-1111-111111111111", "Python", "3.12",
-                "codelearning/python:3.12-slim", ".py", "python3", compileCommand: null,
-                timeoutSeconds: 5, memoryLimitMb: 256, cpuLimit: 0.5m),
+                new Runtime("codelearning/python:3.12-slim", ".py", "python3", CompileCommand: null),
+                new Limits(TimeoutSeconds: 5, MemoryLimitMb: 256, CpuLimit: 0.5m)),
             CreateLanguage("22222222-2222-2222-2222-222222222222", "JavaScript", "22",
-                "codelearning/node:22-slim", ".js", "node", compileCommand: null,
-                timeoutSeconds: 5, memoryLimitMb: 256, cpuLimit: 0.5m),
+                new Runtime("codelearning/node:22-slim", ".js", "node", CompileCommand: null),
+                new Limits(TimeoutSeconds: 5, MemoryLimitMb: 256, CpuLimit: 0.5m)),
             // "csharp" is a special marker handled in the generated shell script
             CreateLanguage("33333333-3333-3333-3333-333333333333", "C#", "14",
-                "codelearning/dotnet:10.0", ".cs", "dotnet run --no-build", compileCommand: "csharp",
-                timeoutSeconds: 10, memoryLimitMb: 512, cpuLimit: 1.0m),
+                new Runtime("codelearning/dotnet:10.0", ".cs", "dotnet run --no-build", CompileCommand: "csharp"),
+                new Limits(TimeoutSeconds: 10, MemoryLimitMb: 512, CpuLimit: 1.0m)),
             // javac file name must match the capitalized Solution class
             CreateLanguage("44444444-4444-4444-4444-444444444444", "Java", "21",
-                "codelearning/java:21-jdk", ".java", "java Solution", compileCommand: "javac Solution.java",
-                timeoutSeconds: 10, memoryLimitMb: 512, cpuLimit: 1.0m));
+                new Runtime("codelearning/java:21-jdk", ".java", "java Solution", CompileCommand: "javac Solution.java"),
+                new Limits(TimeoutSeconds: 10, MemoryLimitMb: 512, CpuLimit: 1.0m)));
     }
 
-    private static Language CreateLanguage(
-        string id,
-        string name,
-        string version,
-        string dockerImage,
-        string fileExtension,
-        string executableCommand,
-        string? compileCommand,
-        int timeoutSeconds,
-        int memoryLimitMb,
-        decimal cpuLimit) => new()
+    private static Language CreateLanguage(string id, string name, string version, Runtime runtime, Limits limits) => new()
     {
         Id = Guid.Parse(id),
         Name = name,
         Version = version,
-        DockerImage = dockerImage,
-        FileExtension = fileExtension,
+        DockerImage = runtime.DockerImage,
+        FileExtension = runtime.FileExtension,
         RunCommand = RunTestsCommand,
-        ExecutableCommand = executableCommand,
-        CompileCommand = compileCommand,
-        TimeoutSeconds = timeoutSeconds,
-        MemoryLimitMB = memoryLimitMb,
-        CpuLimit = cpuLimit,
+        ExecutableCommand = runtime.ExecutableCommand,
+        CompileCommand = runtime.CompileCommand,
+        TimeoutSeconds = limits.TimeoutSeconds,
+        MemoryLimitMB = limits.MemoryLimitMb,
+        CpuLimit = limits.CpuLimit,
         IsEnabled = true,
         CreatedAt = SeedConstants.SeedDate,
         UpdatedAt = SeedConstants.SeedDate
