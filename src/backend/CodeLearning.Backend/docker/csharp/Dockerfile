@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV DOTNET_CLI_HOME=/tmp
+# Sandbox runs as nobody (HOME=/nonexistent); .NET named mutexes need a writable HOME
+ENV HOME=/tmp
 ENV DOTNET_NOLOGO=true
 ENV DOTNET_SKIP_FIRST_TIME_EXPERIENCE=true
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=true
