@@ -20,6 +20,11 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
             ?? throw new InvalidOperationException($"Problem {dto.ProblemId} not found");
 
+        if (!await CanSubmitAsync(problem, studentId))
+        {
+            throw new InvalidOperationException("You must be enrolled in a course that contains this problem to submit solutions");
+        }
+
         if (problem.TestCases.Count == 0)
         {
             throw new InvalidOperationException("Problem has no test cases");
@@ -94,6 +99,21 @@ public class SubmissionService(ApplicationDbContext context, IConnectionMultiple
             .ToListAsync();
 
         return submissions.Select(MapToDto).ToList();
+    }
+
+    // Every submission occupies a sandbox container, so only the problem's author (testing it)
+    // or students enrolled in a course that uses the problem may submit
+    private async Task<bool> CanSubmitAsync(Problem problem, Guid userId)
+    {
+        if (problem.AuthorId == userId)
+        {
+            return true;
+        }
+
+        return await context.CourseBlocks.AnyAsync(b =>
+            b.ProblemId == problem.Id &&
+            context.StudentCourseProgresses.Any(p =>
+                p.StudentId == userId && p.CourseId == b.Subchapter.Chapter.CourseId));
     }
 
     private static SubmissionResponseDto MapToDto(Submission submission)

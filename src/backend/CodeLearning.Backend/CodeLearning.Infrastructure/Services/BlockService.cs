@@ -81,25 +81,7 @@ public class BlockService(
         var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
         var quiz = new Quiz
         {
-            Block = null!,
-            Questions = dto.Questions.Select((q, qIndex) => new QuizQuestion
-            {
-                Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
-                Type = Enum.Parse<QuestionType>(q.Type),
-                Points = q.Points,
-                Explanation = string.IsNullOrWhiteSpace(q.Explanation)
-                    ? null
-                    : sanitizationService.SanitizeMarkdown(q.Explanation),
-                OrderIndex = qIndex + 1,
-                Quiz = null!,
-                Answers = q.Answers.Select((a, aIndex) => new QuizAnswer
-                {
-                    Text = sanitizationService.SanitizeText(a.AnswerText),
-                    IsCorrect = a.IsCorrect,
-                    OrderIndex = aIndex + 1,
-                    Question = null!
-                }).ToList()
-            }).ToList()
+            Block = null!
         };
 
         var block = new CourseBlock
@@ -113,6 +95,7 @@ public class BlockService(
         };
 
         context.CourseBlocks.Add(block);
+        context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, quiz));
         await context.SaveChangesAsync();
 
         return block.Id;
@@ -252,23 +235,7 @@ public class BlockService(
 
         await context.SaveChangesAsync();
 
-        var newQuestions = dto.Questions.Select((q, qIndex) => new QuizQuestion
-        {
-            Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
-            Type = Enum.Parse<QuestionType>(q.Type),
-            OrderIndex = qIndex + 1,
-            QuizId = block.Quiz!.Id,
-            Quiz = block.Quiz,
-            Answers = q.Answers.Select((a, aIndex) => new QuizAnswer
-            {
-                Text = sanitizationService.SanitizeText(a.AnswerText),
-                IsCorrect = a.IsCorrect,
-                OrderIndex = aIndex + 1,
-                Question = null!
-            }).ToList()
-        }).ToList();
-
-        context.QuizQuestions.AddRange(newQuestions);
+        context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, block.Quiz!));
         await context.SaveChangesAsync();
     }
 
@@ -293,6 +260,27 @@ public class BlockService(
         await ReorderBlocks(block.SubchapterId, blockId, oldOrderIndex, newOrderIndex);
         await context.SaveChangesAsync();
     }
+
+    // Shared by create and update so both persist every question field
+    private List<QuizQuestion> BuildQuizQuestions(IEnumerable<CreateQuizQuestionDto> questions, Quiz quiz) =>
+        questions.Select((q, qIndex) => new QuizQuestion
+        {
+            Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
+            Type = Enum.Parse<QuestionType>(q.Type),
+            Points = q.Points,
+            Explanation = string.IsNullOrWhiteSpace(q.Explanation)
+                ? null
+                : sanitizationService.SanitizeMarkdown(q.Explanation),
+            OrderIndex = qIndex + 1,
+            Quiz = quiz,
+            Answers = q.Answers.Select((a, aIndex) => new QuizAnswer
+            {
+                Text = sanitizationService.SanitizeText(a.AnswerText),
+                IsCorrect = a.IsCorrect,
+                OrderIndex = aIndex + 1,
+                Question = null!
+            }).ToList()
+        }).ToList();
 
     private async Task<bool> IsCourseInstructorAsync(Guid subchapterId, Guid? viewerId)
     {

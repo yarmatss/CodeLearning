@@ -15,6 +15,7 @@ public class ProblemsController(
     IProblemService problemService,
     IValidator<CreateProblemDto> createValidator,
     IValidator<UpdateProblemDto> updateValidator,
+    IValidator<CreateTestCaseDto> createTestCaseValidator,
     IValidator<UpdateTestCaseDto> updateTestCaseValidator,
     IValidator<BulkAddTestCasesDto> bulkAddTestCasesValidator,
     IValidator<ReorderTestCasesDto> reorderTestCasesValidator) : ControllerBase
@@ -93,6 +94,8 @@ public class ProblemsController(
     [Authorize(Roles = nameof(UserRole.Teacher))]
     public async Task<IActionResult> AddTestCase(Guid id, [FromBody] CreateTestCaseDto dto)
     {
+        await createTestCaseValidator.ValidateAndThrowAsync(dto);
+
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var result = await problemService.AddTestCaseAsync(id, dto, userId);
 

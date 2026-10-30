@@ -1,9 +1,14 @@
-using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.DTOs.Submission;
+using CodeLearning.Application.Settings;
+using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
+using CodeLearning.Infrastructure.Data;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -33,16 +38,14 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No teacher token received");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetStudentToken()
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No student token received");
+        return response.GetAccessToken();
     }
 
     private async Task<ProblemResponseDto> CreateProblem(string token, string? title = null)
@@ -67,6 +70,51 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
             ?? throw new Exception("Failed to create problem");
     }
 
+    // Students may only submit to problems used in a course they are enrolled in
+    private async Task EnrollInCourseWithProblem(ProblemResponseDto problem, string studentToken)
+    {
+        Guid courseId;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var instructor = await dbContext.Users.FirstAsync(u => u.Id == problem.AuthorId);
+
+            var course = new Course
+            {
+                Title = "Course with problem",
+                Description = "Course used by submission tests",
+                Status = CourseStatus.Published,
+                PublishedAt = DateTimeOffset.UtcNow,
+                InstructorId = instructor.Id,
+                Instructor = instructor
+            };
+
+            var chapter = new Chapter { Title = "Chapter 1", OrderIndex = 1, Course = course };
+            var subchapter = new Subchapter { Title = "Subchapter 1.1", OrderIndex = 1, Chapter = chapter };
+            var block = new CourseBlock
+            {
+                Title = problem.Title,
+                Type = BlockType.Problem,
+                OrderIndex = 1,
+                Subchapter = subchapter,
+                ProblemId = problem.Id
+            };
+
+            dbContext.Courses.Add(course);
+            dbContext.Chapters.Add(chapter);
+            dbContext.Subchapters.Add(subchapter);
+            dbContext.CourseBlocks.Add(block);
+            await dbContext.SaveChangesAsync();
+
+            courseId = course.Id;
+        }
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        var response = await _client.PostAsync($"/api/enrollments/courses/{courseId}", null);
+        response.EnsureSuccessStatusCode();
+    }
+
     #endregion
 
     #region Submit Code Tests
@@ -79,7 +127,7 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
         var problem = await CreateProblem(teacherToken, "Two Sum");
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         var submitDto = new SubmitCodeDto
         {
@@ -115,7 +163,7 @@ def solution():
         var problem = await CreateProblem(teacherToken, "Add Numbers");
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         var submitDto = new SubmitCodeDto
         {
@@ -192,7 +240,7 @@ function solution() {
         var problem = await CreateProblem(teacherToken);
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         var submitDto = new SubmitCodeDto
         {
@@ -216,7 +264,7 @@ function solution() {
         var problem = await CreateProblem(teacherToken);
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         var submitDto = new SubmitCodeDto
         {
@@ -232,6 +280,95 @@ function solution() {
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task SubmitCode_NotEnrolledInCourseWithProblem_ShouldReturn400()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+
+        var submitDto = new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(error);
+        Assert.Contains("enrolled", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SubmitCode_AsProblemAuthor_ShouldReturn202Accepted()
+    {
+        // Arrange - authors may test their own problems without a course
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var submitDto = new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SubmitCode_ExceedingRateLimit_ShouldReturn429()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+
+        var permitLimit = _factory.Services
+            .GetRequiredService<IOptions<SubmissionRateLimitSettings>>().Value.PermitLimit;
+
+        var submitDto = new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        };
+
+        for (var i = 0; i < permitLimit; i++)
+        {
+            var accepted = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        }
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.True(response.Headers.Contains("Retry-After"), "429 response should tell the client when to retry");
+
+        // Another user's limit is independent
+        var otherStudentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, otherStudentToken);
+        var otherResponse = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+        Assert.Equal(HttpStatusCode.Accepted, otherResponse.StatusCode);
+    }
+
     #endregion
 
     #region Get Submission Tests
@@ -244,7 +381,7 @@ function solution() {
         var problem = await CreateProblem(teacherToken);
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         var submitDto = new SubmitCodeDto
         {
@@ -293,7 +430,7 @@ function solution() {
 
         // Student 1 submits
         var student1Token = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", student1Token);
+        await EnrollInCourseWithProblem(problem, student1Token);
 
         var submitDto = new SubmitCodeDto
         {
@@ -341,7 +478,7 @@ function solution() {
         var problem = await CreateProblem(teacherToken, "Multiple Submissions Test");
 
         var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        await EnrollInCourseWithProblem(problem, studentToken);
 
         // Submit multiple times
         var codes = new[]

@@ -591,7 +591,8 @@ export class Learn implements OnInit {
       // Start polling
       await this.pollSubmission(submission.id);
     } catch (error: any) {
-      this.errorMessage.set(error.error?.message || 'Failed to submit code');
+      // Rate limiting replies with ProblemDetails, which carries the reason in `detail`
+      this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to submit code');
     }
   }
 

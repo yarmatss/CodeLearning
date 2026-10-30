@@ -238,16 +238,14 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetTeacherTokenAsync()
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<(Guid publishedCourseId, Guid draftCourseId)> CreateCoursesAsync()

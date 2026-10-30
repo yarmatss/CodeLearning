@@ -1,4 +1,3 @@
-using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Course;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
@@ -30,9 +29,7 @@ public class CoursesControllerTests : IClassFixture<IntegrationTestWebAppFactory
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-
-        return content?.AccessToken ?? throw new Exception("No teacher token received");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetStudentToken()
@@ -40,9 +37,7 @@ public class CoursesControllerTests : IClassFixture<IntegrationTestWebAppFactory
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-
-        return content?.AccessToken ?? throw new Exception("No student token received");
+        return response.GetAccessToken();
     }
 
     #endregion

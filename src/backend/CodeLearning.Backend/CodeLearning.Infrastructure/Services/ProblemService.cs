@@ -1,5 +1,6 @@
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.Services;
+using CodeLearning.Core.Constants;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
@@ -257,6 +258,8 @@ public class ProblemService(
             throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
 
+        EnsureTestCaseLimit(problem.TestCases.Count + 1);
+
         var maxOrder = problem.TestCases.Count > 0 ? problem.TestCases.Max(tc => tc.OrderIndex) : 0;
 
         var testCase = new TestCase
@@ -293,6 +296,8 @@ public class ProblemService(
         {
             throw new UnauthorizedAccessException(ModifyOwnProblemsOnlyMessage);
         }
+
+        EnsureTestCaseLimit(problem.TestCases.Count + dto.TestCases.Count);
 
         var maxOrder = problem.TestCases.Count > 0 ? problem.TestCases.Max(tc => tc.OrderIndex) : 0;
         var newTestCases = new List<TestCase>();
@@ -526,6 +531,15 @@ public class ProblemService(
                 Name = pt.Tag.Name
             }).ToList()
         };
+    }
+
+    private static void EnsureTestCaseLimit(int resultingCount)
+    {
+        if (resultingCount > TestCaseLimits.MaxTestCasesPerProblem)
+        {
+            throw new InvalidOperationException(
+                $"A problem can have at most {TestCaseLimits.MaxTestCasesPerProblem} test cases");
+        }
     }
 
     // ILIKE treats % and _ as wildcards; backslash is the default escape character in PostgreSQL

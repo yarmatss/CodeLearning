@@ -1,8 +1,10 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Submission;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
@@ -16,9 +18,11 @@ public class SubmissionsController(
     ILogger<SubmissionsController> logger) : ControllerBase
 {
     [HttpPost]
+    [EnableRateLimiting(RateLimitingExtensions.SubmissionsPolicy)]
     [ProducesResponseType(typeof(SubmissionResponseDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> SubmitCode([FromBody] SubmitCodeDto dto)
     {
         await submitValidator.ValidateAndThrowAsync(dto);

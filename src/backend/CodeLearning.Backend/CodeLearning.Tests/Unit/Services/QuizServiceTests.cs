@@ -181,6 +181,44 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     }
 
     [Fact]
+    public async Task SubmitQuizAsync_AfterUnenrollAndReenroll_StillRejectsSecondAttempt()
+    {
+        // Arrange
+        var enrollmentService = new EnrollmentService(_fixture.DbContext);
+        var dto = new SubmitQuizDto
+        {
+            Answers = new List<QuizAnswerSubmissionDto>
+            {
+                new()
+                {
+                    QuestionId = _question1.Id,
+                    SelectedAnswerIds = new List<Guid> { _q1Answer2.Id }
+                },
+                new()
+                {
+                    QuestionId = _question2.Id,
+                    SelectedAnswerIds = new List<Guid> { _q2Answer2.Id }
+                }
+            }
+        };
+
+        await _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id);
+
+        // Act - leaving and rejoining the course must not reset the one-attempt rule
+        await enrollmentService.UnenrollAsync(_testCourse.Id, _testStudent.Id);
+        await enrollmentService.EnrollAsync(_testCourse.Id, _testStudent.Id);
+
+        // Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
+        Assert.Contains("already attempted", exception.Message);
+
+        var blockProgress = await _fixture.DbContext.StudentBlockProgresses
+            .SingleAsync(bp => bp.StudentId == _testStudent.Id && bp.BlockId == _testQuiz.Block.Id);
+        Assert.True(blockProgress.IsCompleted);
+    }
+
+    [Fact]
     public async Task SubmitQuizAsync_NotEnrolled_ThrowsInvalidOperationException()
     {
         // Arrange

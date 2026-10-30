@@ -23,6 +23,7 @@ public class DockerRunner : IDockerRunner
     private readonly DockerClient _client;
     private readonly ILogger<DockerRunner> _logger;
     private readonly string _sandboxTmpfsPath;
+    private readonly int _maxContainerRuntimeSeconds;
 
     public DockerRunner(IConfiguration configuration, ILogger<DockerRunner> logger)
     {
@@ -32,6 +33,8 @@ public class DockerRunner : IDockerRunner
         // Path inside the sandbox container that gets a private, size-limited tmpfs
         _sandboxTmpfsPath = configuration["ExecutionSettings:SandboxTmpfsPath"]
             ?? throw new InvalidOperationException("SandboxTmpfsPath not configured");
+        // Hard cap so problems created before the test case limit cannot hold an execution slot indefinitely
+        _maxContainerRuntimeSeconds = configuration.GetValue("ExecutionSettings:MaxContainerRuntimeSeconds", 300);
     }
 
     public async Task<ExecutionResult> ExecuteAsync(
@@ -60,7 +63,9 @@ public class DockerRunner : IDockerRunner
 
             // Timeout calculations
             var compilationOverhead = !string.IsNullOrWhiteSpace(context.Language.CompileCommand) ? 15 : 0;
-            var totalTimeout = (context.Language.TimeoutSeconds * context.TestCases.Count) + compilationOverhead + 10;
+            var totalTimeout = Math.Min(
+                (context.Language.TimeoutSeconds * context.TestCases.Count) + compilationOverhead + 10,
+                _maxContainerRuntimeSeconds);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(totalTimeout));
