@@ -3,7 +3,6 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { User, RegisterRequest, LoginRequest, AuthResponse } from '../models/auth.model';
-import { jwtDecode } from 'jwt-decode';
 
 @Injectable({
   providedIn: 'root'
@@ -30,8 +29,8 @@ export class AuthService {
           lastName: response.lastName,
           role: response.role
         });
-        if (response.accessToken) {
-          this.scheduleTokenRefresh(response.accessToken);
+        if (response.accessTokenExpiresAt) {
+          this.scheduleTokenRefresh(response.accessTokenExpiresAt);
         }
       })
     );
@@ -47,8 +46,8 @@ export class AuthService {
           lastName: response.lastName,
           role: response.role
         });
-        if (response.accessToken) {
-          this.scheduleTokenRefresh(response.accessToken);
+        if (response.accessTokenExpiresAt) {
+          this.scheduleTokenRefresh(response.accessTokenExpiresAt);
         }
       })
     );
@@ -75,24 +74,22 @@ export class AuthService {
       tap(response => {
         // Nie nadpisujemy currentUser - refresh służy tylko do odświeżenia tokena
         // currentUser jest już ustawiony przez getCurrentUser() lub login()/register()
-        if (response.accessToken) {
-          this.scheduleTokenRefresh(response.accessToken);
+        if (response.accessTokenExpiresAt) {
+          this.scheduleTokenRefresh(response.accessTokenExpiresAt);
         }
       })
     );
   }
 
-  private scheduleTokenRefresh(accessToken: string): void {
+  private scheduleTokenRefresh(accessTokenExpiresAt: string): void {
     try {
-      const decoded: any = jwtDecode(accessToken);
-      
-      if (!decoded.exp) {
-        console.warn('JWT token doesn\'t have exp claim');
+      const expiresAt = new Date(accessTokenExpiresAt).getTime();
+
+      if (Number.isNaN(expiresAt)) {
+        console.warn('Invalid access token expiry:', accessTokenExpiresAt);
         return;
       }
 
-      // exp is in seconds, convert to milliseconds
-      const expiresAt = decoded.exp * 1000;
       const now = Date.now();
       
       // Schedule refresh 5 seconds before expiration
@@ -113,7 +110,7 @@ export class AuthService {
         console.warn('Token has already expired or will expire in less than 5 seconds');
       }
     } catch (error) {
-      console.error('Error decoding JWT:', error);
+      console.error('Error scheduling token refresh:', error);
     }
   }
 

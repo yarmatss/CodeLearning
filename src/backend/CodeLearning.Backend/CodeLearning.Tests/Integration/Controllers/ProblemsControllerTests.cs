@@ -1,5 +1,5 @@
-using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Problem;
+using CodeLearning.Core.Constants;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
@@ -30,16 +30,14 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No teacher token received");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetStudentToken()
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No student token received");
+        return response.GetAccessToken();
     }
 
     private async Task<ProblemResponseDto> CreateProblemAsTeacher(string? title = null)
@@ -503,6 +501,48 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         content.Should().NotBeNull();
         content!.Input.Should().Be(testCaseDto.Input);
         content.ExpectedOutput.Should().Be(testCaseDto.ExpectedOutput);
+    }
+
+    [Fact]
+    public async Task AddTestCase_WithTooLongInput_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher("Problem for oversized TestCase");
+
+        var testCaseDto = new CreateTestCaseDto
+        {
+            Input = new string('1', TestCaseLimits.MaxInputLength + 1),
+            ExpectedOutput = "1",
+            IsPublic = true
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases", testCaseDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task BulkAddTestCases_ExceedingProblemLimit_ShouldReturn400()
+    {
+        // Arrange - the problem already has 2 test cases, so filling up to the limit overflows it
+        var problem = await CreateProblemAsTeacher("Problem at the test case limit");
+
+        var bulkDto = new BulkAddTestCasesDto
+        {
+            TestCases = Enumerable.Range(0, TestCaseLimits.MaxTestCasesPerProblem)
+                .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+                .ToList()
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk", bulkDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var content = await response.Content.ReadAsStringAsync();
+        content.Should().Contain($"at most {TestCaseLimits.MaxTestCasesPerProblem} test cases");
     }
 
     [Fact]

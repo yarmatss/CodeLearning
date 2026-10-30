@@ -1,5 +1,6 @@
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.Validators.Problem;
+using CodeLearning.Core.Constants;
 using FluentAssertions;
 
 namespace CodeLearning.Tests.Unit.Validators;
@@ -210,6 +211,56 @@ public class CreateProblemDtoValidatorTests
         // Assert
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.PropertyName.Contains("ExpectedOutput"));
+    }
+
+    [Fact]
+    public void Validate_TooManyTestCases_ShouldFail()
+    {
+        // Arrange
+        var dto = new CreateProblemDto
+        {
+            Title = "Valid Title",
+            Description = "Valid description with more than 20 characters",
+            Difficulty = "Easy",
+            TestCases = Enumerable.Range(0, TestCaseLimits.MaxTestCasesPerProblem + 1)
+                .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+                .ToList()
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "TestCases" && e.ErrorMessage.Contains("at most"));
+    }
+
+    [Fact]
+    public void Validate_TestCaseWithTooLongInput_ShouldFail()
+    {
+        // Arrange
+        var dto = new CreateProblemDto
+        {
+            Title = "Valid Title",
+            Description = "Valid description with more than 20 characters",
+            Difficulty = "Easy",
+            TestCases =
+            [
+                new CreateTestCaseDto
+                {
+                    Input = new string('1', TestCaseLimits.MaxInputLength + 1),
+                    ExpectedOutput = "1",
+                    IsPublic = true
+                }
+            ]
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName.Contains("Input"));
     }
 
     [Fact]

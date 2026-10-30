@@ -134,6 +134,8 @@ builder.Services.AddSingleton<ISanitizationService, SanitizationService>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<RegisterDtoValidator>();
 
+builder.Services.AddSubmissionRateLimiting();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -235,6 +237,9 @@ app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseMiddleware<JwtBlacklistMiddleware>();
 app.UseAuthorization();
+
+// After authentication so the submissions policy can partition by user
+app.UseRateLimiter();
 
 app.MapHealthChecks("/health");
 

@@ -1000,6 +1000,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
                     QuestionText = "New question?",
                     Type = "SingleChoice",
                     Points = 15,
+                    Explanation = "Answer 1 is correct because it is first.",
                     Answers = new List<CreateQuizAnswerDto>
                     {
                         new() { AnswerText = "Answer 1", IsCorrect = true },
@@ -1028,6 +1029,8 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         block.Quiz!.Questions.Should().HaveCount(1);
         block.Quiz.Questions.First().Content.Should().Contain("New question");
         block.Quiz.Questions.First().Answers.Should().HaveCount(2);
+        block.Quiz.Questions.First().Points.Should().Be(15);
+        block.Quiz.Questions.First().Explanation.Should().Contain("Answer 1 is correct");
     }
 
     [Fact]
@@ -1171,16 +1174,14 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetStudentTokenAsync()
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<Guid> CreateSubchapterAsync()

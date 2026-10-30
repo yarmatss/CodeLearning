@@ -18,6 +18,8 @@ namespace CodeLearning.Tests.Integration.Controllers;
 /// </summary>
 public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactory>, IAsyncLifetime
 {
+    private static readonly Guid PythonLanguageId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
     private readonly HttpClient _client;
     private readonly IntegrationTestWebAppFactory _factory;
     private string _studentToken = null!;
@@ -147,6 +149,50 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    [Fact]
+    public async Task CompleteBlock_ProblemBlockWithoutAcceptedSubmission_ShouldReturn400()
+    {
+        var (blockId, problemId) = await AddProblemBlockAsync();
+        await AddSubmissionAsync(problemId, SubmissionStatus.Completed, score: 50);
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await _client.PostAsync($"/api/progress/blocks/{blockId}/complete", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var content = await response.Content.ReadAsStringAsync();
+        content.Should().Contain("Pass all test cases");
+    }
+
+    [Fact]
+    public async Task CompleteBlock_ProblemBlockWithAcceptedSubmission_ShouldReturn200()
+    {
+        var (blockId, problemId) = await AddProblemBlockAsync();
+        await AddSubmissionAsync(problemId, SubmissionStatus.Completed, score: 100);
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await _client.PostAsync($"/api/progress/blocks/{blockId}/complete", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<CompleteBlockResponseDto>();
+        result!.BlockId.Should().Be(blockId);
+    }
+
+    [Fact]
+    public async Task CompleteBlock_QuizBlockWithoutAttempt_ShouldReturn400()
+    {
+        var blockId = await AddQuizBlockAsync();
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await _client.PostAsync($"/api/progress/blocks/{blockId}/complete", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var content = await response.Content.ReadAsStringAsync();
+        content.Should().Contain("Submit the quiz");
+    }
+
     #endregion
 
     #region Get Course Progress Tests
@@ -266,16 +312,14 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<string> GetTeacherTokenAsync()
     {
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        var content = await response.Content.ReadFromJsonAsync<Application.DTOs.Auth.LoginResponseDto>();
-        return content?.AccessToken ?? throw new Exception("No token");
+        return response.GetAccessToken();
     }
 
     private async Task<(Guid courseId, Guid block1Id, Guid block2Id, Guid block3Id)> CreateCourseWithBlocksAsync()
@@ -363,6 +407,95 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         var student = await dbContext.Users.FirstAsync(u => u.Role == UserRole.Student);
         return student.Id;
+    }
+
+    private async Task<(Guid BlockId, Guid ProblemId)> AddProblemBlockAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+
+        var subchapterId = await dbContext.CourseBlocks
+            .Where(b => b.Id == _block1Id)
+            .Select(b => b.SubchapterId)
+            .FirstAsync();
+        var teacher = await dbContext.Users.FirstAsync(u => u.Role == UserRole.Teacher);
+
+        var problem = new Problem
+        {
+            Title = "Sum",
+            Description = "Add two numbers",
+            Difficulty = DifficultyLevel.Easy,
+            AuthorId = teacher.Id,
+            Author = teacher
+        };
+
+        var block = new CourseBlock
+        {
+            Title = "Problem Block",
+            Type = BlockType.Problem,
+            OrderIndex = 4,
+            SubchapterId = subchapterId,
+            Subchapter = null!,
+            Problem = problem
+        };
+
+        dbContext.Problems.Add(problem);
+        dbContext.CourseBlocks.Add(block);
+        await dbContext.SaveChangesAsync();
+
+        return (block.Id, problem.Id);
+    }
+
+    private async Task AddSubmissionAsync(Guid problemId, SubmissionStatus status, int score)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+
+        var studentId = await GetCurrentStudentIdAsync(dbContext);
+
+        dbContext.Submissions.Add(new Submission
+        {
+            ProblemId = problemId,
+            StudentId = studentId,
+            LanguageId = PythonLanguageId,
+            Code = "print(sum(map(int, input().split())))",
+            Status = status,
+            Score = score,
+            Problem = null!,
+            Student = null!,
+            Language = null!
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private async Task<Guid> AddQuizBlockAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+
+        var subchapterId = await dbContext.CourseBlocks
+            .Where(b => b.Id == _block1Id)
+            .Select(b => b.SubchapterId)
+            .FirstAsync();
+
+        var quiz = new Quiz { Block = null! };
+        var block = new CourseBlock
+        {
+            Title = "Quiz Block",
+            Type = BlockType.Quiz,
+            OrderIndex = 4,
+            SubchapterId = subchapterId,
+            Subchapter = null!,
+            Quiz = quiz
+        };
+        quiz.Block = block;
+
+        dbContext.Quizzes.Add(quiz);
+        dbContext.CourseBlocks.Add(block);
+        await dbContext.SaveChangesAsync();
+
+        return block.Id;
     }
 
     #endregion

@@ -39,6 +39,23 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
         };
 
         context.StudentCourseProgresses.Add(enrollment);
+
+        // Quiz attempts survive unenrolling (one attempt per quiz), so a returning student keeps those blocks completed
+        var attemptedQuizBlocks = await context.StudentQuizAttempts
+            .Where(a => a.StudentId == studentId && a.Quiz.Block.Subchapter.Chapter.CourseId == courseId)
+            .Select(a => new { BlockId = a.Quiz.Block.Id, a.AttemptedAt })
+            .ToListAsync();
+
+        context.StudentBlockProgresses.AddRange(attemptedQuizBlocks.Select(a => new StudentBlockProgress
+        {
+            StudentId = studentId,
+            BlockId = a.BlockId,
+            IsCompleted = true,
+            CompletedAt = a.AttemptedAt,
+            Student = null!,
+            Block = null!
+        }));
+
         await context.SaveChangesAsync();
 
         return new EnrollmentResponseDto
@@ -55,17 +72,11 @@ public class EnrollmentService(ApplicationDbContext context) : IEnrollmentServic
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
             ?? throw new KeyNotFoundException("Enrollment not found");
 
-        // Remove block progress
+        // Remove block progress; quiz attempts are kept so re-enrolling cannot reset the one-attempt rule
         var blockProgress = await context.StudentBlockProgresses
             .Where(bp => bp.StudentId == studentId && bp.Block.Subchapter.Chapter.CourseId == courseId)
             .ToListAsync();
 
-        // Remove quiz attempts
-        var quizAttempts = await context.StudentQuizAttempts
-            .Where(qa => qa.StudentId == studentId && qa.Quiz.Block.Subchapter.Chapter.CourseId == courseId)
-            .ToListAsync();
-
-        context.StudentQuizAttempts.RemoveRange(quizAttempts);
         context.StudentBlockProgresses.RemoveRange(blockProgress);
         context.StudentCourseProgresses.Remove(enrollment);
 

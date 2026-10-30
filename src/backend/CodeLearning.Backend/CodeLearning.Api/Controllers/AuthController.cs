@@ -26,6 +26,7 @@ public class AuthController(
 
     [HttpPost("register")]
     [AllowAnonymous]
+    [ProducesResponseType(typeof(LoginResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Register(RegisterDto registerDto)
     {
         await registerValidator.ValidateAndThrowAsync(registerDto);
@@ -33,24 +34,15 @@ public class AuthController(
         var response = await authService.RegisterAsync(registerDto);
         var user = MapToUser(response);
 
-        var (accessToken, refreshToken) = await GenerateAndStoreTokensAsync(user);
+        var (accessToken, refreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, refreshToken);
 
-        return Ok(new
-        {
-            response.UserId,
-            response.Email,
-            response.FirstName,
-            response.LastName,
-            response.Role,
-            response.Message,
-            accessToken,
-            refreshToken
-        });
+        return Ok(MapToLoginResponse(response, accessTokenExpiresAt));
     }
 
     [HttpPost("login")]
     [AllowAnonymous]
+    [ProducesResponseType(typeof(LoginResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Login(LoginDto loginDto)
     {
         await loginValidator.ValidateAndThrowAsync(loginDto);
@@ -58,20 +50,10 @@ public class AuthController(
         var response = await authService.LoginAsync(loginDto);
         var user = MapToUser(response);
 
-        var (accessToken, refreshToken) = await GenerateAndStoreTokensAsync(user);
+        var (accessToken, refreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, refreshToken);
 
-        return Ok(new
-        {
-            response.UserId,
-            response.Email,
-            response.FirstName,
-            response.LastName,
-            response.Role,
-            response.Message,
-            accessToken,
-            refreshToken
-        });
+        return Ok(MapToLoginResponse(response, accessTokenExpiresAt));
     }
 
     [HttpPost("logout")]
@@ -115,14 +97,13 @@ public class AuthController(
         var response = await authService.RefreshTokenAsync(refreshToken, userId);
         var user = MapToUser(response);
 
-        var (accessToken, newRefreshToken) = await GenerateAndStoreTokensAsync(user);
+        var (accessToken, newRefreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, newRefreshToken);
 
         return Ok(new
         {
             message = "Token refreshed successfully",
-            accessToken,
-            refreshToken = newRefreshToken
+            accessTokenExpiresAt
         });
     }
 
@@ -150,7 +131,18 @@ public class AuthController(
         Role = Enum.Parse<UserRole>(response.Role)
     };
 
-    private async Task<(string AccessToken, string RefreshToken)> GenerateAndStoreTokensAsync(User user)
+    private static LoginResponseDto MapToLoginResponse(AuthResponseDto response, DateTimeOffset accessTokenExpiresAt) => new()
+    {
+        UserId = response.UserId,
+        Email = response.Email,
+        FirstName = response.FirstName,
+        LastName = response.LastName,
+        Role = response.Role,
+        Message = response.Message,
+        AccessTokenExpiresAt = accessTokenExpiresAt
+    };
+
+    private async Task<(string AccessToken, string RefreshToken, DateTimeOffset AccessTokenExpiresAt)> GenerateAndStoreTokensAsync(User user)
     {
         var accessToken = tokenService.GenerateAccessToken(user);
         var refreshToken = tokenService.GenerateRefreshToken();
@@ -162,7 +154,10 @@ public class AuthController(
             user.Id,
             TimeSpan.FromDays(refreshTokenExpirationDays));
 
-        return (accessToken, refreshToken);
+        // Read the expiry back from the token so it matches the exp claim exactly
+        var accessTokenExpiresAt = new DateTimeOffset(new JwtSecurityTokenHandler().ReadJwtToken(accessToken).ValidTo, TimeSpan.Zero);
+
+        return (accessToken, refreshToken, accessTokenExpiresAt);
     }
 
     private void SetTokenCookies(string accessToken, string refreshToken)

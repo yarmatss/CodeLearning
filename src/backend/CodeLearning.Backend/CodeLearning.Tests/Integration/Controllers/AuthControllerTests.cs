@@ -1,6 +1,7 @@
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
+using Microsoft.AspNetCore.Mvc.Testing;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -125,7 +126,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     #region Login Tests
 
     [Fact]
-    public async Task Login_WithValidCredentials_ShouldReturn200WithToken()
+    public async Task Login_WithValidCredentials_ShouldSetHttpOnlyTokenCookiesWithoutExposingTokensInBody()
     {
         // Arrange - Register first
         var email = "login@test.com";
@@ -144,10 +145,22 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+        var accessCookie = response.GetSetCookie("access_token");
+        var refreshCookie = response.GetSetCookie("refresh_token");
+        Assert.False(string.IsNullOrEmpty(accessCookie.Value), "access token cookie should be set");
+        Assert.False(string.IsNullOrEmpty(refreshCookie.Value), "refresh token cookie should be set");
+        Assert.Contains("httponly", accessCookie.Attributes, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("httponly", refreshCookie.Attributes, StringComparison.OrdinalIgnoreCase);
+
+        // Tokens readable from the body would defeat HttpOnly: any XSS could exfiltrate them
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(accessCookie.Value, body);
+        Assert.DoesNotContain(refreshCookie.Value, body);
+
         var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
         Assert.NotNull(content);
-        Assert.False(string.IsNullOrEmpty(content.AccessToken), "response should contain access token");
-        Assert.False(string.IsNullOrEmpty(content.RefreshToken), "response should contain refresh token");
+        Assert.Equal(email, content.Email);
+        Assert.True(content.AccessTokenExpiresAt > DateTimeOffset.UtcNow, "access token expiry should be in the future");
     }
 
     [Fact]
@@ -207,9 +220,8 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
 
         var loginResponse = await _client.PostAsJsonAsync("/api/auth/login",
             TestDataBuilder.CreateValidLoginDto(email));
-        var loginContent = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
 
-        var accessToken = loginContent?.AccessToken ?? throw new Exception("No token received");
+        var accessToken = loginResponse.GetAccessToken();
 
         // Add Authorization header
         _client.DefaultRequestHeaders.Authorization =
@@ -253,8 +265,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
 
         var loginResponse = await _client.PostAsJsonAsync("/api/auth/login",
             TestDataBuilder.CreateValidLoginDto(email));
-        var loginContent = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
-        var accessToken = loginContent?.AccessToken ?? throw new Exception("No token");
+        var accessToken = loginResponse.GetAccessToken();
 
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", accessToken);
@@ -267,6 +278,43 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
 
         var content = await response.Content.ReadAsStringAsync();
         Assert.Contains("Logout successful", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    #endregion
+
+    #region Refresh Tests
+
+    [Fact]
+    public async Task Refresh_WithValidRefreshToken_ShouldRotateCookiesWithoutExposingTokensInBody()
+    {
+        // Arrange - cookies are sent by hand, so the client must not manage them itself
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "refresh@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+        var accessToken = loginResponse.GetAccessToken();
+        var refreshToken = loginResponse.GetSetCookie("refresh_token").Value;
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Add("Cookie", $"refresh_token={Uri.EscapeDataString(refreshToken)}");
+
+        // Act
+        var response = await client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var newAccessToken = response.GetAccessToken();
+        var newRefreshToken = response.GetSetCookie("refresh_token").Value;
+        Assert.NotEqual(refreshToken, newRefreshToken);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(newAccessToken, body);
+        Assert.DoesNotContain(newRefreshToken, body);
+        Assert.Contains("accessTokenExpiresAt", body);
     }
 
     #endregion

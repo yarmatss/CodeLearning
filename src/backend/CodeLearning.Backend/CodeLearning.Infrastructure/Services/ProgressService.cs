@@ -1,6 +1,7 @@
 using CodeLearning.Application.DTOs.Progress;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
+using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,6 +37,8 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
                 CourseCompleted = nextBlock == null
             };
         }
+
+        await EnsureBlockRequirementsMetAsync(block, studentId);
 
         if (existingProgress == null)
         {
@@ -132,6 +135,36 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             .ToListAsync();
 
         return blocks.FirstOrDefault(b => !completedBlockIds.Contains(b.Id))?.Id;
+    }
+
+    // Theory and video blocks complete on viewing; quiz and problem blocks need evidence of the work
+    private async Task EnsureBlockRequirementsMetAsync(CourseBlock block, Guid studentId)
+    {
+        switch (block.Type)
+        {
+            case BlockType.Quiz:
+                var hasQuizAttempt = await context.StudentQuizAttempts
+                    .AnyAsync(a => a.QuizId == block.QuizId && a.StudentId == studentId);
+
+                if (!hasQuizAttempt)
+                {
+                    throw new InvalidOperationException("Submit the quiz to complete this block");
+                }
+                break;
+
+            case BlockType.Problem:
+                var hasAcceptedSubmission = await context.Submissions
+                    .AnyAsync(s => s.ProblemId == block.ProblemId &&
+                                   s.StudentId == studentId &&
+                                   s.Status == SubmissionStatus.Completed &&
+                                   s.Score == 100);
+
+                if (!hasAcceptedSubmission)
+                {
+                    throw new InvalidOperationException("Pass all test cases of the problem to complete this block");
+                }
+                break;
+        }
     }
 
     private async Task<(int TotalBlocks, int CompletedBlocks)> GetBlockCounts(Guid courseId, Guid studentId)

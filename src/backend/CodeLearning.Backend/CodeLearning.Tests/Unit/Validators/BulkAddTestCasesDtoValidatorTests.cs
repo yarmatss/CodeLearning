@@ -1,5 +1,6 @@
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.Validators.Problem;
+using CodeLearning.Core.Constants;
 using FluentAssertions;
 
 namespace CodeLearning.Tests.Unit.Validators;
@@ -161,6 +162,50 @@ public class BulkAddTestCasesDtoValidatorTests
     }
 
     [Fact]
+    public void Validate_MoreThanMaxTestCases_ShouldFail()
+    {
+        // Arrange
+        var dto = new BulkAddTestCasesDto
+        {
+            TestCases = Enumerable.Range(0, TestCaseLimits.MaxTestCasesPerProblem + 1)
+                .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+                .ToList()
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "TestCases" && e.ErrorMessage.Contains("at most"));
+    }
+
+    [Fact]
+    public void Validate_TestCaseWithTooLongExpectedOutput_ShouldFail()
+    {
+        // Arrange
+        var dto = new BulkAddTestCasesDto
+        {
+            TestCases =
+            [
+                new CreateTestCaseDto
+                {
+                    Input = "1",
+                    ExpectedOutput = new string('1', TestCaseLimits.MaxExpectedOutputLength + 1),
+                    IsPublic = true
+                }
+            ]
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.ErrorMessage.Contains("Expected output must not exceed"));
+    }
+
+    [Fact]
     public void Validate_TestCaseWithEmptyExpectedOutput_ShouldFail()
     {
         // Arrange
@@ -248,8 +293,8 @@ public class BulkAddTestCasesDtoValidatorTests
         // Arrange
         var testCases = new List<CreateTestCaseDto>();
 
-        // Add 99 private test cases
-        for (int i = 0; i < 99; i++)
+        // Fill up to the limit: all private except one public test case
+        for (int i = 0; i < TestCaseLimits.MaxTestCasesPerProblem - 1; i++)
         {
             testCases.Add(new CreateTestCaseDto
             {

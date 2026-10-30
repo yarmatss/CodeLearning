@@ -27,6 +27,5 @@ export interface AuthResponse {
   lastName: string;
   role: 'Student' | 'Teacher';
   message: string;
-  accessToken?: string;
-  refreshToken?: string;
+  accessTokenExpiresAt?: string;
 }

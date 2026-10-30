@@ -1,4 +1,5 @@
 using CodeLearning.Application.DTOs.Problem;
+using CodeLearning.Core.Constants;
 using FluentValidation;
 
 namespace CodeLearning.Application.Validators.Problem;
@@ -21,7 +22,9 @@ public class CreateProblemDtoValidator : AbstractValidator<CreateProblemDto>
 
         RuleFor(x => x.TestCases)
             .NotEmpty().WithMessage("At least one test case is required")
-            .Must(HaveAtLeastOnePublicTestCase).WithMessage("At least one test case must be public");
+            .Must(HaveAtLeastOnePublicTestCase).WithMessage("At least one test case must be public")
+            .Must(testCases => testCases.Count <= TestCaseLimits.MaxTestCasesPerProblem)
+            .WithMessage($"A problem can have at most {TestCaseLimits.MaxTestCasesPerProblem} test cases");
 
         RuleForEach(x => x.TestCases).SetValidator(new CreateTestCaseDtoValidator());
         RuleForEach(x => x.StarterCodes).SetValidator(new CreateStarterCodeDtoValidator());
