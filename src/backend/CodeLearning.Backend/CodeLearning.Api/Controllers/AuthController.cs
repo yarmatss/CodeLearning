@@ -19,6 +19,9 @@ public class AuthController(
     IValidator<RegisterDto> registerValidator,
     IValidator<LoginDto> loginValidator) : ControllerBase
 {
+    private const string AccessTokenCookie = "access_token";
+    private const string RefreshTokenCookie = "refresh_token";
+
     [HttpPost("register")]
     [AllowAnonymous]
     public async Task<IActionResult> Register(RegisterDto registerDto)
@@ -27,11 +30,11 @@ public class AuthController(
 
         var response = await authService.RegisterAsync(registerDto);
         var user = MapToUser(response);
-        
+
         var (accessToken, refreshToken) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, refreshToken);
 
-        return Ok(new 
+        return Ok(new
         {
             response.UserId,
             response.Email,
@@ -56,7 +59,7 @@ public class AuthController(
         var (accessToken, refreshToken) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, refreshToken);
 
-        return Ok(new 
+        return Ok(new
         {
             response.UserId,
             response.Email,
@@ -74,14 +77,14 @@ public class AuthController(
     public async Task<IActionResult> Logout()
     {
         var userId = GetCurrentUserId();
-        var refreshToken = Request.Cookies["refresh_token"];
-        
+        var refreshToken = Request.Cookies[RefreshTokenCookie];
+
         var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
-        
+
         var jwtSettings = configuration.GetSection("JwtSettings");
         var accessTokenExpirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "60");
         var accessTokenExpiration = TimeSpan.FromMinutes(accessTokenExpirationMinutes);
-        
+
         if (!string.IsNullOrEmpty(refreshToken))
         {
             await authService.LogoutAsync(refreshToken, userId, jti, accessTokenExpiration);
@@ -96,7 +99,7 @@ public class AuthController(
     [AllowAnonymous]
     public async Task<IActionResult> RefreshToken()
     {
-        var refreshToken = Request.Cookies["refresh_token"];
+        var refreshToken = Request.Cookies[RefreshTokenCookie];
 
         if (string.IsNullOrEmpty(refreshToken))
         {
@@ -115,8 +118,8 @@ public class AuthController(
         var (accessToken, newRefreshToken) = await GenerateAndStoreTokensAsync(user);
         SetTokenCookies(accessToken, newRefreshToken);
 
-        return Ok(new 
-        { 
+        return Ok(new
+        {
             message = "Token refreshed successfully",
             accessToken,
             refreshToken = newRefreshToken
@@ -125,21 +128,16 @@ public class AuthController(
 
     [HttpGet("me")]
     [Authorize]
+    [ProducesResponseType(typeof(CurrentUserDto), StatusCodes.Status200OK)]
     public IActionResult GetCurrentUser()
     {
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var email = User.FindFirst(ClaimTypes.Email)?.Value;
-        var firstName = User.FindFirst(ClaimTypes.GivenName)?.Value;
-        var lastName = User.FindFirst(ClaimTypes.Surname)?.Value;
-        var role = User.FindFirst(ClaimTypes.Role)?.Value;
-
-        return Ok(new 
-        { 
-            userId, 
-            email, 
-            firstName, 
-            lastName, 
-            role 
+        return Ok(new CurrentUserDto
+        {
+            UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty,
+            Email = User.FindFirst(ClaimTypes.Email)?.Value ?? string.Empty,
+            FirstName = User.FindFirst(ClaimTypes.GivenName)?.Value ?? string.Empty,
+            LastName = User.FindFirst(ClaimTypes.Surname)?.Value ?? string.Empty,
+            Role = User.FindFirst(ClaimTypes.Role)?.Value ?? string.Empty
         });
     }
 
@@ -159,10 +157,10 @@ public class AuthController(
 
         var jwtSettings = configuration.GetSection("JwtSettings");
         var refreshTokenExpirationDays = int.Parse(jwtSettings["RefreshTokenExpirationDays"] ?? "7");
-        
+
         await tokenService.StoreRefreshTokenAsync(
-            refreshToken, 
-            user.Id, 
+            refreshToken,
+            user.Id,
             TimeSpan.FromDays(refreshTokenExpirationDays));
 
         return (accessToken, refreshToken);
@@ -181,14 +179,14 @@ public class AuthController(
             Expires = DateTimeOffset.UtcNow.AddDays(refreshTokenExpirationDays)
         };
 
-        Response.Cookies.Append("access_token", accessToken, cookieOptions);
-        Response.Cookies.Append("refresh_token", refreshToken, cookieOptions);
+        Response.Cookies.Append(AccessTokenCookie, accessToken, cookieOptions);
+        Response.Cookies.Append(RefreshTokenCookie, refreshToken, cookieOptions);
     }
 
     private void ClearTokenCookies()
     {
-        Response.Cookies.Delete("access_token");
-        Response.Cookies.Delete("refresh_token");
+        Response.Cookies.Delete(AccessTokenCookie);
+        Response.Cookies.Delete(RefreshTokenCookie);
     }
 
     private Guid GetCurrentUserId()
@@ -212,10 +210,10 @@ public class AuthController(
 
             var handler = new JwtSecurityTokenHandler();
             var jwtToken = handler.ReadJwtToken(token);
-            
-            var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier 
+
+            var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier
                 || c.Type == JwtRegisteredClaimNames.Sub);
-            
+
             return Guid.TryParse(userIdClaim?.Value, out var userId) ? userId : Guid.Empty;
         }
         catch

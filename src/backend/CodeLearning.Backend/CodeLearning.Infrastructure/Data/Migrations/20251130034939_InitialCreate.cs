@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using CodeLearning.Core.Entities;
+﻿using CodeLearning.Core.Entities;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 

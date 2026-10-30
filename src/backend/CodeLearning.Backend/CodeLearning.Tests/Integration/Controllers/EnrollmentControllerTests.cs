@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Enrollment;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -9,6 +6,9 @@ using CodeLearning.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -61,7 +61,7 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
         var studentId = await GetCurrentStudentIdAsync(dbContext);
-        
+
         var enrollment = await dbContext.StudentCourseProgresses
             .FirstOrDefaultAsync(p => p.CourseId == _publishedCourseId && p.StudentId == studentId);
 
@@ -138,7 +138,7 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
         var studentId = await GetCurrentStudentIdAsync(dbContext);
-        
+
         var enrollment = await dbContext.StudentCourseProgresses
             .FirstOrDefaultAsync(p => p.CourseId == _publishedCourseId && p.StudentId == studentId);
 
@@ -172,7 +172,7 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
         var courses = await response.Content.ReadFromJsonAsync<List<EnrolledCourseDto>>();
         courses.Should().NotBeNull();
         courses!.Should().HaveCount(1);
-        
+
         var course = courses.First();
         course.CourseId.Should().Be(_publishedCourseId);
         course.CompletedBlocksCount.Should().Be(0);
@@ -333,7 +333,7 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
         return (publishedCourse.Id, draftCourse.Id);
     }
 
-    private async Task<Guid> GetCurrentStudentIdAsync(CodeLearning.Infrastructure.Data.ApplicationDbContext dbContext)
+    private static async Task<Guid> GetCurrentStudentIdAsync(CodeLearning.Infrastructure.Data.ApplicationDbContext dbContext)
     {
         var student = await dbContext.Users.FirstAsync(u => u.Role == UserRole.Student);
         return student.Id;

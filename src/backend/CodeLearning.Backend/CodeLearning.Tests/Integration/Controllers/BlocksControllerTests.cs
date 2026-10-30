@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Block;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -9,6 +6,9 @@ using CodeLearning.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -145,10 +145,10 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify in database that <script> was removed
         var responseDto = await response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var blockId = responseDto!.Id;
-        
+
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.TheoryContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -185,7 +185,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify VideoId extraction
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.VideoContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -239,7 +239,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.VideoContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -306,7 +306,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify in database
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.Quiz)
                 .ThenInclude(q => q!.Questions)
@@ -446,7 +446,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.Quiz)
                 .ThenInclude(q => q!.Questions)
@@ -488,7 +488,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.Problem)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -558,7 +558,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify deleted
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks.FindAsync(blockId);
         block.Should().BeNull();
     }
@@ -585,7 +585,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var createDto = new CreateTheoryBlockDto
         {
             Title = "C# Basics",
@@ -618,7 +618,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var createDto = new CreateVideoBlockDto
         {
             Title = "Tutorial Video",
@@ -649,7 +649,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var createDto = new CreateQuizBlockDto
         {
             Title = "Quiz",
@@ -686,11 +686,11 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         block!.Type.ToString().Should().Be("Quiz");
         block.Quiz.Should().NotBeNull();
         block.Quiz!.Questions.Should().HaveCount(1);
-        
+
         var question = block.Quiz.Questions.First();
         question.Content.Should().Contain("2+2");
         question.Answers.Should().HaveCount(3);
-        
+
         // Verify IsCorrect is NOT in JSON (security check)
         var jsonString = await response.Content.ReadAsStringAsync();
         jsonString.Should().NotContain("isCorrect"); // JSON property names are camelCase
@@ -784,7 +784,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var blocks = await response.Content.ReadFromJsonAsync<List<BlockResponseDto>>();
         blocks.Should().NotBeNull();
         blocks!.Should().HaveCount(3);
-        
+
         // Verify order
         blocks[0].OrderIndex.Should().Be(1);
         blocks[0].Title.Should().Be("Theory 1");
@@ -803,7 +803,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         // Create block first
         var createDto = new CreateTheoryBlockDto
         {
@@ -830,7 +830,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Verify in database
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.TheoryContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -846,7 +846,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var blockId = await CreateTheoryBlockAsync();
 
         var updateDto = new UpdateTheoryBlockDto
@@ -863,7 +863,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.TheoryContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -877,7 +877,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var updateDto = new UpdateTheoryBlockDto
         {
             Title = "Test",
@@ -896,7 +896,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         // Create video block
         var createDto = new CreateVideoBlockDto
         {
@@ -922,7 +922,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.VideoContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
@@ -937,7 +937,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         var createDto = new CreateVideoBlockDto
         {
             Title = "Video",
@@ -965,7 +965,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
-        
+
         // Create quiz block
         var createDto = new CreateQuizBlockDto
         {
@@ -1017,7 +1017,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var block = await dbContext.CourseBlocks
             .Include(b => b.Quiz)
                 .ThenInclude(q => q!.Questions)
@@ -1038,13 +1038,13 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         // Create 3 blocks
         var block1 = await CreateTheoryBlockAsync(); // OrderIndex = 1
-        
-        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+
+        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
             new CreateTheoryBlockDto { Title = "Block 2", Content = "C2" });
         var block2Created = await block2Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var block2Id = block2Created!.Id; // OrderIndex = 2
-        
-        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+
+        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
             new CreateTheoryBlockDto { Title = "Block 3", Content = "C3" });
         var block3Created = await block3Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var block3Id = block3Created!.Id; // OrderIndex = 3
@@ -1060,7 +1060,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var blocks = await dbContext.CourseBlocks
             .Where(b => b.SubchapterId == _subchapterId)
             .OrderBy(b => b.OrderIndex)
@@ -1081,17 +1081,17 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
 
-        var block1Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+        var block1Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
             new CreateTheoryBlockDto { Title = "Block 1", Content = "C1" });
         var block1Created = await block1Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var block1Id = block1Created!.Id;
-        
-        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+
+        var block2Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
             new CreateTheoryBlockDto { Title = "Block 2", Content = "C2" });
         var block2Created = await block2Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var block2Id = block2Created!.Id;
-        
-        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", 
+
+        var block3Response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
             new CreateTheoryBlockDto { Title = "Block 3", Content = "C3" });
         var block3Created = await block3Response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var block3Id = block3Created!.Id;
@@ -1107,7 +1107,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
-        
+
         var blocks = await dbContext.CourseBlocks
             .Where(b => b.SubchapterId == _subchapterId)
             .OrderBy(b => b.OrderIndex)

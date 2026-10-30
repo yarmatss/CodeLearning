@@ -20,7 +20,7 @@ public partial class CreateVideoBlockDtoValidator : AbstractValidator<CreateVide
             .Must(BeValidYouTubeUrl).WithMessage("Invalid YouTube URL format. Supported: youtube.com/watch?v=... or youtu.be/...");
     }
 
-    private bool BeValidYouTubeUrl(string? url)
+    private static bool BeValidYouTubeUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
             return false;

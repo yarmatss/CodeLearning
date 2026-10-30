@@ -50,22 +50,14 @@ public class SubmissionQueue : ISubmissionQueue
 
     public async Task EnqueueAsync(Guid submissionId, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var db = _redis.GetDatabase();
+        var db = _redis.GetDatabase();
 
-            await db.StreamAddAsync(
-                StreamConstants.SubmissionsStreamKey,
-                StreamConstants.SubmissionIdField,
-                submissionId.ToString());
+        await db.StreamAddAsync(
+            StreamConstants.SubmissionsStreamKey,
+            StreamConstants.SubmissionIdField,
+            submissionId.ToString());
 
-            _logger.LogInformation("Enqueued submission {SubmissionId} to stream", submissionId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to enqueue submission {SubmissionId}", submissionId);
-            throw;
-        }
+        _logger.LogInformation("Enqueued submission {SubmissionId} to stream", submissionId);
     }
 
     public async Task<QueueMessage?> DequeueAsync(CancellationToken cancellationToken = default)

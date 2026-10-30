@@ -57,8 +57,7 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
     public async Task<SubchapterResponseDto> UpdateSubchapterOrderAsync(Guid subchapterId, int newOrderIndex, Guid instructorId)
     {
         var subchapter = await context.Subchapters
-            .Include(s => s.Chapter)
-                .ThenInclude(c => c.Course)
+            .Include(s => s.Chapter.Course)
             .Include(s => s.Blocks)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
             ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
@@ -82,8 +81,7 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
     public async Task DeleteSubchapterAsync(Guid subchapterId, Guid instructorId)
     {
         var subchapter = await context.Subchapters
-            .Include(s => s.Chapter)
-                .ThenInclude(c => c.Course)
+            .Include(s => s.Chapter.Course)
             .FirstOrDefaultAsync(s => s.Id == subchapterId)
             ?? throw new KeyNotFoundException($"Subchapter with ID {subchapterId} not found");
 
@@ -112,21 +110,18 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
             .Where(s => s.ChapterId == subchapter.ChapterId && s.Id != subchapter.Id)
             .ToListAsync();
 
-        foreach (var other in otherSubchapters)
+        if (newOrderIndex < oldOrderIndex)
         {
-            if (newOrderIndex < oldOrderIndex)
+            foreach (var other in otherSubchapters.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
             {
-                if (other.OrderIndex >= newOrderIndex && other.OrderIndex < oldOrderIndex)
-                {
-                    other.OrderIndex++;
-                }
+                other.OrderIndex++;
             }
-            else
+        }
+        else
+        {
+            foreach (var other in otherSubchapters.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
             {
-                if (other.OrderIndex > oldOrderIndex && other.OrderIndex <= newOrderIndex)
-                {
-                    other.OrderIndex--;
-                }
+                other.OrderIndex--;
             }
         }
     }

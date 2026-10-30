@@ -7,7 +7,7 @@ namespace CodeLearning.Tests.Fixtures;
 public class DatabaseFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgresContainer;
-    
+
     public ApplicationDbContext DbContext { get; private set; } = null!;
 
     public DatabaseFixture()

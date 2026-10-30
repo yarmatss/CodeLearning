@@ -15,14 +15,23 @@ public class DockerRunner : IDockerRunner
     // ~10KB stdout + ~10KB stderr per test, up to 6x after JSON escaping
     private const int MaxLogBytes = 16 * 1024 * 1024;
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly DockerClient _client;
     private readonly ILogger<DockerRunner> _logger;
+    private readonly string _sandboxTmpfsPath;
 
     public DockerRunner(IConfiguration configuration, ILogger<DockerRunner> logger)
     {
         var dockerHost = configuration["ExecutionSettings:DockerHost"]!;
         _client = new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
         _logger = logger;
+        // Path inside the sandbox container that gets a private, size-limited tmpfs
+        _sandboxTmpfsPath = configuration["ExecutionSettings:SandboxTmpfsPath"]
+            ?? throw new InvalidOperationException("SandboxTmpfsPath not configured");
     }
 
     public async Task<ExecutionResult> ExecuteAsync(
@@ -96,8 +105,7 @@ public class DockerRunner : IDockerRunner
 
             var (logs, truncated) = await GetContainerLogsAsync(containerId, cancellationToken);
 
-            _logger.LogDebug("Container output (first 1000 chars): {Output}",
-                logs.Length > 1000 ? logs.Substring(0, 1000) : logs);
+            _logger.LogDebug("Container output (first 1000 chars): {Output}", logs[..Math.Min(1000, logs.Length)]);
 
             if (truncated)
             {
@@ -158,11 +166,6 @@ public class DockerRunner : IDockerRunner
 
         try
         {
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-
             var jsonStartIndex = output.IndexOf('{');
             if (jsonStartIndex == -1)
             {
@@ -172,7 +175,7 @@ public class DockerRunner : IDockerRunner
             }
 
             var jsonContent = output.Substring(jsonStartIndex);
-            var deserializedResult = JsonSerializer.Deserialize<ExecutionResult>(jsonContent, jsonOptions);
+            var deserializedResult = JsonSerializer.Deserialize<ExecutionResult>(jsonContent, JsonOptions);
 
             if (deserializedResult == null)
             {
@@ -199,11 +202,11 @@ public class DockerRunner : IDockerRunner
         }
     }
 
-    private void VerifyWorkspaceFiles(string workspaceDirectory)
+    private static void VerifyWorkspaceFiles(string workspaceDirectory)
     {
-        if (!Directory.Exists(workspaceDirectory)) 
+        if (!Directory.Exists(workspaceDirectory))
             throw new DirectoryNotFoundException($"Workspace directory does not exist: {workspaceDirectory}");
-        if (Directory.GetFiles(workspaceDirectory).Length == 0) 
+        if (Directory.GetFiles(workspaceDirectory).Length == 0)
             throw new InvalidOperationException($"Workspace directory is empty: {workspaceDirectory}");
     }
 
@@ -224,7 +227,7 @@ public class DockerRunner : IDockerRunner
                 NanoCPUs = (long)(context.Language.CpuLimit * 1_000_000_000),
                 MemorySwap = context.Language.MemoryLimitMB * 1024L * 1024,
                 PidsLimit = 100, // expanded for java/c#
-                Tmpfs = new Dictionary<string, string> { { "/tmp", "size=50m,mode=1777" } }, // expanded tmpfs
+                Tmpfs = new Dictionary<string, string> { { _sandboxTmpfsPath, "size=50m,mode=1777" } }, // expanded tmpfs
                 CapDrop = new List<string> { "ALL" },
                 SecurityOpt = new List<string> { "no-new-privileges" },
                 Ulimits = new List<Ulimit>
@@ -291,17 +294,28 @@ public class DockerRunner : IDockerRunner
 
     private async Task EnsureImageExistsAsync(string imageName, CancellationToken cancellationToken)
     {
-        try 
+        if (await ImageExistsAsync(imageName, cancellationToken))
         {
-            await _client.Images.InspectImageAsync(imageName, cancellationToken); 
+            return;
+        }
+
+        _logger.LogInformation("Pulling image {Image}", imageName);
+        await _client.Images.CreateImageAsync(new ImagesCreateParameters { FromImage = imageName },
+                                              null,
+                                              new Progress<JSONMessage>(),
+                                              cancellationToken);
+    }
+
+    private async Task<bool> ImageExistsAsync(string imageName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _client.Images.InspectImageAsync(imageName, cancellationToken);
+            return true;
         }
         catch (DockerImageNotFoundException)
         {
-            _logger.LogInformation("Pulling image {Image}", imageName);
-            await _client.Images.CreateImageAsync(new ImagesCreateParameters { FromImage = imageName },
-                                                  null,
-                                                  new Progress<JSONMessage>(),
-                                                  cancellationToken);
+            return false;
         }
     }
 
@@ -315,8 +329,8 @@ public class DockerRunner : IDockerRunner
                 cancellationToken);
         }
         catch (Exception ex)
-        { 
-            _logger.LogWarning(ex, "Failed to remove container {Id}", containerId); 
+        {
+            _logger.LogWarning(ex, "Failed to remove container {Id}", containerId);
         }
     }
 }

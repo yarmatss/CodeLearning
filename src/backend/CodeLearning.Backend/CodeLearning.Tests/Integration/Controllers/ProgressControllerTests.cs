@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Progress;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -9,6 +6,9 @@ using CodeLearning.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -38,7 +38,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
         _studentToken = await GetStudentTokenAsync();
         (_courseId, _block1Id, _block2Id, _block3Id) = await CreateCourseWithBlocksAsync();
-        
+
         // Enroll student
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
         await _client.PostAsync($"/api/enrollments/courses/{_courseId}", null);
@@ -102,7 +102,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
         // Complete all blocks
         await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
         await _client.PostAsync($"/api/progress/blocks/{_block2Id}/complete", null);
-        
+
         var response = await _client.PostAsync($"/api/progress/blocks/{_block3Id}/complete", null);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -185,7 +185,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
         progress!.CompletedBlocksCount.Should().Be(1);
         progress.TotalBlocksCount.Should().Be(3);
         progress.ProgressPercentage.Should().BeApproximately(33.33, 0.1);
-        
+
         // Check block details
         var allBlocks = progress.Chapters
             .SelectMany(ch => ch.Subchapters)
@@ -359,7 +359,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
         return (course.Id, block1.Id, block2.Id, block3.Id);
     }
 
-    private async Task<Guid> GetCurrentStudentIdAsync(CodeLearning.Infrastructure.Data.ApplicationDbContext dbContext)
+    private static async Task<Guid> GetCurrentStudentIdAsync(CodeLearning.Infrastructure.Data.ApplicationDbContext dbContext)
     {
         var student = await dbContext.Users.FirstAsync(u => u.Role == UserRole.Student);
         return student.Id;

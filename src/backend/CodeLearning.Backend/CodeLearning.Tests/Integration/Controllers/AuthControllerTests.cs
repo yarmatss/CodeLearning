@@ -1,9 +1,9 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -133,7 +133,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var registerDto = TestDataBuilder.CreateValidRegisterDto(email: email);
         registerDto.Password = password;
         registerDto.ConfirmPassword = password;
-        
+
         await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
         var loginDto = TestDataBuilder.CreateValidLoginDto(email, password);
@@ -205,14 +205,14 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var registerDto = TestDataBuilder.CreateValidRegisterDto(email: email, role: "Student");
         await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
-        var loginResponse = await _client.PostAsJsonAsync("/api/auth/login", 
+        var loginResponse = await _client.PostAsJsonAsync("/api/auth/login",
             TestDataBuilder.CreateValidLoginDto(email));
         var loginContent = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
-        
+
         var accessToken = loginContent?.AccessToken ?? throw new Exception("No token received");
 
         // Add Authorization header
-        _client.DefaultRequestHeaders.Authorization = 
+        _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", accessToken);
 
         // Act
@@ -251,12 +251,12 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var registerDto = TestDataBuilder.CreateValidRegisterDto(email: email);
         await _client.PostAsJsonAsync("/api/auth/register", registerDto);
 
-        var loginResponse = await _client.PostAsJsonAsync("/api/auth/login", 
+        var loginResponse = await _client.PostAsJsonAsync("/api/auth/login",
             TestDataBuilder.CreateValidLoginDto(email));
         var loginContent = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
         var accessToken = loginContent?.AccessToken ?? throw new Exception("No token");
 
-        _client.DefaultRequestHeaders.Authorization = 
+        _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", accessToken);
 
         // Act

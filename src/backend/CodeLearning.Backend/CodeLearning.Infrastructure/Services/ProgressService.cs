@@ -11,9 +11,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
     public async Task<CompleteBlockResponseDto> CompleteBlockAsync(Guid blockId, Guid studentId)
     {
         var block = await context.CourseBlocks
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
-                    .ThenInclude(ch => ch.Course)
+            .Include(b => b.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new KeyNotFoundException($"Block with ID {blockId} not found");
 
@@ -86,8 +84,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             ?? throw new InvalidOperationException("You are not enrolled in this course");
 
         var blocks = await context.CourseBlocks
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
+            .Include(b => b.Subchapter.Chapter)
             .Where(b => b.Subchapter.Chapter.CourseId == courseId)
             .OrderBy(b => b.Subchapter.Chapter.OrderIndex)
                 .ThenBy(b => b.Subchapter.OrderIndex)
@@ -120,8 +117,7 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
     public async Task<Guid?> GetNextBlockAsync(Guid courseId, Guid studentId)
     {
         var blocks = await context.CourseBlocks
-            .Include(b => b.Subchapter)
-                .ThenInclude(s => s.Chapter)
+            .Include(b => b.Subchapter.Chapter)
             .Where(b => b.Subchapter.Chapter.CourseId == courseId)
             .OrderBy(b => b.Subchapter.Chapter.OrderIndex)
                 .ThenBy(b => b.Subchapter.OrderIndex)

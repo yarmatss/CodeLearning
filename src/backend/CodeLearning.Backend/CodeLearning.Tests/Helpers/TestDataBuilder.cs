@@ -13,7 +13,7 @@ public static class TestDataBuilder
 
     #region DTOs
 
-    public static RegisterDto CreateValidRegisterDto(string? email = null, string? role = "Student")
+    public static RegisterDto CreateValidRegisterDto(string? email = null, string role = "Student")
     {
         return new RegisterDto
         {

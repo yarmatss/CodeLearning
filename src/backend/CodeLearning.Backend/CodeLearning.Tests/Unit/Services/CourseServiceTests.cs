@@ -22,9 +22,9 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         _fixture = fixture;
         _sanitizationService = new SanitizationService();
         _courseService = new CourseService(_fixture.DbContext, _sanitizationService);
-        
+
         var userStore = new UserStore<User, IdentityRole<Guid>, Infrastructure.Data.ApplicationDbContext, Guid>(_fixture.DbContext);
-        
+
         _userManager = new UserManager<User>(
             userStore,
             null!,
@@ -67,7 +67,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         result.InstructorId.Should().Be(_testInstructor.Id);
         result.ChaptersCount.Should().Be(0);
         result.TotalBlocks.Should().Be(0);
-        
+
         // Verify in database
         var courseInDb = await _fixture.DbContext.Courses.FindAsync(result.Id);
         courseInDb.Should().NotBeNull();
@@ -140,10 +140,10 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var updateDto = TestDataBuilder.CreateValidCreateCourseDto("Updated Title");
 
         // Act
-        var result = await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto 
-        { 
-            Title = updateDto.Title, 
-            Description = updateDto.Description 
+        var result = await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto
+        {
+            Title = updateDto.Title,
+            Description = updateDto.Description
         }, _testInstructor.Id);
 
         // Assert
@@ -166,10 +166,10 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var updateDto = TestDataBuilder.CreateValidCreateCourseDto();
 
         // Act
-        var act = async () => await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto 
-        { 
-            Title = updateDto.Title, 
-            Description = updateDto.Description 
+        var act = async () => await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto
+        {
+            Title = updateDto.Title,
+            Description = updateDto.Description
         }, _testInstructor.Id);
 
         // Assert
@@ -191,10 +191,10 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         var updateDto = TestDataBuilder.CreateValidCreateCourseDto();
 
         // Act
-        var act = async () => await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto 
-        { 
-            Title = updateDto.Title, 
-            Description = updateDto.Description 
+        var act = async () => await _courseService.UpdateCourseAsync(course.Id, new Application.DTOs.Course.UpdateCourseDto
+        {
+            Title = updateDto.Title,
+            Description = updateDto.Description
         }, otherInstructor.Id);
 
         // Assert
@@ -227,7 +227,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
     {
         // Arrange
         var (course, chapter, subchapter) = TestDataBuilder.CreateCourseHierarchy(_testInstructor);
-        
+
         // Add a block to satisfy publish validation
         var block = new CourseBlock
         {
@@ -240,7 +240,7 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
-        
+
         _fixture.DbContext.Courses.Add(course);
         _fixture.DbContext.Chapters.Add(chapter);
         _fixture.DbContext.Subchapters.Add(subchapter);

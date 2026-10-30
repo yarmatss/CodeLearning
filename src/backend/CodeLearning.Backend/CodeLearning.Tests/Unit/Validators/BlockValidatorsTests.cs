@@ -1,6 +1,5 @@
 using CodeLearning.Application.DTOs.Block;
 using CodeLearning.Application.Validators.Block;
-using FluentAssertions;
 using FluentValidation.TestHelper;
 
 namespace CodeLearning.Tests.Unit.Validators;
@@ -363,14 +362,14 @@ public class BlockValidatorsTests
     [InlineData("Invalid")]
     [InlineData("")]
     [InlineData(null)]
-    public void QuizQuestionValidator_InvalidType_ShouldHaveError(string type)
+    public void QuizQuestionValidator_InvalidType_ShouldHaveError(string? type)
     {
         // Arrange
         var validator = new CreateQuizQuestionDtoValidator();
         var dto = new CreateQuizQuestionDto
         {
             QuestionText = "Q",
-            Type = type,
+            Type = type!,
             Points = 10,
             Answers = new List<CreateQuizAnswerDto>
             {

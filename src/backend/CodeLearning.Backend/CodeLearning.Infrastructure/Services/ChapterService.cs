@@ -109,21 +109,18 @@ public class ChapterService(ApplicationDbContext context) : IChapterService
             .Where(c => c.CourseId == chapter.CourseId && c.Id != chapter.Id)
             .ToListAsync();
 
-        foreach (var other in otherChapters)
+        if (newOrderIndex < oldOrderIndex)
         {
-            if (newOrderIndex < oldOrderIndex)
+            foreach (var other in otherChapters.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
             {
-                if (other.OrderIndex >= newOrderIndex && other.OrderIndex < oldOrderIndex)
-                {
-                    other.OrderIndex++;
-                }
+                other.OrderIndex++;
             }
-            else
+        }
+        else
+        {
+            foreach (var other in otherChapters.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
             {
-                if (other.OrderIndex > oldOrderIndex && other.OrderIndex <= newOrderIndex)
-                {
-                    other.OrderIndex--;
-                }
+                other.OrderIndex--;
             }
         }
     }

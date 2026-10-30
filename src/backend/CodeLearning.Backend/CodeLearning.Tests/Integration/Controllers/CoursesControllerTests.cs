@@ -1,11 +1,11 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.DTOs.Course;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
 namespace CodeLearning.Tests.Integration.Controllers;
 
@@ -31,7 +31,7 @@ public class CoursesControllerTests : IClassFixture<IntegrationTestWebAppFactory
 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
         var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        
+
         return content?.AccessToken ?? throw new Exception("No teacher token received");
     }
 
@@ -41,7 +41,7 @@ public class CoursesControllerTests : IClassFixture<IntegrationTestWebAppFactory
 
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
         var content = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-        
+
         return content?.AccessToken ?? throw new Exception("No student token received");
     }
 

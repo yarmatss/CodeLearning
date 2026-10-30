@@ -216,7 +216,7 @@ public class ReorderTestCasesDtoValidatorTests
         {
             testCaseIds.Add(Guid.NewGuid());
         }
-        
+
         var duplicateId = testCaseIds[25]; // Pick one from middle
         testCaseIds.Add(duplicateId); // Add duplicate at end
 

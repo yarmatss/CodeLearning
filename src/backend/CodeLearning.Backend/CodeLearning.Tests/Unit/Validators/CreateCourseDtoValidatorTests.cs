@@ -68,8 +68,8 @@ public class CreateCourseDtoValidatorTests
 
         // Assert
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().ContainSingle(e => 
-            e.PropertyName == nameof(CreateCourseDto.Title) && 
+        result.Errors.Should().ContainSingle(e =>
+            e.PropertyName == nameof(CreateCourseDto.Title) &&
             e.ErrorMessage.Contains("required", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -84,8 +84,8 @@ public class CreateCourseDtoValidatorTests
 
         // Assert
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().ContainSingle(e => 
-            e.PropertyName == nameof(CreateCourseDto.Title) && 
+        result.Errors.Should().ContainSingle(e =>
+            e.PropertyName == nameof(CreateCourseDto.Title) &&
             e.ErrorMessage.Contains("200"));
     }
 
@@ -126,8 +126,8 @@ public class CreateCourseDtoValidatorTests
 
         // Assert
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().ContainSingle(e => 
-            e.PropertyName == nameof(CreateCourseDto.Description) && 
+        result.Errors.Should().ContainSingle(e =>
+            e.PropertyName == nameof(CreateCourseDto.Description) &&
             e.ErrorMessage.Contains("required", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -146,8 +146,8 @@ public class CreateCourseDtoValidatorTests
 
         // Assert
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().ContainSingle(e => 
-            e.PropertyName == nameof(CreateCourseDto.Description) && 
+        result.Errors.Should().ContainSingle(e =>
+            e.PropertyName == nameof(CreateCourseDto.Description) &&
             e.ErrorMessage.Contains("5000"));
     }
 

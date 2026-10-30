@@ -14,9 +14,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         var quiz = await context.Quizzes
             .Include(q => q.Questions.OrderBy(qq => qq.OrderIndex))
                 .ThenInclude(qq => qq.Answers)
-            .Include(q => q.Block)
-                .ThenInclude(b => b.Subchapter)
-                    .ThenInclude(s => s.Chapter)
+            .Include(q => q.Block.Subchapter.Chapter)
             .FirstOrDefaultAsync(q => q.Id == quizId)
             ?? throw new KeyNotFoundException($"Quiz with ID {quizId} not found");
 
@@ -113,9 +111,8 @@ public class QuizService(ApplicationDbContext context) : IQuizService
     public async Task<QuizAttemptResultDto?> GetQuizAttemptAsync(Guid quizId, Guid studentId)
     {
         var attempt = await context.StudentQuizAttempts
-            .Include(a => a.Quiz)
-                .ThenInclude(q => q.Questions.OrderBy(qq => qq.OrderIndex))
-                    .ThenInclude(qq => qq.Answers)
+            .Include(a => a.Quiz.Questions.OrderBy(qq => qq.OrderIndex))
+                .ThenInclude(qq => qq.Answers)
             .FirstOrDefaultAsync(a => a.QuizId == quizId && a.StudentId == studentId);
 
         if (attempt == null)
@@ -202,7 +199,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
             }
 
             var validAnswerIds = question.Answers.Select(a => a.Id).ToHashSet();
-            
+
             if (answer.SelectedAnswerIds.Any(id => !validAnswerIds.Contains(id)))
             {
                 throw new InvalidOperationException($"Invalid answer IDs for question {question.Id}");
@@ -227,7 +224,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         foreach (var question in quiz.Questions)
         {
             var studentAnswer = dto.Answers.First(a => a.QuestionId == question.Id);
-            
+
             var correctAnswerIds = question.Answers
                 .Where(a => a.IsCorrect)
                 .Select(a => a.Id)
@@ -235,7 +232,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 .ToList();
 
             var selectedAnswerIds = studentAnswer.SelectedAnswerIds.OrderBy(id => id).ToList();
-            
+
             var isCorrect = correctAnswerIds.SequenceEqual(selectedAnswerIds);
 
             if (isCorrect)

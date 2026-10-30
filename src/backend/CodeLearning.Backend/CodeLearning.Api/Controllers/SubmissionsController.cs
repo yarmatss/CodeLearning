@@ -22,9 +22,9 @@ public class SubmissionsController(
     public async Task<IActionResult> SubmitCode([FromBody] SubmitCodeDto dto)
     {
         await submitValidator.ValidateAndThrowAsync(dto);
-        
+
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var studentId))
         {
             return Unauthorized();
@@ -33,7 +33,7 @@ public class SubmissionsController(
         try
         {
             var submission = await submissionService.SubmitCodeAsync(dto, studentId);
-            
+
             logger.LogInformation(
                 "Submission {SubmissionId} created by student {StudentId} for problem {ProblemId}",
                 submission.Id,
@@ -56,7 +56,7 @@ public class SubmissionsController(
     public async Task<IActionResult> GetSubmission(Guid id)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var studentId))
         {
             return Unauthorized();
@@ -78,7 +78,7 @@ public class SubmissionsController(
     public async Task<IActionResult> GetMySubmissions(Guid problemId)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var studentId))
         {
             return Unauthorized();

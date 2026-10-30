@@ -4,15 +4,15 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 
 # Install required system libraries for PostgreSQL GSSAPI support
+# and create the Data Protection keys directory owned by the app user
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libgssapi-krb5-2 \
-        curl && \
+        curl \
+        libgssapi-krb5-2 && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create directory for Data Protection keys
-RUN mkdir -p /app/keys && chmod 777 /app/keys
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /app/keys && \
+    chown "$APP_UID" /app/keys
 
 USER $APP_UID
 WORKDIR /app
@@ -32,12 +32,12 @@ COPY ["CodeLearning.Infrastructure/CodeLearning.Infrastructure.csproj", "CodeLea
 RUN dotnet restore "./CodeLearning.Api/CodeLearning.Api.csproj"
 COPY . .
 WORKDIR "/src/CodeLearning.Api"
-RUN dotnet build "./CodeLearning.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "./CodeLearning.Api.csproj" -c "$BUILD_CONFIGURATION" -o /app/build
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./CodeLearning.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./CodeLearning.Api.csproj" -c "$BUILD_CONFIGURATION" -o /app/publish /p:UseAppHost=false
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final

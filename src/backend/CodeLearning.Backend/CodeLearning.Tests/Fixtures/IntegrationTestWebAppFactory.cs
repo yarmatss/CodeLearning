@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using StackExchange.Redis;
+using System.Security.Cryptography;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
 
@@ -30,6 +31,11 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Secrets are not stored in appsettings; supply test-only values here
+        builder.UseSetting("ConnectionStrings:DefaultConnection", _postgresContainer.GetConnectionString());
+        builder.UseSetting("ConnectionStrings:Redis", _redisContainer.GetConnectionString());
+        builder.UseSetting("JwtSettings:SecretKey", Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)));
+
         builder.ConfigureServices(services =>
         {
             var dbDescriptor = services.SingleOrDefault(
@@ -85,10 +91,10 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        
+
         await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Courses\", \"Chapters\", \"Subchapters\" CASCADE");
         await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Users\", \"UserRoles\", \"UserClaims\" CASCADE");
-        
+
         // Clear Redis queue
         var redis = scope.ServiceProvider.GetRequiredService<IConnectionMultiplexer>();
         var redisDb = redis.GetDatabase();
