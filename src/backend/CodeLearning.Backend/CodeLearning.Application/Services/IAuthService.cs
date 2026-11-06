@@ -6,6 +6,7 @@ public interface IAuthService
 {
     Task<AuthResponseDto> RegisterAsync(RegisterDto registerDto);
     Task<AuthResponseDto> LoginAsync(LoginDto loginDto);
-    Task LogoutAsync(Guid userId, string jti, TimeSpan accessTokenExpiration);
-    Task<AuthResponseDto> RefreshTokenAsync(string refreshToken, Guid userId);
+    // Either argument may be missing: the refresh cookie or the access token can be gone or expired
+    Task LogoutAsync(string? refreshToken, Guid? userId, string? jti, TimeSpan accessTokenExpiration);
+    Task<AuthResponseDto> RefreshTokenAsync(string refreshToken);
 }

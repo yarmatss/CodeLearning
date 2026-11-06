@@ -34,9 +34,9 @@ public static class DatabaseMigrationExtensions
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "An error occurred while migrating the database");
-
-            // allow app to start even if migrations fail
+            // Fail fast: serving requests against an outdated schema produces confusing errors later
+            logger.LogCritical(ex, "An error occurred while migrating the database");
+            throw;
         }
     }
 }

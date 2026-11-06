@@ -78,6 +78,9 @@ public class ChapterService(ApplicationDbContext context) : IChapterService
             throw new BusinessRuleException("Cannot modify a published course");
         }
 
+        var chapterCount = await context.Chapters.CountAsync(c => c.CourseId == chapter.CourseId);
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, chapterCount);
+
         await ReorderChapters(chapter, newOrderIndex);
         await context.SaveChangesAsync();
 

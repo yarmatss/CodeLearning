@@ -33,15 +33,6 @@ export class MarkdownService {
   }
 
   /**
-   * Decodes HTML entities in a string
-   */
-  private decodeHtmlEntities(text: string): string {
-    const textarea = document.createElement('textarea');
-    textarea.innerHTML = text;
-    return textarea.value;
-  }
-
-  /**
    * Converts markdown to sanitized HTML
    */
   async renderMarkdown(markdown: string): Promise<SafeHtml> {
@@ -50,10 +41,8 @@ export class MarkdownService {
     }
 
     try {
-      // Decode HTML entities that may have been encoded by backend
-      const decodedMarkdown = this.decodeHtmlEntities(markdown);
-      // Convert markdown to HTML
-      const rawHtml = await marked(decodedMarkdown);
+      // The backend stores markdown as written; DOMPurify below is the sanitization boundary
+      const rawHtml = await marked(markdown);
       
       // Sanitize HTML to prevent XSS with DOMPurify
       const cleanHtml = DOMPurify.sanitize(rawHtml as string, {
@@ -87,9 +76,8 @@ export class MarkdownService {
     }
 
     try {
-      // Decode HTML entities that may have been encoded by backend
-      const decodedMarkdown = this.decodeHtmlEntities(markdown);
-      const rawHtml = marked.parse(decodedMarkdown, { async: false }) as string;
+      // The backend stores markdown as written; DOMPurify below is the sanitization boundary
+      const rawHtml = marked.parse(markdown, { async: false }) as string;
       
       // Sanitize HTML to prevent XSS with DOMPurify
       const cleanHtml = DOMPurify.sanitize(rawHtml, {

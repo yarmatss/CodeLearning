@@ -10,19 +10,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class BlockService(
-    ApplicationDbContext context,
-    ISanitizationService sanitizationService) : IBlockService
+// Text is stored as written; the frontend sanitizes rendered markdown (DOMPurify) and escapes plain text
+public class BlockService(ApplicationDbContext context) : IBlockService
 {
     public async Task<Guid> CreateTheoryBlockAsync(Guid subchapterId, CreateTheoryBlockDto dto, Guid instructorId)
     {
         await VerifyOwnershipAsync(subchapterId, instructorId);
         var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
 
-        var sanitizedContent = sanitizationService.SanitizeMarkdown(dto.Content);
         var theoryContent = new TheoryContent
         {
-            Content = sanitizedContent,
+            Content = dto.Content,
             Block = null!
         };
 
@@ -134,6 +132,9 @@ public class BlockService(
     {
         var block = await context.CourseBlocks
             .Include(b => b.Subchapter.Chapter.Course)
+            .Include(b => b.TheoryContent)
+            .Include(b => b.VideoContent)
+            .Include(b => b.Quiz)
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
@@ -143,6 +144,7 @@ public class BlockService(
         var subchapterId = block.SubchapterId;
 
         context.CourseBlocks.Remove(block);
+        RemoveBlockContent(context, block.TheoryContent, block.VideoContent, block.Quiz);
         await context.SaveChangesAsync();
 
         // Reindex remaining blocks: all blocks with orderIndex > deletedOrderIndex should decrease by 1
@@ -199,7 +201,7 @@ public class BlockService(
 
         if (block.TheoryContent != null)
         {
-            block.TheoryContent.Content = sanitizationService.SanitizeMarkdown(dto.Content);
+            block.TheoryContent.Content = dto.Content;
         }
 
         await context.SaveChangesAsync();
@@ -256,6 +258,9 @@ public class BlockService(
 
         VerifyBlockOwnership(block, instructorId);
 
+        var blockCount = await context.CourseBlocks.CountAsync(b => b.SubchapterId == block.SubchapterId);
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, blockCount);
+
         var oldOrderIndex = block.OrderIndex;
 
         if (oldOrderIndex == newOrderIndex)
@@ -269,21 +274,34 @@ public class BlockService(
         await context.SaveChangesAsync();
     }
 
+    // The block holds the foreign keys, so its content is not deleted with it; questions and answers
+    // cascade from the quiz. Attempts cannot exist, as only draft courses can be edited
+    internal static void RemoveBlockContent(
+        ApplicationDbContext context,
+        TheoryContent? theoryContent,
+        VideoContent? videoContent,
+        Quiz? quiz)
+    {
+        if (theoryContent != null) context.TheoryContents.Remove(theoryContent);
+        if (videoContent != null) context.VideoContents.Remove(videoContent);
+        if (quiz != null) context.Quizzes.Remove(quiz);
+    }
+
     // Shared by create and update so both persist every question field
-    private List<QuizQuestion> BuildQuizQuestions(IEnumerable<CreateQuizQuestionDto> questions, Quiz quiz) =>
+    private static List<QuizQuestion> BuildQuizQuestions(IEnumerable<CreateQuizQuestionDto> questions, Quiz quiz) =>
         questions.Select((q, qIndex) => new QuizQuestion
         {
-            Content = sanitizationService.SanitizeMarkdown(q.QuestionText),
+            Content = q.QuestionText,
             Type = Enum.Parse<QuestionType>(q.Type),
             Points = q.Points,
             Explanation = string.IsNullOrWhiteSpace(q.Explanation)
                 ? null
-                : sanitizationService.SanitizeMarkdown(q.Explanation),
+                : q.Explanation,
             OrderIndex = qIndex + 1,
             Quiz = quiz,
             Answers = q.Answers.Select((a, aIndex) => new QuizAnswer
             {
-                Text = sanitizationService.SanitizeText(a.AnswerText),
+                Text = a.AnswerText,
                 IsCorrect = a.IsCorrect,
                 OrderIndex = aIndex + 1,
                 Question = null!

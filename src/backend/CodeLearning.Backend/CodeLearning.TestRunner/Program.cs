@@ -39,15 +39,23 @@ static partial class Program
         "Socket messages received",
         "Signals delivered",
         "Page size (bytes)",
-        "Exit status:"
+        "Exit status:",
+        "Command terminated by signal"
     ];
 
     const string PeakMemoryMarker = "Maximum resident set size (kbytes):";
+
+    // Printed by /usr/bin/time when the command was killed by SIGKILL
+    const string KilledBySigKillMarker = "Command terminated by signal 9";
 
     static async Task<int> Main(string[] args)
     {
         var options = ParseArgs(args);
         if (string.IsNullOrEmpty(options.RunCommand)) return 1;
+
+        // The submission runs as the same user as this agent. Non-dumpable keeps it from reading this
+        // process's memory or file descriptors through /proc, where the test inputs are held
+        MakeNonDumpable();
 
         var result = await RunAllTestsAsync(options);
 
@@ -57,7 +65,7 @@ static partial class Program
         return 0;
     }
 
-    sealed record RunnerOptions(string RunCommand, string InputDir, string OutputFile, int TimeLimitMs);
+    sealed record RunnerOptions(string RunCommand, string InputDir, string OutputFile, int TimeLimitMs, long MemoryLimitKb);
 
     static RunnerOptions ParseArgs(string[] args)
     {
@@ -80,11 +88,17 @@ static partial class Program
             ? parsed
             : 2000;
 
+        // 0 means unknown: memory kills are then reported as runtime errors
+        var memoryLimitKb = values.TryGetValue("--memorylimitkb", out var memory) && long.TryParse(memory, out var parsedMemory)
+            ? parsedMemory
+            : 0;
+
         return new RunnerOptions(
             values.GetValueOrDefault("--run", ""),
             values.GetValueOrDefault("--input", "/app/io"),
             values.GetValueOrDefault("--out", "/app/result.json"),
-            timeLimitMs);
+            timeLimitMs,
+            memoryLimitKb);
     }
 
     static async Task<ExecutionResult> RunAllTestsAsync(RunnerOptions options)
@@ -103,18 +117,13 @@ static partial class Program
 
         try
         {
-            var inputFiles = Directory.GetFiles(inputDir, "input_*.txt")
-                .OrderBy(f => int.Parse(Path.GetFileNameWithoutExtension(f).Split('_')[1]))
-                .ToList();
+            var inputs = await LoadAndRemoveInputsAsync(inputDir);
 
             long maxMemoryUsed = 0;
 
-            foreach (var inputFile in inputFiles)
+            foreach (var (testIndex, inputContent) in inputs)
             {
-                var testIndex = int.Parse(Path.GetFileNameWithoutExtension(inputFile).Split('_')[1]);
-                var inputContent = await File.ReadAllTextAsync(inputFile);
-
-                var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs);
+                var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs, options.MemoryLimitKb);
                 testResult.TestIndex = testIndex;
                 KillLeftoverProcesses();
 
@@ -135,6 +144,36 @@ static partial class Program
         }
 
         return result;
+    }
+
+    // Every input is read before any submission process starts, then deleted, so the submission
+    // (which can read /app) only ever sees the input of the test it is running, on stdin
+    static async Task<List<(int TestIndex, string Content)>> LoadAndRemoveInputsAsync(string inputDir)
+    {
+        var inputs = new List<(int TestIndex, string Content)>();
+
+        foreach (var inputFile in Directory.GetFiles(inputDir, "input_*.txt"))
+        {
+            var testIndex = int.Parse(Path.GetFileNameWithoutExtension(inputFile).Split('_')[1]);
+            inputs.Add((testIndex, await File.ReadAllTextAsync(inputFile)));
+            File.Delete(inputFile);
+        }
+
+        return inputs.OrderBy(i => i.TestIndex).ToList();
+    }
+
+    [LibraryImport("libc", EntryPoint = "prctl", SetLastError = true)]
+    private static partial int Prctl(int option, ulong arg2, ulong arg3, ulong arg4, ulong arg5);
+
+    const int PR_SET_DUMPABLE = 4;
+
+    static void MakeNonDumpable()
+    {
+        if (OperatingSystem.IsLinux() && Prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        {
+            // Not fatal: grading still works, only this extra isolation is missing
+            Console.Error.WriteLine($"prctl(PR_SET_DUMPABLE) failed: {Marshal.GetLastPInvokeError()}");
+        }
     }
 
     [LibraryImport("libc", EntryPoint = "kill", SetLastError = true)]
@@ -187,7 +226,7 @@ static partial class Program
         return (peakMemoryKb, programErrors.ToString().Trim());
     }
 
-    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs)
+    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs, long memoryLimitKb)
     {
         var result = new TestCaseResult { ActualOutput = "" };
 
@@ -237,8 +276,19 @@ static partial class Program
             sw.Stop();
             result.ExecutionTimeMs = (int?)sw.ElapsedMilliseconds;
 
-            var (peakMemoryKb, programErrors) = ParseTimeOutput(errorBuilder.ToString());
+            var stderr = errorBuilder.ToString();
+            var (peakMemoryKb, programErrors) = ParseTimeOutput(stderr);
             result.MemoryUsedKB = (int)peakMemoryKb;
+
+            // The cgroup OOM killer ends the process with SIGKILL; near the limit, that is a memory verdict
+            if (process.ExitCode != 0
+                && stderr.Contains(KilledBySigKillMarker)
+                && memoryLimitKb > 0
+                && peakMemoryKb >= memoryLimitKb * 9 / 10)
+            {
+                result.Status = TestResultStatus.MemoryLimitExceeded;
+                return result;
+            }
 
             if (process.ExitCode != 0)
             {

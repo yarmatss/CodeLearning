@@ -240,7 +240,7 @@ function solution() {
     }
 
     [Fact]
-    public async Task SubmitCode_InvalidProblemId_ShouldReturn400()
+    public async Task SubmitCode_NonExistingProblem_ShouldReturn404()
     {
         // Arrange
         var studentToken = await GetStudentToken();
@@ -257,7 +257,7 @@ function solution() {
         var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
 
         // Assert
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
         var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(error);

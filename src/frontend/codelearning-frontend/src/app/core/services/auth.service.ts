@@ -1,7 +1,7 @@
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
+import { Observable, catchError, finalize, of, tap } from 'rxjs';
 import { User, RegisterRequest, LoginRequest, AuthResponse } from '../models/auth.model';
 
 @Injectable({
@@ -55,7 +55,10 @@ export class AuthService {
 
   logout(): Observable<{ message: string }> {
     return this.http.post<{ message: string }>(`${this.API_URL}/logout`, {}).pipe(
-      tap(() => {
+      // The local session ends even if the request fails (e.g. network error); the server
+      // clears the cookies and revokes the refresh token whenever the request reaches it
+      catchError(() => of({ message: 'Logged out' })),
+      finalize(() => {
         this.currentUser.set(null);
         this.clearRefreshTimer();
         this.router.navigate(['/login']);

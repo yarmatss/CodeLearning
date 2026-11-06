@@ -1,5 +1,7 @@
 using CodeLearning.Application.Exceptions;
+using CodeLearning.Infrastructure.Extensions;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 
@@ -91,6 +93,12 @@ internal sealed class GlobalExceptionHandler(
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1",
                 "Bad Request",
                 ex.Message
+            ),
+            DbUpdateException ex when ex.IsUniqueViolation() => (
+                StatusCodes.Status409Conflict,
+                "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.10",
+                "Conflict",
+                "The resource was modified concurrently or already exists. Please refresh and try again."
             ),
             _ => (
                 StatusCodes.Status500InternalServerError,

@@ -218,6 +218,7 @@ public class SubmissionGraderTests
     {
         // Arrange
         var testCases = CreateTestCases("3");
+        testCases[0].IsPublic = true;
         var sandbox = new ExecutionResult
         {
             Status = SubmissionStatus.Completed,
@@ -234,6 +235,54 @@ public class SubmissionGraderTests
         result.Status.Should().Be(SubmissionStatus.RuntimeError);
         result.RuntimeError.Should().Be("ZeroDivisionError");
         result.Score.Should().Be(0);
+    }
+
+    [Fact]
+    public void Grade_MemoryLimitExceededOnOneTest_ShouldReportMemoryLimitExceeded()
+    {
+        // Arrange
+        var testCases = CreateTestCases("1", "2");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.Completed,
+            TestResults =
+            [
+                Ran(0, "1"),
+                new TestCaseResult { TestIndex = 1, Status = TestResultStatus.MemoryLimitExceeded, MemoryUsedKB = 250_000 }
+            ]
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.MemoryLimitExceeded);
+        result.TestResults[1].Status.Should().Be(TestResultStatus.MemoryLimitExceeded);
+        result.Score.Should().Be(50);
+    }
+
+    [Fact]
+    public void Grade_RuntimeErrorOnHiddenTest_ShouldNotExposeItsErrorOutput()
+    {
+        // Arrange - a submission can print a hidden test's input to stderr and fail on purpose
+        var testCases = CreateTestCases("1", "2");
+        testCases[0].IsPublic = true;
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.Completed,
+            TestResults =
+            [
+                Ran(0, "1"),
+                new TestCaseResult { TestIndex = 1, Status = TestResultStatus.RuntimeError, ErrorMessage = "hidden input: 42 17" }
+            ]
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.RuntimeError);
+        result.RuntimeError.Should().BeNull();
     }
 
     [Fact]

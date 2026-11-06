@@ -1,11 +1,9 @@
 using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Subchapter;
-using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -21,7 +19,7 @@ public class SubchaptersController(
     {
         await createSubchapterValidator.ValidateAndThrowAsync(dto);
 
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var subchapter = await subchapterService.AddSubchapterAsync(chapterId, dto, userId);
         return CreatedAtAction(nameof(GetChapterSubchapters), new { chapterId }, subchapter);
     }
@@ -38,7 +36,7 @@ public class SubchaptersController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> UpdateSubchapterOrder(Guid subchapterId, [FromBody] int newOrderIndex)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var subchapter = await subchapterService.UpdateSubchapterOrderAsync(subchapterId, newOrderIndex, userId);
         return Ok(subchapter);
     }
@@ -47,15 +45,8 @@ public class SubchaptersController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> DeleteSubchapter(Guid subchapterId)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         await subchapterService.DeleteSubchapterAsync(subchapterId, userId);
         return Ok(new { message = "Subchapter deleted successfully" });
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
     }
 }

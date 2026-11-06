@@ -6,10 +6,12 @@ using CodeLearning.Infrastructure.Data;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Serilog;
+using System.Net;
 using System.Text;
 
 namespace CodeLearning.Api;
@@ -32,7 +34,8 @@ public static class DependencyInjection
             services.AddExceptionHandler<GlobalExceptionHandler>();
             services.AddProblemDetails();
 
-            services.AddSubmissionRateLimiting();
+            services.AddApiRateLimiting();
+            services.AddTrustedForwardedHeaders(configuration);
 
             var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
             services.AddCors(options =>
@@ -51,10 +54,38 @@ public static class DependencyInjection
 
             if (!environment.IsEnvironment("Testing"))
             {
-                dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo("/app/keys"));
+                var keysPath = configuration["DataProtection:KeysPath"] is { Length: > 0 } path ? path : "/app/keys";
+                dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
             }
 
             services.AddControllers();
+
+            return services;
+        }
+
+        // Behind a reverse proxy every request arrives from the proxy's address, so the per-IP auth rate
+        // limit would put all users in one bucket. X-Forwarded-For is honoured only from the proxies
+        // listed here (none by default), so clients cannot pick their own address to dodge the limit
+        public IServiceCollection AddTrustedForwardedHeaders(IConfiguration configuration)
+        {
+            var knownProxies = configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
+            var knownNetworks = configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [];
+
+            services.Configure<ForwardedHeadersOptions>(options =>
+            {
+                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                options.ForwardLimit = 1;
+
+                foreach (var proxy in knownProxies)
+                {
+                    options.KnownProxies.Add(IPAddress.Parse(proxy));
+                }
+
+                foreach (var network in knownNetworks)
+                {
+                    options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+                }
+            });
 
             return services;
         }
@@ -197,6 +228,9 @@ public static class DependencyInjection
     {
         public WebApplication UseApiPipeline()
         {
+            // First, so logging, HTTPS redirection and the rate limiter see the client's real address
+            app.UseForwardedHeaders();
+
             if (!app.Environment.IsEnvironment("Testing"))
             {
                 app.UseSerilogRequestLogging(options =>

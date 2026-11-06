@@ -1,3 +1,4 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.Services;
 using CodeLearning.Application.Settings;
@@ -6,6 +7,7 @@ using CodeLearning.Core.Enums;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -26,6 +28,7 @@ public class AuthController(
 
     [HttpPost("register")]
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
     [ProducesResponseType(typeof(LoginResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Register(RegisterDto registerDto)
     {
@@ -42,6 +45,7 @@ public class AuthController(
 
     [HttpPost("login")]
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
     [ProducesResponseType(typeof(LoginResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Login(LoginDto loginDto)
     {
@@ -56,17 +60,16 @@ public class AuthController(
         return Ok(MapToLoginResponse(response, accessTokenExpiresAt));
     }
 
+    // Anonymous so a client whose access token already expired can still end its session
     [HttpPost("logout")]
-    [Authorize]
+    [AllowAnonymous]
     public async Task<IActionResult> Logout()
     {
-        var userId = GetCurrentUserId();
-
-        var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
-
+        var userId = User.GetUserIdOrNull();
+        var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
         var accessTokenExpiration = TimeSpan.FromMinutes(jwtOptions.Value.AccessTokenExpirationMinutes);
 
-        await authService.LogoutAsync(userId, jti, accessTokenExpiration);
+        await authService.LogoutAsync(Request.Cookies[RefreshTokenCookie], userId, jti, accessTokenExpiration);
 
         ClearTokenCookies();
 
@@ -74,6 +77,8 @@ public class AuthController(
     }
 
     [HttpPost("refresh")]
+    // Not in the auth rate limit: every signed-in client calls this every few minutes, and a 64-byte
+    // random refresh token cannot be guessed, so throttling it would only lock out real users
     [AllowAnonymous]
     public async Task<IActionResult> RefreshToken()
     {
@@ -84,13 +89,8 @@ public class AuthController(
             return Unauthorized(new { message = "Refresh token not found" });
         }
 
-        var userId = GetUserIdFromExpiredToken();
-        if (userId == Guid.Empty)
-        {
-            return Unauthorized(new { message = "Invalid token" });
-        }
-
-        var response = await authService.RefreshTokenAsync(refreshToken, userId);
+        // The refresh token alone identifies the user; the (possibly expired) access token is not trusted
+        var response = await authService.RefreshTokenAsync(refreshToken);
         var user = MapToUser(response);
 
         var (accessToken, newRefreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
@@ -158,56 +158,24 @@ public class AuthController(
 
     private void SetTokenCookies(string accessToken, string refreshToken)
     {
-        var refreshTokenExpirationDays = jwtOptions.Value.RefreshTokenExpirationDays;
-
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = DateTimeOffset.UtcNow.AddDays(refreshTokenExpirationDays)
-        };
+        var cookieOptions = CreateCookieOptions();
+        cookieOptions.Expires = DateTimeOffset.UtcNow.AddDays(jwtOptions.Value.RefreshTokenExpirationDays);
 
         Response.Cookies.Append(AccessTokenCookie, accessToken, cookieOptions);
         Response.Cookies.Append(RefreshTokenCookie, refreshToken, cookieOptions);
     }
 
+    // Deleting with the same attributes the cookies were set with, so browsers match and drop them
     private void ClearTokenCookies()
     {
-        Response.Cookies.Delete(AccessTokenCookie);
-        Response.Cookies.Delete(RefreshTokenCookie);
+        Response.Cookies.Delete(AccessTokenCookie, CreateCookieOptions());
+        Response.Cookies.Delete(RefreshTokenCookie, CreateCookieOptions());
     }
 
-    private Guid GetCurrentUserId()
+    private static CookieOptions CreateCookieOptions() => new()
     {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(userIdClaim, out var userId) ? userId : Guid.Empty;
-    }
-
-    private Guid GetUserIdFromExpiredToken()
-    {
-        try
-        {
-            var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-            if (string.IsNullOrEmpty(token))
-            {
-                token = Request.Cookies["access_token"] ?? string.Empty;
-            }
-
-            if (string.IsNullOrEmpty(token))
-                return Guid.Empty;
-
-            var handler = new JwtSecurityTokenHandler();
-            var jwtToken = handler.ReadJwtToken(token);
-
-            var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier
-                || c.Type == JwtRegisteredClaimNames.Sub);
-
-            return Guid.TryParse(userIdClaim?.Value, out var userId) ? userId : Guid.Empty;
-        }
-        catch
-        {
-            return Guid.Empty;
-        }
-    }
+        HttpOnly = true,
+        Secure = true,
+        SameSite = SameSiteMode.Strict
+    };
 }

@@ -63,7 +63,6 @@ public static class DependencyInjection
             services.AddScoped<ISubmissionService, SubmissionService>();
             services.AddScoped<IQuizService, QuizService>();
             services.AddScoped<ILanguageService, LanguageService>();
-            services.AddSingleton<ISanitizationService, SanitizationService>();
 
             return services;
         }

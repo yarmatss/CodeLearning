@@ -125,15 +125,17 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
-    public async Task CreateTheoryBlock_WithXSSContent_ShouldSanitize()
+    // Markdown is stored as written (sanitized when rendered), so code samples with angle brackets survive
+    public async Task CreateTheoryBlock_WithCodeSample_ShouldStoreContentVerbatim()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
 
+        const string markdown = "Use `List<int> xs = new List<int>();`\n\n```cpp\n#include <iostream>\nif (a < b && b > c) {}\n```\n> quote";
         var dto = new CreateTheoryBlockDto
         {
-            Title = "XSS Test",
-            Content = "<script>alert('XSS')</script><p>Safe content</p>"
+            Title = "Code sample",
+            Content = markdown
         };
 
         // Act
@@ -142,7 +144,6 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        // Verify in database that <script> was removed
         var responseDto = await response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var blockId = responseDto!.Id;
 
@@ -153,8 +154,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
             .Include(b => b.TheoryContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
 
-        block!.TheoryContent!.Content.Should().NotContain("<script>");
-        block.TheoryContent.Content.Should().Contain("Safe content");
+        block!.TheoryContent!.Content.Should().Be(markdown);
     }
 
     #endregion
@@ -411,7 +411,8 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
-    public async Task CreateQuizBlock_WithXSSInQuestion_ShouldSanitize()
+    // Quiz text is plain text the frontend escapes on display, so it is stored without HTML encoding
+    public async Task CreateQuizBlock_WithAngleBrackets_ShouldStoreTextVerbatim()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
@@ -423,12 +424,12 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
             {
                 new()
                 {
-                    QuestionText = "<script>alert('XSS')</script>What is C#?",
+                    QuestionText = "Which is valid: List<int> or List(int)?",
                     Type = "SingleChoice",
                     Points = 10,
                     Answers = new List<CreateQuizAnswerDto>
                     {
-                        new() { AnswerText = "Answer <script>hack()</script>", IsCorrect = true },
+                        new() { AnswerText = "a < b && it's true", IsCorrect = true },
                         new() { AnswerText = "Wrong answer", IsCorrect = false } // Need 2+ answers
                     }
                 }
@@ -453,8 +454,8 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
                     .ThenInclude(qq => qq.Answers)
             .FirstOrDefaultAsync(b => b.Id == blockId);
 
-        block!.Quiz!.Questions.First().Content.Should().NotContain("<script>");
-        block.Quiz.Questions.First().Answers.First().Text.Should().NotContain("<script>");
+        block!.Quiz!.Questions.First().Content.Should().Be("Which is valid: List<int> or List(int)?");
+        block.Quiz.Questions.First().Answers.OrderBy(a => a.OrderIndex).First().Text.Should().Be("a < b && it's true");
     }
 
     #endregion
@@ -561,6 +562,60 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         var block = await dbContext.CourseBlocks.FindAsync(blockId);
         block.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeleteBlock_QuizBlock_ShouldAlsoDeleteQuizQuestionsAndAnswers()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateSimpleQuizBlockAsync();
+        var quizId = await GetQuizIdAsync(blockId);
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+
+        (await dbContext.Quizzes.AnyAsync(q => q.Id == quizId)).Should().BeFalse();
+        (await dbContext.QuizQuestions.AnyAsync(q => q.QuizId == quizId)).Should().BeFalse();
+        (await dbContext.QuizAnswers.AnyAsync(a => a.Question.QuizId == quizId)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeleteCourse_WithBlocks_ShouldDeleteBlockContent()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var theoryBlockId = await CreateTheoryBlockAsync();
+        var quizId = await GetQuizIdAsync(await CreateSimpleQuizBlockAsync());
+
+        Guid courseId;
+        Guid theoryContentId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+            var block = await dbContext.CourseBlocks.Include(b => b.Subchapter.Chapter).SingleAsync(b => b.Id == theoryBlockId);
+            courseId = block.Subchapter.Chapter.CourseId;
+            theoryContentId = block.TheoryContentId!.Value;
+        }
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/courses/{courseId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+            (await dbContext.TheoryContents.AnyAsync(t => t.Id == theoryContentId)).Should().BeFalse();
+            (await dbContext.Quizzes.AnyAsync(q => q.Id == quizId)).Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -895,7 +950,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
-    public async Task UpdateTheoryBlock_WithXSS_ShouldSanitize()
+    public async Task UpdateTheoryBlock_WithCodeSample_ShouldStoreContentVerbatim()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
@@ -905,7 +960,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var updateDto = new UpdateTheoryBlockDto
         {
             Title = "Updated",
-            Content = "<script>alert('XSS')</script><p>Safe content</p>"
+            Content = "```java\nMap<String, List<Integer>> m = new HashMap<>();\n```"
         };
 
         // Act
@@ -921,8 +976,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
             .Include(b => b.TheoryContent)
             .FirstOrDefaultAsync(b => b.Id == blockId);
 
-        block!.TheoryContent!.Content.Should().NotContain("<script>");
-        block.TheoryContent.Content.Should().Contain("Safe content");
+        block!.TheoryContent!.Content.Should().Be(updateDto.Content);
     }
 
     [Fact]
@@ -1086,6 +1140,25 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         block.Quiz.Questions.First().Explanation.Should().Contain("Answer 1 is correct");
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task UpdateBlockOrder_OutsideBlockRange_ShouldReturn400(int newOrderIndex)
+    {
+        // Arrange - two blocks, so only 1 and 2 are valid positions
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        await CreateTheoryBlockAsync();
+
+        // Act
+        var response = await _client.PatchAsJsonAsync(
+            $"/api/subchapters/{_subchapterId}/blocks/{blockId}/order",
+            new UpdateBlockOrderDto { NewOrderIndex = newOrderIndex });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     [Fact]
     public async Task UpdateBlockOrder_MoveDown_ShouldReorder()
     {
@@ -1235,6 +1308,14 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
         return response.GetAccessToken();
+    }
+
+    private async Task<Guid> GetQuizIdAsync(Guid blockId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+        var block = await dbContext.CourseBlocks.SingleAsync(b => b.Id == blockId);
+        return block.QuizId!.Value;
     }
 
     private async Task<Guid> CreateSubchapterAsync()

@@ -145,7 +145,7 @@ public class UniversalExecutor(
         sb.AppendLine();
         sb.AppendLine("# === Execution Phase ===");
 
-        sb.AppendLine($"/app/runner --run \"{runCommandForAgent}\" --input \"/app\" --out \"/app/result.json\" --timelimit {language.TimeoutSeconds * 1000}");
+        sb.AppendLine($"/app/runner --run \"{runCommandForAgent}\" --input \"/app\" --out \"/app/result.json\" --timelimit {language.TimeoutSeconds * 1000} --memorylimitkb {language.MemoryLimitMB * 1024}");
 
         sb.AppendLine("if [ -f /app/result.json ]; then");
         sb.AppendLine("  cat /app/result.json");

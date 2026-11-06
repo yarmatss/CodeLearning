@@ -27,6 +27,7 @@ public class DockerRunner : IDockerRunner
     private readonly string _sandboxTmpfsPath;
     private readonly int _maxContainerRuntimeSeconds;
     private readonly string? _containerRuntime;
+    private readonly bool _pullMissingImages;
 
     public DockerRunner(IConfiguration configuration, ILogger<DockerRunner> logger)
     {
@@ -40,6 +41,9 @@ public class DockerRunner : IDockerRunner
         _maxContainerRuntimeSeconds = configuration.GetValue("ExecutionSettings:MaxContainerRuntimeSeconds", 300);
         // e.g. "runsc" for gVisor; null keeps the daemon's default runtime
         _containerRuntime = configuration["ExecutionSettings:ContainerRuntime"] is { Length: > 0 } runtime ? runtime : null;
+        // Executor images are built locally (compose profile "executors"); pulling would fetch whatever
+        // a registry serves under that name, so it is opt-in
+        _pullMissingImages = configuration.GetValue("ExecutionSettings:PullMissingImages", false);
     }
 
     public async Task<ExecutionResult> ExecuteAsync(
@@ -306,6 +310,12 @@ public class DockerRunner : IDockerRunner
         if (await ImageExistsAsync(imageName, cancellationToken))
         {
             return;
+        }
+
+        if (!_pullMissingImages)
+        {
+            throw new InvalidOperationException(
+                $"Executor image {imageName} is not available. Build it with: docker compose --profile executors build");
         }
 
         _logger.LogInformation("Pulling image {Image}", imageName);

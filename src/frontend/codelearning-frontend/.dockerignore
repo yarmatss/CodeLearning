@@ -1,0 +1,6 @@
+# Installed and generated on the host; the image runs its own "npm ci" for Linux.
+# Copying a host node_modules (e.g. Windows binaries) over it breaks the container
+node_modules
+dist
+.angular
+obj

@@ -19,7 +19,7 @@ public class SubmissionService(ApplicationDbContext context, IPublishEndpoint pu
             .Include(p => p.StarterCodes)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
-            ?? throw new BusinessRuleException($"Problem {dto.ProblemId} not found");
+            ?? throw new NotFoundException($"Problem {dto.ProblemId} not found");
 
         if (!await CanSubmitAsync(problem, studentId))
         {

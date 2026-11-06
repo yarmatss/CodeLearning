@@ -1,5 +1,6 @@
 using CodeLearning.Application.Settings;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.Security.Claims;
@@ -10,13 +11,19 @@ namespace CodeLearning.Api.Extensions;
 public static class RateLimitingExtensions
 {
     public const string SubmissionsPolicy = "submissions";
+    public const string AuthPolicy = "auth";
 
     extension(IServiceCollection services)
     {
-        public IServiceCollection AddSubmissionRateLimiting()
+        public IServiceCollection AddApiRateLimiting()
         {
             services.AddOptions<SubmissionRateLimitSettings>()
                 .BindConfiguration(SubmissionRateLimitSettings.SectionName)
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            services.AddOptions<AuthRateLimitSettings>()
+                .BindConfiguration(AuthRateLimitSettings.SectionName)
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
@@ -40,9 +47,31 @@ public static class RateLimitingExtensions
                         });
                 });
 
+                // Partition per client IP: these requests are anonymous, and this slows down password
+                // guessing and credential stuffing across many accounts
+                options.AddPolicy(AuthPolicy, httpContext =>
+                {
+                    var settings = httpContext.RequestServices
+                        .GetRequiredService<IOptions<AuthRateLimitSettings>>().Value;
+
+                    return RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = settings.PermitLimit,
+                            Window = TimeSpan.FromSeconds(settings.WindowSeconds),
+                            QueueLimit = 0
+                        });
+                });
+
                 options.OnRejected = async (context, _) =>
                 {
                     var httpContext = context.HttpContext;
+
+                    var policy = httpContext.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
+                    var detail = policy == AuthPolicy
+                        ? "Too many attempts. Please wait a moment and try again."
+                        : "Too many submissions. Please wait a moment before submitting again.";
 
                     if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
                     {
@@ -60,7 +89,7 @@ public static class RateLimitingExtensions
                             Type = "https://datatracker.ietf.org/doc/html/rfc6585#section-4",
                             Title = "Too Many Requests",
                             Status = StatusCodes.Status429TooManyRequests,
-                            Detail = "Too many submissions. Please wait a moment before submitting again.",
+                            Detail = detail,
                             Instance = httpContext.Request.Path
                         }
                     });

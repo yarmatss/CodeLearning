@@ -1,11 +1,9 @@
 using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Course;
-using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -22,7 +20,7 @@ public class CoursesController(
     {
         await createCourseValidator.ValidateAndThrowAsync(dto);
 
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var course = await courseService.CreateCourseAsync(dto, userId);
 
         return CreatedAtAction(nameof(GetCourseById), new { id = course.Id }, course);
@@ -48,7 +46,7 @@ public class CoursesController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> GetMyCourses()
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var courses = await courseService.GetInstructorCoursesAsync(userId);
         return Ok(courses);
     }
@@ -67,7 +65,7 @@ public class CoursesController(
     {
         await updateCourseValidator.ValidateAndThrowAsync(dto);
 
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var course = await courseService.UpdateCourseAsync(id, dto, userId);
         return Ok(course);
     }
@@ -76,7 +74,7 @@ public class CoursesController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> PublishCourse(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var course = await courseService.PublishCourseAsync(id, userId);
         return Ok(new { message = "Course published successfully", course });
     }
@@ -85,15 +83,8 @@ public class CoursesController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> DeleteCourse(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         await courseService.DeleteCourseAsync(id, userId);
         return Ok(new { message = "Course deleted successfully" });
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
     }
 }

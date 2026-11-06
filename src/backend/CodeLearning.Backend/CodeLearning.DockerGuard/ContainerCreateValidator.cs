@@ -102,7 +102,7 @@ public static class ContainerCreateValidator
         }
 
         return request.HostConfig is { } host
-            ? CheckIsolation(host, options) ?? CheckLimits(host)
+            ? CheckIsolation(host, options) ?? CheckLimits(host, options)
             : "HostConfig is required";
     }
 
@@ -155,7 +155,7 @@ public static class ContainerCreateValidator
     }
 
     // Resource limits, so one submission cannot exhaust the host
-    private static string? CheckLimits(CreateHostConfig host)
+    private static string? CheckLimits(CreateHostConfig host, GuardOptions options)
     {
         if (host.Memory is not > 0 || host.PidsLimit is not > 0)
         {
@@ -172,7 +172,62 @@ public static class ContainerCreateValidator
             return "NanoCpus limit is required";
         }
 
+        if (host.Memory > options.MaxMemoryBytes
+            || host.NanoCpus > options.MaxNanoCpus
+            || host.PidsLimit > options.MaxPidsLimit)
+        {
+            return "Memory, NanoCpus or PidsLimit exceeds the allowed maximum";
+        }
+
+        if (host.Ulimits?.Any(u => u.Soft < 0 || u.Hard < 0 || u.Soft > options.MaxUlimitValue || u.Hard > options.MaxUlimitValue) == true)
+        {
+            return "Ulimits exceed the allowed maximum";
+        }
+
+        return CheckTmpfs(host.Tmpfs, options);
+    }
+
+    // Each tmpfs is RAM-backed, so it needs an explicit size within the cap
+    private static string? CheckTmpfs(Dictionary<string, string>? tmpfs, GuardOptions options)
+    {
+        foreach (var mountOptions in tmpfs?.Values ?? Enumerable.Empty<string>())
+        {
+            var size = mountOptions.Split(',', StringSplitOptions.TrimEntries)
+                .FirstOrDefault(o => o.StartsWith("size=", StringComparison.Ordinal))?["size=".Length..];
+
+            if (size is null || !TryParseSizeMb(size, out var sizeMb) || sizeMb > options.MaxTmpfsSizeMb)
+            {
+                return $"Tmpfs needs a size of at most {options.MaxTmpfsSizeMb}m";
+            }
+        }
+
         return null;
+    }
+
+    private static bool TryParseSizeMb(string size, out double sizeMb)
+    {
+        sizeMb = 0;
+        if (size.Length == 0)
+        {
+            return false;
+        }
+
+        var (number, divisor) = char.ToLowerInvariant(size[^1]) switch
+        {
+            'k' => (size[..^1], 1024.0),
+            'm' => (size[..^1], 1.0),
+            'g' => (size[..^1], 1.0 / 1024),
+            _ when char.IsDigit(size[^1]) => (size, 1024.0 * 1024),
+            _ => (string.Empty, 0.0)
+        };
+
+        if (!long.TryParse(number, out var value) || value <= 0)
+        {
+            return false;
+        }
+
+        sizeMb = value / divisor;
+        return true;
     }
 
     private static bool IsNonRootUser(string? user)

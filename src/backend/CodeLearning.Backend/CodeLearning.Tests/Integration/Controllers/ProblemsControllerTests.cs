@@ -1,8 +1,13 @@
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Core.Constants;
+using CodeLearning.Core.Entities;
+using CodeLearning.Core.Enums;
+using CodeLearning.Infrastructure.Data;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -732,10 +737,71 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         var nonExistingId = Guid.NewGuid();
 
         // Act
-        var response = await _client.DeleteAsync($"/api/testcases/{nonExistingId}");
+        var response = await _client.DeleteAsync($"/api/problems/testcases/{nonExistingId}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteTestCase_WithSubmissionResults_ShouldReturn200AndKeepSubmission()
+    {
+        // Arrange: the author tests their own problem, which records a result for every test case
+        var problem = await CreateProblemAsTeacher("Problem with graded submission");
+        var hiddenTestCase = problem.TestCases.First(tc => !tc.IsPublic);
+
+        Guid submissionId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var storedProblem = await dbContext.Problems.Include(p => p.TestCases).SingleAsync(p => p.Id == problem.Id);
+
+            var submission = new Submission
+            {
+                ProblemId = storedProblem.Id,
+                Problem = storedProblem,
+                StudentId = storedProblem.AuthorId,
+                Student = await dbContext.Users.SingleAsync(u => u.Id == storedProblem.AuthorId),
+                LanguageId = _pythonLanguageId,
+                Language = await dbContext.Languages.SingleAsync(l => l.Id == _pythonLanguageId),
+                Code = "print(1)",
+                Status = SubmissionStatus.Completed,
+                Score = 50
+            };
+
+            foreach (var testCase in storedProblem.TestCases)
+            {
+                submission.TestResults.Add(new SubmissionTestResult
+                {
+                    Submission = submission,
+                    TestCaseId = testCase.Id,
+                    TestCase = testCase,
+                    Status = TestResultStatus.Passed
+                });
+            }
+
+            dbContext.Submissions.Add(submission);
+            await dbContext.SaveChangesAsync();
+            submissionId = submission.Id;
+        }
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/problems/testcases/{hiddenTestCase.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var submission = await dbContext.Submissions
+                .Include(s => s.TestResults)
+                .SingleAsync(s => s.Id == submissionId);
+
+            submission.Score.Should().Be(50);
+            submission.TestResults.Should().ContainSingle()
+                .Which.TestCaseId.Should().NotBe(hiddenTestCase.Id);
+        }
     }
 
     #endregion

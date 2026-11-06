@@ -79,6 +79,9 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
             throw new BusinessRuleException("Cannot modify a published course");
         }
 
+        var subchapterCount = await context.Subchapters.CountAsync(s => s.ChapterId == subchapter.ChapterId);
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, subchapterCount);
+
         await ReorderSubchapters(subchapter, newOrderIndex);
         await context.SaveChangesAsync();
 
