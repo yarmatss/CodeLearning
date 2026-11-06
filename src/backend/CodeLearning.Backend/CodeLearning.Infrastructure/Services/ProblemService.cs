@@ -9,9 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class ProblemService(
-    ApplicationDbContext context,
-    ISanitizationService sanitizationService) : IProblemService
+public class ProblemService(ApplicationDbContext context) : IProblemService
 {
     private const string ModifyOwnProblemsOnlyMessage = "You can only modify your own problems";
 
@@ -20,12 +18,10 @@ public class ProblemService(
         var author = await context.Users.FindAsync(authorId)
             ?? throw new NotFoundException("Author not found");
 
-        var sanitizedDescription = sanitizationService.SanitizeMarkdown(dto.Description);
-
         var problem = new Problem
         {
             Title = dto.Title,
-            Description = sanitizedDescription,
+            Description = dto.Description,
             Difficulty = Enum.Parse<DifficultyLevel>(dto.Difficulty),
             AuthorId = authorId,
             Author = author
@@ -176,7 +172,7 @@ public class ProblemService(
         }
 
         problem.Title = dto.Title;
-        problem.Description = sanitizationService.SanitizeMarkdown(dto.Description);
+        problem.Description = dto.Description;
         problem.Difficulty = Enum.Parse<DifficultyLevel>(dto.Difficulty);
 
         // Mark problem as modified to ensure EF Core tracks changes
@@ -428,7 +424,7 @@ public class ProblemService(
 
         if (existingStarterCode != null)
         {
-            throw new BusinessRuleException($"Starter code for {language.Name} already exists. Update it instead.");
+            throw new BusinessRuleException($"Starter code for {language.Name} already exists. Delete it first to replace it.");
         }
 
         var starterCode = new StarterCode

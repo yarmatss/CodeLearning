@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
     networks:
@@ -22,9 +20,9 @@ services:
   redis:
     image: redis:8-alpine
     container_name: codelearning-redis
-    command: redis-server --appendonly yes
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     networks:
@@ -43,9 +41,6 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     networks:
@@ -74,8 +69,9 @@ services:
     # Docker Desktop's socket belongs to group 0, Docker Engine's to the "docker" group (stat -c %g /var/run/docker.sock)
     group_add:
       - "${DOCKER_SOCKET_GID:-0}"
+    # Only the Runner can reach the guard
     networks:
-      - codelearning-network
+      - sandbox-control
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -97,9 +93,9 @@ services:
     volumes:
       - dataprotection-keys:/app/keys
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
-      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
       RabbitMqTransport__Host: rabbitmq
       RabbitMqTransport__User: ${RABBITMQ_USER}
       RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
@@ -135,7 +131,7 @@ services:
     volumes:
       - runner-workspace:/tmp/submissions
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       RabbitMqTransport__Host: rabbitmq
       RabbitMqTransport__User: ${RABBITMQ_USER}
@@ -143,7 +139,6 @@ services:
       ExecutionSettings__DockerHost: "tcp://docker-guard:2375"
       ExecutionSettings__WorkspaceBasePath: "/tmp/submissions"
       ExecutionSettings__MaxConcurrentExecutions: "5"
-      Serilog__MinimumLevel__Default: "Debug"
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,6 +148,7 @@ services:
         condition: service_started
     networks:
       - codelearning-network
+      - sandbox-control
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true  # Prevent privilege escalation
@@ -221,6 +217,10 @@ services:
 networks:
   codelearning-network:
     driver: bridge
+  # Runner <-> DockerGuard only; internal, so it has no route outside the host either
+  sandbox-control:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-data:

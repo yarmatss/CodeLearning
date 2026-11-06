@@ -52,29 +52,62 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, IConnectionMultiplex
         return Convert.ToBase64String(randomNumber);
     }
 
-    public async Task<bool> ValidateRefreshTokenAsync(string refreshToken, Guid userId)
-    {
-        if (string.IsNullOrEmpty(refreshToken))
-            return false;
-
-        // Check if refresh token exists in Redis and belongs to the user
-        var key = $"refresh_token:{userId}";
-        var storedToken = await _db.StringGetAsync(key);
-
-        return !storedToken.IsNullOrEmpty && storedToken == refreshToken;
-    }
-
+    // Keys hold a hash of the token, so reading Redis does not reveal usable refresh tokens:
+    //   refresh:{hash}        -> user id   (looks up the owner from the cookie alone)
+    //   refresh_user:{userId} -> hash      (finds the user's current token to replace or revoke it)
     public async Task StoreRefreshTokenAsync(string refreshToken, Guid userId, TimeSpan expiration)
     {
-        var key = $"refresh_token:{userId}";
-        await _db.StringSetAsync(key, refreshToken, expiration);
+        var hash = HashToken(refreshToken);
+        var previousHash = await _db.StringGetSetAsync(UserKey(userId), hash);
+        await _db.KeyExpireAsync(UserKey(userId), expiration);
+
+        if (!previousHash.IsNullOrEmpty && previousHash != hash)
+        {
+            await _db.KeyDeleteAsync(TokenKey(previousHash.ToString()));
+        }
+
+        await _db.StringSetAsync(TokenKey(hash), userId.ToString(), expiration);
+    }
+
+    public async Task<Guid?> ConsumeRefreshTokenAsync(string refreshToken)
+    {
+        if (string.IsNullOrEmpty(refreshToken))
+        {
+            return null;
+        }
+
+        var hash = HashToken(refreshToken);
+
+        // GETDEL is atomic, so two requests racing with the same token cannot both succeed
+        var owner = await _db.StringGetDeleteAsync(TokenKey(hash));
+        if (owner.IsNullOrEmpty || !Guid.TryParse(owner.ToString(), out var userId))
+        {
+            return null;
+        }
+
+        if (await _db.StringGetAsync(UserKey(userId)) == hash)
+        {
+            await _db.KeyDeleteAsync(UserKey(userId));
+        }
+
+        return userId;
     }
 
     public async Task RevokeRefreshTokenAsync(Guid userId)
     {
-        var key = $"refresh_token:{userId}";
-        await _db.KeyDeleteAsync(key);
+        var hash = await _db.StringGetDeleteAsync(UserKey(userId));
+        if (!hash.IsNullOrEmpty)
+        {
+            await _db.KeyDeleteAsync(TokenKey(hash.ToString()));
+        }
     }
+
+    private static string TokenKey(string hash) => $"refresh:{hash}";
+
+    private static string UserKey(Guid userId) => $"refresh_user:{userId}";
+
+    private static string HashToken(string token) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     public async Task RevokeAccessTokenAsync(string jti, TimeSpan expiration)
     {

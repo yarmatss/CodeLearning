@@ -9,9 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
 
-public class CourseService(
-    ApplicationDbContext context,
-    ISanitizationService sanitizationService) : ICourseService
+public class CourseService(ApplicationDbContext context) : ICourseService
 {
     public async Task<CourseResponseDto> CreateCourseAsync(CreateCourseDto dto, Guid instructorId)
     {
@@ -21,7 +19,7 @@ public class CourseService(
         var course = new Course
         {
             Title = dto.Title,
-            Description = sanitizationService.SanitizeMarkdown(dto.Description),
+            Description = dto.Description,
             Status = CourseStatus.Draft,
             InstructorId = instructorId,
             Instructor = instructor
@@ -123,7 +121,7 @@ public class CourseService(
         }
 
         course.Title = dto.Title;
-        course.Description = sanitizationService.SanitizeMarkdown(dto.Description);
+        course.Description = dto.Description;
 
         await context.SaveChangesAsync();
 
@@ -169,6 +167,21 @@ public class CourseService(
         if (course.Status == CourseStatus.Published)
         {
             throw new BusinessRuleException("Cannot delete a published course");
+        }
+
+        // Blocks reference their content rows, which the course cascade does not reach. The blocks are
+        // removed explicitly as well, so EF deletes each block before the content it references
+        var blocks = await context.CourseBlocks
+            .Include(b => b.TheoryContent)
+            .Include(b => b.VideoContent)
+            .Include(b => b.Quiz)
+            .Where(b => b.Subchapter.Chapter.CourseId == courseId)
+            .ToListAsync();
+
+        context.CourseBlocks.RemoveRange(blocks);
+        foreach (var block in blocks)
+        {
+            BlockService.RemoveBlockContent(context, block.TheoryContent, block.VideoContent, block.Quiz);
         }
 
         context.Courses.Remove(course);

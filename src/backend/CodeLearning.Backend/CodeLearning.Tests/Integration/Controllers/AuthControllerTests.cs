@@ -1,9 +1,7 @@
 using CodeLearning.Application.DTOs.Auth;
-using CodeLearning.Application.Services;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -248,13 +246,36 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     #region Logout Tests
 
     [Fact]
-    public async Task Logout_WithoutAuthentication_ShouldReturn401()
+    public async Task Logout_WithoutAnyTokens_ShouldReturn200AndClearCookies()
     {
         // Act
         var response = await _client.PostAsync("/api/auth/logout", null);
 
         // Assert
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("expires=", response.GetSetCookie("refresh_token").Attributes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Logout_WithOnlyRefreshCookie_ShouldRevokeRefreshToken()
+    {
+        // Arrange - the access token has expired, so only the refresh cookie identifies the session
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "logout-expired@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+        var refreshToken = loginResponse.GetSetCookie("refresh_token").Value;
+
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
+        logoutRequest.Headers.Add("Cookie", $"refresh_token={Uri.EscapeDataString(refreshToken)}");
+
+        // Act
+        var logoutResponse = await client.SendAsync(logoutRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, logoutResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await SendRefreshAsync(client, refreshToken)).StatusCode);
     }
 
     [Fact]
@@ -306,11 +327,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         var meResponse = await client.GetAsync("/api/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, meResponse.StatusCode);
 
-        // Checked directly: a refresh request would already be rejected for its revoked access token
-        var loginBody = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
-        using var scope = _factory.Services.CreateScope();
-        var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
-        Assert.False(await tokenService.ValidateRefreshTokenAsync(refreshToken, Guid.Parse(loginBody!.UserId)));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await SendRefreshAsync(client, refreshToken)).StatusCode);
     }
 
     #endregion
@@ -372,5 +389,132 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Refresh_WithoutAccessToken_ShouldSucceed()
+    {
+        // Arrange - the browser may no longer send an access token at all
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "refresh-no-access@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+
+        // Act
+        var response = await SendRefreshAsync(client, loginResponse.GetSetCookie("refresh_token").Value);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Refresh_ReusingRotatedRefreshToken_ShouldReturn401()
+    {
+        // Arrange
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "refresh-replay@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+        var refreshToken = loginResponse.GetSetCookie("refresh_token").Value;
+
+        Assert.Equal(HttpStatusCode.OK, (await SendRefreshAsync(client, refreshToken)).StatusCode);
+
+        // Act
+        var replay = await SendRefreshAsync(client, refreshToken);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+    }
+
+    [Fact]
+    public async Task Refresh_ShouldIssueTokensForRefreshTokenOwner_IgnoringAccessTokenIdentity()
+    {
+        // Arrange - another user's access token must not decide whose tokens are issued
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var ownerEmail = "refresh-owner@test.com";
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: ownerEmail));
+        var ownerLogin = await client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(ownerEmail));
+
+        var otherRegister = await client.PostAsJsonAsync("/api/auth/register",
+            TestDataBuilder.CreateValidRegisterDto(email: "refresh-other@test.com"));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", otherRegister.GetAccessToken());
+        request.Headers.Add("Cookie", $"refresh_token={Uri.EscapeDataString(ownerLogin.GetSetCookie("refresh_token").Value)}");
+
+        // Act
+        var response = await client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        meRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", response.GetAccessToken());
+        var me = await (await client.SendAsync(meRequest)).Content.ReadFromJsonAsync<CurrentUserDto>();
+        Assert.Equal(ownerEmail, me!.Email);
+    }
+
     #endregion
+
+    #region Rate Limiting Tests
+
+    [Fact]
+    public async Task Login_ExceedingAuthRateLimit_ShouldReturn429()
+    {
+        // Arrange - a host with a low limit, so the test does not depend on the configured value
+        await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("AuthRateLimit:PermitLimit", "3"));
+        var client = limitedFactory.CreateClient();
+        var loginDto = TestDataBuilder.CreateValidLoginDto("rate-limit@test.com");
+
+        for (var i = 0; i < 3; i++)
+        {
+            await client.PostAsJsonAsync("/api/auth/login", loginDto);
+        }
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/login", loginDto);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Contains("Too many attempts", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Refresh_ShouldNotCountTowardsAuthRateLimit()
+    {
+        // Arrange - every signed-in client refreshes periodically, so a shared limit must not block it
+        await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("AuthRateLimit:PermitLimit", "2"));
+        var client = limitedFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var email = "refresh-unthrottled@test.com";
+        var registerResponse = await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+        var refreshToken = registerResponse.GetSetCookie("refresh_token").Value;
+
+        // Act - each refresh rotates the token, so the next request sends the new one
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 5; i++)
+        {
+            var response = await SendRefreshAsync(client, refreshToken);
+            statuses.Add(response.StatusCode);
+            if (response.IsSuccessStatusCode)
+            {
+                refreshToken = response.GetSetCookie("refresh_token").Value;
+            }
+        }
+
+        // Assert
+        Assert.All(statuses, status => Assert.Equal(HttpStatusCode.OK, status));
+    }
+
+    #endregion
+
+    private static async Task<HttpResponseMessage> SendRefreshAsync(HttpClient client, string refreshToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Add("Cookie", $"refresh_token={Uri.EscapeDataString(refreshToken)}");
+        return await client.SendAsync(request);
+    }
 }

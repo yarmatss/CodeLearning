@@ -1,11 +1,9 @@
 using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Chapter;
-using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -21,7 +19,7 @@ public class ChaptersController(
     {
         await createChapterValidator.ValidateAndThrowAsync(dto);
 
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var chapter = await chapterService.AddChapterAsync(courseId, dto, userId);
         return CreatedAtAction(nameof(GetCourseChapters), new { courseId }, chapter);
     }
@@ -38,7 +36,7 @@ public class ChaptersController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> UpdateChapterOrder(Guid chapterId, [FromBody] int newOrderIndex)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         var chapter = await chapterService.UpdateChapterOrderAsync(chapterId, newOrderIndex, userId);
         return Ok(chapter);
     }
@@ -47,15 +45,8 @@ public class ChaptersController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> DeleteChapter(Guid chapterId)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.GetRequiredUserId();
         await chapterService.DeleteChapterAsync(chapterId, userId);
         return Ok(new { message = "Chapter deleted successfully" });
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
     }
 }

@@ -1,4 +1,7 @@
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 
 import { ProblemEditor } from './problem-editor';
 
@@ -8,7 +11,8 @@ describe('ProblemEditor', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [ProblemEditor]
+      imports: [ProblemEditor],
+      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()]
     })
     .compileComponents();
 

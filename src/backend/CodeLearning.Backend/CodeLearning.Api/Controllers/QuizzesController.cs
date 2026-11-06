@@ -1,9 +1,9 @@
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Quiz;
-using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
+using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -12,6 +12,7 @@ namespace CodeLearning.Api.Controllers;
 [Authorize(Roles = "Student")]
 public class QuizzesController(
     IQuizService quizService,
+    IValidator<SubmitQuizDto> submitQuizValidator,
     ILogger<QuizzesController> logger) : ControllerBase
 {
     [HttpPost("{quizId}/submit")]
@@ -21,7 +22,9 @@ public class QuizzesController(
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> SubmitQuiz(Guid quizId, [FromBody] SubmitQuizDto dto)
     {
-        var studentId = GetCurrentUserId();
+        await submitQuizValidator.ValidateAndThrowAsync(dto);
+
+        var studentId = User.GetRequiredUserId();
 
         var result = await quizService.SubmitQuizAsync(quizId, dto, studentId);
 
@@ -42,7 +45,7 @@ public class QuizzesController(
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetQuizAttempt(Guid quizId)
     {
-        var studentId = GetCurrentUserId();
+        var studentId = User.GetRequiredUserId();
 
         var attempt = await quizService.GetQuizAttemptAsync(quizId, studentId);
 
@@ -52,12 +55,5 @@ public class QuizzesController(
         }
 
         return Ok(attempt);
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
     }
 }

@@ -62,36 +62,34 @@ public class AuthService(
         return MapToAuthResponse(user, "Login successful");
     }
 
-    public async Task LogoutAsync(Guid userId, string jti, TimeSpan accessTokenExpiration)
+    public async Task LogoutAsync(string? refreshToken, Guid? userId, string? jti, TimeSpan accessTokenExpiration)
     {
-        // Revoke refresh token
-        await tokenService.RevokeRefreshTokenAsync(userId);
+        // The refresh cookie identifies the session even after the access token has expired
+        var refreshTokenOwner = string.IsNullOrEmpty(refreshToken)
+            ? null
+            : await tokenService.ConsumeRefreshTokenAsync(refreshToken);
 
-        // Blacklist current access token
+        var owner = userId ?? refreshTokenOwner;
+        if (owner.HasValue)
+        {
+            await tokenService.RevokeRefreshTokenAsync(owner.Value);
+        }
+
         if (!string.IsNullOrEmpty(jti))
         {
             await tokenService.RevokeAccessTokenAsync(jti, accessTokenExpiration);
         }
     }
 
-    public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken, Guid userId)
+    public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken)
     {
-        var isValid = await tokenService.ValidateRefreshTokenAsync(refreshToken, userId);
-        if (!isValid)
-        {
-            throw new AuthenticationFailedException("Invalid or expired refresh token");
-        }
+        // Consuming the token also revokes it; the controller stores the replacement
+        var userId = await tokenService.ConsumeRefreshTokenAsync(refreshToken)
+            ?? throw new AuthenticationFailedException("Invalid or expired refresh token");
 
-        var user = await userManager.FindByIdAsync(userId.ToString());
-        if (user == null)
-        {
-            throw new AuthenticationFailedException("User not found");
-        }
+        var user = await userManager.FindByIdAsync(userId.ToString())
+            ?? throw new AuthenticationFailedException("User not found");
 
-        // Revoke old refresh token
-        await tokenService.RevokeRefreshTokenAsync(userId);
-
-        // Generate new tokens (will be stored by controller)
         return MapToAuthResponse(user, "Token refreshed successfully");
     }
 

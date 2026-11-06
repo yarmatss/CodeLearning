@@ -13,9 +13,10 @@ public class SubmissionTestResultConfiguration : IEntityTypeConfiguration<Submis
             .HasForeignKey(r => r.SubmissionId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // Deleting a test case drops its per-test results; the submission keeps its score and status
         builder.HasOne(r => r.TestCase)
             .WithMany(t => t.TestResults)
             .HasForeignKey(r => r.TestCaseId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

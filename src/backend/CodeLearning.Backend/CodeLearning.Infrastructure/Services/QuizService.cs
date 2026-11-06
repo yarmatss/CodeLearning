@@ -206,10 +206,11 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 throw new BusinessRuleException($"Invalid answer IDs for question {question.Id}");
             }
 
-            if (question.Type == QuestionType.SingleChoice && answer.SelectedAnswerIds.Count > 1)
+            if (question.Type is QuestionType.SingleChoice or QuestionType.TrueFalse
+                && answer.SelectedAnswerIds.Count > 1)
             {
                 throw new BusinessRuleException(
-                    $"Question {question.Id} is single choice but multiple answers were selected");
+                    $"Question {question.Id} accepts a single choice but multiple answers were selected");
             }
         }
     }

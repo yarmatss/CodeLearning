@@ -18,35 +18,23 @@ public class StuckSubmissionSweeperTests(DatabaseFixture fixture) : IClassFixtur
     private static readonly Guid PythonLanguageId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     [Fact]
-    public async Task Sweep_ShouldFailOnlySubmissionsWithoutProgressPastTheTimeout()
+    public async Task Sweep_ShouldFailOnlySubmissionsWithoutProgressPastTheirTimeout()
     {
         // Arrange
-        var stalePending = await SeedSubmissionAsync(SubmissionStatus.Pending, TimeSpan.FromHours(1));
         var staleRunning = await SeedSubmissionAsync(SubmissionStatus.Running, TimeSpan.FromHours(1));
-        var recentPending = await SeedSubmissionAsync(SubmissionStatus.Pending, TimeSpan.FromMinutes(5));
-        var staleCompleted = await SeedSubmissionAsync(SubmissionStatus.Completed, TimeSpan.FromHours(1));
+        var abandonedPending = await SeedSubmissionAsync(SubmissionStatus.Pending, TimeSpan.FromHours(25));
+        var recentRunning = await SeedSubmissionAsync(SubmissionStatus.Running, TimeSpan.FromMinutes(5));
+        // Still queued (backlog or Runner outage): its message will be processed, so it must survive
+        var queuedPending = await SeedSubmissionAsync(SubmissionStatus.Pending, TimeSpan.FromHours(1));
+        var staleCompleted = await SeedSubmissionAsync(SubmissionStatus.Completed, TimeSpan.FromHours(30));
 
-        await using var provider = new ServiceCollection()
-            .AddScoped(_ => fixture.CreateDbContext())
-            .BuildServiceProvider(true);
-
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ExecutionSettings:StuckSubmissionTimeoutMinutes"] = "30"
-            })
-            .Build();
-
-        var sweeper = new StuckSubmissionSweeper(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            configuration,
-            NullLogger<StuckSubmissionSweeper>.Instance);
+        var sweeper = CreateSweeper();
 
         // Act
         await sweeper.SweepAsync(CancellationToken.None);
 
         // Assert
-        foreach (var id in new[] { stalePending, staleRunning })
+        foreach (var id in new[] { staleRunning, abandonedPending })
         {
             var submission = await GetSubmissionAsync(id);
             submission.Status.Should().Be(SubmissionStatus.RuntimeError);
@@ -54,8 +42,51 @@ public class StuckSubmissionSweeperTests(DatabaseFixture fixture) : IClassFixtur
             submission.CompletedAt.Should().NotBeNull();
         }
 
-        (await GetSubmissionAsync(recentPending)).Status.Should().Be(SubmissionStatus.Pending);
+        (await GetSubmissionAsync(recentRunning)).Status.Should().Be(SubmissionStatus.Running);
+        (await GetSubmissionAsync(queuedPending)).Status.Should().Be(SubmissionStatus.Pending);
         (await GetSubmissionAsync(staleCompleted)).Status.Should().Be(SubmissionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task SwitchingToRunning_ShouldRefreshUpdatedAt_SoTheRunningTimeoutStartsThen()
+    {
+        // Arrange: created (and last updated) an hour ago, e.g. waiting behind a backlog
+        var submissionId = await SeedSubmissionAsync(SubmissionStatus.Pending, TimeSpan.FromHours(1));
+
+        // Act: the consumer picks it up through a normal SaveChanges
+        await using (var dbContext = fixture.CreateDbContext())
+        {
+            var submission = await dbContext.Submissions.SingleAsync(s => s.Id == submissionId);
+            submission.Status = SubmissionStatus.Running;
+            await dbContext.SaveChangesAsync();
+        }
+
+        await CreateSweeper().SweepAsync(CancellationToken.None);
+
+        // Assert
+        var stored = await GetSubmissionAsync(submissionId);
+        stored.UpdatedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1));
+        stored.Status.Should().Be(SubmissionStatus.Running);
+    }
+
+    private StuckSubmissionSweeper CreateSweeper()
+    {
+        var provider = new ServiceCollection()
+            .AddScoped(_ => fixture.CreateDbContext())
+            .BuildServiceProvider(true);
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ExecutionSettings:StuckSubmissionTimeoutMinutes"] = "30",
+                ["ExecutionSettings:PendingSubmissionTimeoutHours"] = "24"
+            })
+            .Build();
+
+        return new StuckSubmissionSweeper(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            configuration,
+            NullLogger<StuckSubmissionSweeper>.Instance);
     }
 
     private async Task<Guid> SeedSubmissionAsync(SubmissionStatus status, TimeSpan age)

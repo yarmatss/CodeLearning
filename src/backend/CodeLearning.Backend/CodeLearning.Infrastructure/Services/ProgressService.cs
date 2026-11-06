@@ -4,6 +4,7 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Infrastructure.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -61,7 +62,18 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
         }
 
         enrollment.LastActivityAt = DateTimeOffset.UtcNow;
-        await context.SaveChangesAsync();
+
+        try
+        {
+            await context.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (ex.IsUniqueViolation())
+        {
+            // A concurrent request (e.g. a double click) completed the block first: answer as for a
+            // repeated completion, which now finds the stored progress
+            context.ChangeTracker.Clear();
+            return await CompleteBlockAsync(blockId, studentId);
+        }
 
         var nextBlockId = await GetNextBlockAsync(courseId, studentId);
         enrollment.CurrentBlockId = nextBlockId;

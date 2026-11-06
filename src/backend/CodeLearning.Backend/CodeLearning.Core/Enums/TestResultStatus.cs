@@ -5,5 +5,6 @@ public enum TestResultStatus
     Passed = 1,
     Failed = 2,
     RuntimeError = 3,
-    TimeLimitExceeded = 4
+    TimeLimitExceeded = 4,
+    MemoryLimitExceeded = 5
 }

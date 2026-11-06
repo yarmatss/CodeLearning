@@ -1,11 +1,9 @@
 using CodeLearning.Api.Extensions;
 using CodeLearning.Application.DTOs.Block;
-using CodeLearning.Application.Exceptions;
 using CodeLearning.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -20,7 +18,8 @@ public class BlocksController(
     IValidator<CreateProblemBlockDto> problemBlockValidator,
     IValidator<UpdateTheoryBlockDto> updateTheoryBlockValidator,
     IValidator<UpdateVideoBlockDto> updateVideoBlockValidator,
-    IValidator<UpdateQuizBlockDto> updateQuizBlockValidator) : ControllerBase
+    IValidator<UpdateQuizBlockDto> updateQuizBlockValidator,
+    IValidator<UpdateBlockOrderDto> updateBlockOrderValidator) : ControllerBase
 {
     #region Create Methods
 
@@ -29,7 +28,7 @@ public class BlocksController(
     {
         await createTheoryBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         var blockId = await blockService.CreateTheoryBlockAsync(subchapterId, dto, instructorId);
 
         return CreatedAtAction(nameof(GetBlockById), new { blockId },
@@ -45,7 +44,7 @@ public class BlocksController(
     {
         await createVideoBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         var blockId = await blockService.CreateVideoBlockAsync(subchapterId, dto, instructorId);
 
         return CreatedAtAction(nameof(GetBlockById), new { blockId },
@@ -61,7 +60,7 @@ public class BlocksController(
     {
         await createQuizBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         var blockId = await blockService.CreateQuizBlockAsync(subchapterId, dto, instructorId);
 
         return CreatedAtAction(nameof(GetBlockById), new { blockId },
@@ -77,7 +76,7 @@ public class BlocksController(
     {
         await problemBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         var blockId = await blockService.CreateProblemBlockAsync(subchapterId, dto, instructorId);
 
         return CreatedAtAction(nameof(GetBlockById), new { blockId },
@@ -97,7 +96,7 @@ public class BlocksController(
     {
         await updateTheoryBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         await blockService.UpdateTheoryBlockAsync(blockId, dto, instructorId);
 
         return Ok(new { message = "Theory block updated successfully" });
@@ -108,7 +107,7 @@ public class BlocksController(
     {
         await updateVideoBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         await blockService.UpdateVideoBlockAsync(blockId, dto, instructorId);
 
         return Ok(new { message = "Video block updated successfully" });
@@ -119,7 +118,7 @@ public class BlocksController(
     {
         await updateQuizBlockValidator.ValidateAndThrowAsync(dto);
 
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         await blockService.UpdateQuizBlockAsync(blockId, dto, instructorId);
 
         return Ok(new { message = "Quiz block updated successfully" });
@@ -128,7 +127,9 @@ public class BlocksController(
     [HttpPatch("{blockId}/order")]
     public async Task<IActionResult> UpdateBlockOrder(Guid blockId, [FromBody] UpdateBlockOrderDto dto)
     {
-        var instructorId = GetCurrentUserId();
+        await updateBlockOrderValidator.ValidateAndThrowAsync(dto);
+
+        var instructorId = User.GetRequiredUserId();
         await blockService.UpdateBlockOrderAsync(blockId, dto.NewOrderIndex, instructorId);
 
         return Ok(new { message = "Block order updated successfully" });
@@ -141,7 +142,7 @@ public class BlocksController(
     [HttpDelete("{blockId}")]
     public async Task<IActionResult> DeleteBlock(Guid blockId)
     {
-        var instructorId = GetCurrentUserId();
+        var instructorId = User.GetRequiredUserId();
         await blockService.DeleteBlockAsync(blockId, instructorId);
 
         return Ok(new { message = "Block deleted successfully" });
@@ -164,11 +165,4 @@ public class BlocksController(
     }
 
     #endregion
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
-    }
 }

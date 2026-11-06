@@ -5,16 +5,22 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Runner.Workers;
 
-// Safety net for submissions no message will ever finish: one published before the queue existed,
-// or one whose message the broker dropped after repeated Runner crashes
+// Safety net for submissions no message will ever finish, e.g. one whose message the broker dropped
+// after repeated Runner crashes
 public class StuckSubmissionSweeper(
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
     ILogger<StuckSubmissionSweeper> logger) : BackgroundService
 {
-    // About twice the worst case of a real execution: every attempt hitting the container cap, plus the retry delays
-    private readonly TimeSpan _timeout = TimeSpan.FromMinutes(
+    // Running: about twice the worst case of a real execution (every attempt hitting the container cap,
+    // plus the retry delays), measured from the switch to Running, which refreshes UpdatedAt
+    private readonly TimeSpan _runningTimeout = TimeSpan.FromMinutes(
         configuration.GetValue("ExecutionSettings:StuckSubmissionTimeoutMinutes", 30));
+
+    // Pending: the message is still in the durable queue, so a backlog or a Runner outage must not
+    // fail it; only a submission waiting far longer than any realistic backlog is given up on
+    private readonly TimeSpan _pendingTimeout = TimeSpan.FromHours(
+        configuration.GetValue("ExecutionSettings:PendingSubmissionTimeoutHours", 24));
 
     private readonly TimeSpan _interval = TimeSpan.FromSeconds(
         configuration.GetValue("ExecutionSettings:StuckSubmissionSweepSeconds", 300));
@@ -23,7 +29,9 @@ public class StuckSubmissionSweeper(
     {
         using var timer = new PeriodicTimer(_interval);
 
-        do
+        // The first sweep waits one interval, so a Runner coming back up first resumes the queued
+        // and redelivered messages instead of racing them
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
@@ -34,7 +42,6 @@ public class StuckSubmissionSweeper(
                 logger.LogError(ex, "Failed to sweep stuck submissions");
             }
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     public async Task<int> SweepAsync(CancellationToken cancellationToken)
@@ -42,10 +49,13 @@ public class StuckSubmissionSweeper(
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // UpdatedAt is refreshed when a submission switches to Running, so it measures time since the last progress
-        var cutoff = DateTimeOffset.UtcNow - _timeout;
+        var now = DateTimeOffset.UtcNow;
+        var runningCutoff = now - _runningTimeout;
+        var pendingCutoff = now - _pendingTimeout;
+
         var stuck = await dbContext.Submissions
-            .Where(s => (s.Status == SubmissionStatus.Pending || s.Status == SubmissionStatus.Running) && s.UpdatedAt < cutoff)
+            .Where(s => (s.Status == SubmissionStatus.Running && s.UpdatedAt < runningCutoff)
+                     || (s.Status == SubmissionStatus.Pending && s.UpdatedAt < pendingCutoff))
             .ToListAsync(cancellationToken);
 
         if (stuck.Count == 0)
@@ -57,12 +67,12 @@ public class StuckSubmissionSweeper(
         {
             submission.Status = SubmissionStatus.RuntimeError;
             submission.RuntimeError = SubmissionCreatedConsumer.InternalErrorMessage;
-            submission.CompletedAt = DateTimeOffset.UtcNow;
+            submission.CompletedAt = now;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        logger.LogWarning("Failed {Count} submissions that had no result after {Timeout}", stuck.Count, _timeout);
+        logger.LogWarning("Failed {Count} submissions that made no progress in time", stuck.Count);
         return stuck.Count;
     }
 }

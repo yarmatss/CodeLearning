@@ -1,82 +1,72 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { teacherGuard } from './core/guards/role.guard';
-import { LoginComponent } from './features/auth/login/login.component';
-import { RegisterComponent } from './features/auth/register/register.component';
-import { DashboardComponent } from './features/dashboard/dashboard.component';
-import { CourseListComponent } from './features/courses/course-list/course-list.component';
-import { CourseDetailComponent } from './features/courses/course-detail/course-detail.component';
-import { CreateCourseComponent } from './features/courses/create-course/create-course.component';
-import { CourseEditorComponent } from './features/courses/course-editor/course-editor.component';
-import { ChapterEditor } from './features/courses/chapter-editor/chapter-editor';
-import { SubchapterEditor } from './features/courses/subchapter-editor/subchapter-editor';
-import { ProblemList } from './features/problems/problem-list/problem-list';
-import { ProblemEditor } from './features/problems/problem-editor/problem-editor';
-import { ProblemDetail } from './features/problems/problem-detail/problem-detail';
-import { Learn } from './features/learn/learn';
+
+// Lazy routes: each page, and heavy dependencies such as the Monaco editor on the learn page,
+// load only when visited instead of in the initial bundle
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
-  { path: 'login', component: LoginComponent },
-  { path: 'register', component: RegisterComponent },
+  { path: 'login', loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent) },
+  { path: 'register', loadComponent: () => import('./features/auth/register/register.component').then(m => m.RegisterComponent) },
   { 
     path: 'dashboard', 
-    component: DashboardComponent,
+    loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent),
     canActivate: [authGuard]
   },
   {
     path: 'courses',
-    component: CourseListComponent,
+    loadComponent: () => import('./features/courses/course-list/course-list.component').then(m => m.CourseListComponent),
     canActivate: [authGuard]
   },
   {
     path: 'courses/create',
-    component: CreateCourseComponent,
+    loadComponent: () => import('./features/courses/create-course/create-course.component').then(m => m.CreateCourseComponent),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'courses/:id',
-    component: CourseDetailComponent,
+    loadComponent: () => import('./features/courses/course-detail/course-detail.component').then(m => m.CourseDetailComponent),
     canActivate: [authGuard]
   },
   {
     path: 'learn/:courseId',
-    component: Learn,
+    loadComponent: () => import('./features/learn/learn').then(m => m.Learn),
     canActivate: [authGuard]
   },
   {
     path: 'courses/:id/edit',
-    component: CourseEditorComponent,
+    loadComponent: () => import('./features/courses/course-editor/course-editor.component').then(m => m.CourseEditorComponent),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'courses/:courseId/chapters/:chapterId/edit',
-    component: ChapterEditor,
+    loadComponent: () => import('./features/courses/chapter-editor/chapter-editor').then(m => m.ChapterEditor),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'courses/:courseId/chapters/:chapterId/subchapters/:subchapterId/edit',
-    component: SubchapterEditor,
+    loadComponent: () => import('./features/courses/subchapter-editor/subchapter-editor').then(m => m.SubchapterEditor),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'problems',
-    component: ProblemList,
+    loadComponent: () => import('./features/problems/problem-list/problem-list').then(m => m.ProblemList),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'problems/create',
-    component: ProblemEditor,
+    loadComponent: () => import('./features/problems/problem-editor/problem-editor').then(m => m.ProblemEditor),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'problems/:id',
-    component: ProblemDetail,
+    loadComponent: () => import('./features/problems/problem-detail/problem-detail').then(m => m.ProblemDetail),
     canActivate: [authGuard, teacherGuard]
   },
   {
     path: 'problems/:id/edit',
-    component: ProblemEditor,
+    loadComponent: () => import('./features/problems/problem-editor/problem-editor').then(m => m.ProblemEditor),
     canActivate: [authGuard, teacherGuard]
   }
 ];

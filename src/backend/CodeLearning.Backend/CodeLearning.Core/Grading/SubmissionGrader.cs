@@ -50,9 +50,13 @@ public static class SubmissionGrader
 
         var status = GetOverallStatus(gradedResults);
 
+        // The submission-level error is shown to the student, so it is taken only from public tests:
+        // a hidden test's error output could reveal its input
         var runtimeError = status == SubmissionStatus.RuntimeError
             ? sandboxResult.RuntimeError
-              ?? gradedResults.FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage
+              ?? gradedResults
+                  .Where((_, index) => testCases[index].IsPublic)
+                  .FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage
             : null;
 
         return new ExecutionResult
@@ -78,6 +82,9 @@ public static class SubmissionGrader
         if (gradedResults.Any(tr => tr.Status == TestResultStatus.TimeLimitExceeded))
             return SubmissionStatus.TimeLimitExceeded;
 
+        if (gradedResults.Any(tr => tr.Status == TestResultStatus.MemoryLimitExceeded))
+            return SubmissionStatus.MemoryLimitExceeded;
+
         if (gradedResults.Any(tr => tr.Status == TestResultStatus.RuntimeError))
             return SubmissionStatus.RuntimeError;
 
@@ -101,6 +108,7 @@ public static class SubmissionGrader
         {
             TestResultStatus.RuntimeError => TestResultStatus.RuntimeError,
             TestResultStatus.TimeLimitExceeded => TestResultStatus.TimeLimitExceeded,
+            TestResultStatus.MemoryLimitExceeded => TestResultStatus.MemoryLimitExceeded,
             _ => OutputsMatch(reported.ActualOutput, testCase.ExpectedOutput)
                 ? TestResultStatus.Passed
                 : TestResultStatus.Failed

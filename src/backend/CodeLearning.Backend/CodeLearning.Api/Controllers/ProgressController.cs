@@ -1,8 +1,7 @@
-using CodeLearning.Application.Exceptions;
+using CodeLearning.Api.Extensions;
 using CodeLearning.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace CodeLearning.Api.Controllers;
 
@@ -14,7 +13,7 @@ public class ProgressController(IProgressService progressService) : ControllerBa
     [HttpPost("blocks/{blockId}/complete")]
     public async Task<IActionResult> CompleteBlock(Guid blockId)
     {
-        var studentId = GetCurrentUserId();
+        var studentId = User.GetRequiredUserId();
         var result = await progressService.CompleteBlockAsync(blockId, studentId);
         return Ok(result);
     }
@@ -22,7 +21,7 @@ public class ProgressController(IProgressService progressService) : ControllerBa
     [HttpGet("courses/{courseId}")]
     public async Task<IActionResult> GetCourseProgress(Guid courseId)
     {
-        var studentId = GetCurrentUserId();
+        var studentId = User.GetRequiredUserId();
         var progress = await progressService.GetCourseProgressAsync(courseId, studentId);
         return Ok(progress);
     }
@@ -30,7 +29,7 @@ public class ProgressController(IProgressService progressService) : ControllerBa
     [HttpGet("courses/{courseId}/next-block")]
     public async Task<IActionResult> GetNextBlock(Guid courseId)
     {
-        var studentId = GetCurrentUserId();
+        var studentId = User.GetRequiredUserId();
         var nextBlockId = await progressService.GetNextBlockAsync(courseId, studentId);
 
         if (nextBlockId == null)
@@ -39,12 +38,5 @@ public class ProgressController(IProgressService progressService) : ControllerBa
         }
 
         return Ok(new { nextBlockId });
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? throw new AuthenticationFailedException("User not authenticated");
-        return Guid.Parse(userIdClaim);
     }
 }

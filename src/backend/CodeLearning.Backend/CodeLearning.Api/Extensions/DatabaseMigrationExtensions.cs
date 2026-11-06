@@ -34,9 +34,10 @@ public static class DatabaseMigrationExtensions
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "An error occurred while migrating the database");
-
-            // allow app to start even if migrations fail
+            // Fail fast: serving requests against an outdated schema produces confusing errors later.
+            // Logged once, by the caller's fatal-error handler in Program.cs
+            throw new InvalidOperationException(
+                "Applying database migrations failed; the API will not start against an outdated schema.", ex);
         }
     }
 }

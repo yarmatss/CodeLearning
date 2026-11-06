@@ -187,6 +187,38 @@ public class ContainerCreateValidatorTests
     }
 
     [Fact]
+    public void Validate_MemoryAboveCeiling_ShouldReject()
+    {
+        const long tooMuch = 8L * 1024 * 1024 * 1024;
+        Validate(Modify(body =>
+        {
+            body["HostConfig"]!["Memory"] = tooMuch;
+            body["HostConfig"]!["MemorySwap"] = tooMuch;
+        })).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_PidsLimitAboveCeiling_ShouldReject()
+    {
+        Validate(Modify(body => body["HostConfig"]!["PidsLimit"] = 100_000)).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_UlimitAboveCeiling_ShouldReject()
+    {
+        Validate(Modify(body => body["HostConfig"]!["Ulimits"]![0]!["Hard"] = long.MaxValue)).IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("size=4g,mode=1777")]
+    [InlineData("mode=1777")]
+    public void Validate_TmpfsWithoutBoundedSize_ShouldReject(string tmpfsOptions)
+    {
+        Validate(Modify(body => body["HostConfig"]!["Tmpfs"] = new JsonObject { ["/tmp"] = tmpfsOptions }))
+            .IsValid.Should().BeFalse();
+    }
+
+    [Fact]
     public void Validate_UnexpectedTopLevelField_ShouldReject()
     {
         Validate(Modify(body => body["Entrypoint"] = new JsonArray("/bin/sh"))).IsValid.Should().BeFalse();

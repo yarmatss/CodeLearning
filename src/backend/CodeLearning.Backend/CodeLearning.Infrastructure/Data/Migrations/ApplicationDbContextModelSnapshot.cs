@@ -47,7 +47,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -88,7 +88,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -121,7 +121,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -168,7 +168,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -215,7 +215,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -287,7 +287,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -397,7 +397,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -435,7 +435,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasDefaultValueSql("NOW()");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -469,7 +469,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -511,7 +511,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -544,7 +544,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -581,7 +581,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -622,7 +622,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -664,7 +664,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -700,7 +700,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -757,7 +757,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -805,7 +805,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -834,7 +834,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -933,7 +933,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -960,7 +960,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasDefaultValueSql("NOW()");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -1060,7 +1060,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .HasDefaultValueSql("NOW()");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
@@ -1658,7 +1658,7 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                     b.HasOne("CodeLearning.Core.Entities.TestCase", "TestCase")
                         .WithMany("TestResults")
                         .HasForeignKey("TestCaseId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Submission");

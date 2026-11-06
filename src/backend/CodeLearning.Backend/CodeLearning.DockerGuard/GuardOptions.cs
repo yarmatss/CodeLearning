@@ -16,4 +16,16 @@ public class GuardOptions
 
     // The only directory the Runner may upload the workspace to
     public string WorkspacePath { get; set; } = "/app";
+
+    // Ceilings for a sandbox's resources, above the largest per-language limit the Runner requests
+    public long MaxMemoryBytes { get; set; } = 1024L * 1024 * 1024;
+
+    public long MaxNanoCpus { get; set; } = 2_000_000_000;
+
+    public long MaxPidsLimit { get; set; } = 256;
+
+    public long MaxTmpfsSizeMb { get; set; } = 64;
+
+    // Upper bound for every ulimit value (e.g. fsize, nofile)
+    public long MaxUlimitValue { get; set; } = 64L * 1024 * 1024;
 }

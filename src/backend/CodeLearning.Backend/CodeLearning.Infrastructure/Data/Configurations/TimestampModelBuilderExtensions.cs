@@ -20,10 +20,12 @@ public static class TimestampModelBuilderExtensions
                 .HasDefaultValueSql("NOW()")
                 .ValueGeneratedOnAdd();
 
+            // OnAdd only: OnAddOrUpdate tells EF the database sets the value on update, so EF would ignore
+            // the stamp ApplicationDbContext.UpdateTimestamps writes and the column would never change
             builder.Entity(clrType)
                 .Property<DateTimeOffset>("UpdatedAt")
                 .HasDefaultValueSql("NOW()")
-                .ValueGeneratedOnAddOrUpdate();
+                .ValueGeneratedOnAdd();
         }
     }
 }

@@ -4,7 +4,19 @@ import { Router } from '@angular/router';
 import { catchError, throwError, switchMap, filter, take, BehaviorSubject, timeout, of } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 
+// Pages an anonymous visitor may stay on; on every other page a lost session sends them to sign in
+const PUBLIC_PATHS = ['/login', '/register'];
+
 let isRefreshing = false;
+
+function endSession(authService: AuthService, router: Router): void {
+  authService.currentUser.set(null);
+
+  // Read from location: during app start-up the router has not navigated yet
+  if (!PUBLIC_PATHS.includes(window.location.pathname)) {
+    router.navigate(['/login']);
+  }
+}
 let refreshTokenSubject: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
 
 export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
@@ -27,8 +39,7 @@ export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
         if (url.includes('/auth/refresh')) {
           isRefreshing = false;
           refreshTokenSubject.next(false);
-          authService.currentUser.set(null);
-          router.navigate(['/login']);
+          endSession(authService, router);
         }
         return throwError(() => error);
       }
@@ -48,8 +59,7 @@ export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
             console.error('Timeout waiting for token refresh');
             isRefreshing = false;
             refreshTokenSubject.next(false);
-            authService.currentUser.set(null);
-            router.navigate(['/login']);
+            endSession(authService, router);
             return throwError(() => timeoutError);
           })
         );
@@ -72,8 +82,7 @@ export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
           // Refresh failed - logout user
           isRefreshing = false;
           refreshTokenSubject.next(false);
-          authService.currentUser.set(null);
-          router.navigate(['/login']);
+          endSession(authService, router);
           return throwError(() => refreshError);
         })
       );
