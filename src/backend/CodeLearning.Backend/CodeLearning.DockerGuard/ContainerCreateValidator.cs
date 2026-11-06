@@ -96,6 +96,18 @@ public static class ContainerCreateValidator
 
     private static string? CheckRules(CreateContainerRequest request, GuardOptions options)
     {
+        if (CheckContainer(request, options) is { } error)
+        {
+            return error;
+        }
+
+        return request.HostConfig is { } host
+            ? CheckIsolation(host, options) ?? CheckLimits(host)
+            : "HostConfig is required";
+    }
+
+    private static string? CheckContainer(CreateContainerRequest request, GuardOptions options)
+    {
         if (request.Image is null || !options.AllowedImages.Contains(request.Image, StringComparer.Ordinal))
         {
             return "Image is not allowed";
@@ -112,12 +124,12 @@ public static class ContainerCreateValidator
             return $"Label '{GuardOptions.SandboxLabel}=true' is required";
         }
 
-        var host = request.HostConfig;
-        if (host is null)
-        {
-            return "HostConfig is required";
-        }
+        return null;
+    }
 
+    // What separates the container from the host: network, capabilities, security options, runtime
+    private static string? CheckIsolation(CreateHostConfig host, GuardOptions options)
+    {
         if (host.NetworkMode != "none")
         {
             return "NetworkMode must be 'none'";
@@ -134,6 +146,17 @@ public static class ContainerCreateValidator
             return "SecurityOpt must be exactly no-new-privileges";
         }
 
+        if (host.Runtime is not null && !options.AllowedRuntimes.Contains(host.Runtime, StringComparer.Ordinal))
+        {
+            return "Runtime is not allowed";
+        }
+
+        return null;
+    }
+
+    // Resource limits, so one submission cannot exhaust the host
+    private static string? CheckLimits(CreateHostConfig host)
+    {
         if (host.Memory is not > 0 || host.PidsLimit is not > 0)
         {
             return "Memory and PidsLimit limits are required";
@@ -147,11 +170,6 @@ public static class ContainerCreateValidator
         if (host.NanoCpus is not > 0)
         {
             return "NanoCpus limit is required";
-        }
-
-        if (host.Runtime is not null && !options.AllowedRuntimes.Contains(host.Runtime, StringComparer.Ordinal))
-        {
-            return "Runtime is not allowed";
         }
 
         return null;

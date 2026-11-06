@@ -14,7 +14,8 @@ public static class GuardHttp
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(
-            JsonSerializer.Serialize(new { message = $"DockerGuard: {reason}" }, ErrorJsonOptions));
+            JsonSerializer.Serialize(new { message = $"DockerGuard: {reason}" }, ErrorJsonOptions),
+            context.RequestAborted);
     }
 
     // Returns null when the body is larger than maxBytes, without buffering more than that
@@ -35,7 +36,7 @@ public static class GuardHttp
                 return null;
             }
 
-            buffer.Write(chunk, 0, read);
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
         }
 
         return buffer.ToArray();
