@@ -1,3 +1,4 @@
+using CodeLearning.Core.Messages;
 using MassTransit;
 
 namespace CodeLearning.Runner.Consumers;
@@ -14,7 +15,7 @@ public class SubmissionCreatedConsumerDefinition : ConsumerDefinition<Submission
         _maxDeliveryAttempts = configuration.GetValue("ExecutionSettings:MaxDeliveryAttempts", 3);
         _retryDelay = TimeSpan.FromSeconds(configuration.GetValue("ExecutionSettings:RetryDelaySeconds", 5));
 
-        EndpointName = "submissions";
+        EndpointName = MessageQueues.Submissions;
         ConcurrentMessageLimit = _maxConcurrentExecutions;
     }
 

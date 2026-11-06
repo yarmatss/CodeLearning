@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "CodeLearning.DockerGuard": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:63034;http://localhost:63035"
+    }
+  }
+}

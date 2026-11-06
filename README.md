@@ -83,7 +83,8 @@ graph TD
     
     Worker -->|Consume Submission| RabbitMQ
     Worker -->|Update Status/Results| DB
-    Worker -->|Manage Containers| Docker
+    Worker -->|Docker API| Guard[DockerGuard]
+    Guard -->|Allowed calls only| Docker
     
     Docker -->|Spins up| Container
     Container -.->|No Network Access| Container
@@ -119,7 +120,7 @@ sequenceDiagram
     participant MQ as RabbitMQ
     participant DB as PostgreSQL
     participant Worker as Runner Service (SubmissionCreatedConsumer)
-    participant Docker as Docker Daemon
+    participant Docker as Docker Daemon (via DockerGuard)
     participant Container as Isolated Container
 
     Note over API, MQ: 1. Submission Phase
@@ -170,7 +171,7 @@ sequenceDiagram
     end
 ```
 
-Submissions are delivered at least once. The API saves the submission and the `SubmissionCreated` message in one transaction (MassTransit EF Core outbox), and a background service forwards the message to RabbitMQ, so a broker outage cannot leave a submission without a message. The Runner consumes from the `submissions` quorum queue, at most `MaxConcurrentExecutions` at a time, and acknowledges a message only once its result is stored; if the runner crashes, RabbitMQ redelivers the message. A failed attempt is retried after `RetryDelaySeconds` (5 s), and after `MaxDeliveryAttempts` (3) the message moves to `submissions_error` and a fault consumer marks the submission as failed. A redelivered message whose submission already has a result is acknowledged without running it again. On a brand-new broker the Runner must have started once, since it declares the queue that receives the published messages.
+Submissions are delivered at least once. The API saves the submission and the `SubmissionCreated` message in one transaction (MassTransit EF Core outbox), and a background service forwards the message to RabbitMQ, so a broker outage cannot leave a submission without a message. The Runner consumes from the `submissions` quorum queue, at most `MaxConcurrentExecutions` at a time, and acknowledges a message only once its result is stored; if the runner crashes, RabbitMQ redelivers the message. A failed attempt is retried after `RetryDelaySeconds` (5 s), and after `MaxDeliveryAttempts` (3) the message moves to `submissions_error` and a fault consumer marks the submission as failed. A redelivered message whose submission already has a result is acknowledged without running it again. Both the API and the Runner declare the `submissions` queue and bind it to the message exchange at startup, so a submission made before the Runner has ever run waits in the queue instead of being dropped. As a last safety net, the Runner fails any submission that has made no progress for `StuckSubmissionTimeoutMinutes` (30), so nothing stays Pending or Running forever.
 
 ### Authentication Flow (Secure Cookie Strategy)
 The system uses a "Silent Refresh" strategy. Tokens are stored in HttpOnly cookies, making them inaccessible to JavaScript (XSS protection). The frontend uses an Interceptor to automatically refresh tokens when a 401 error occurs.
@@ -283,13 +284,38 @@ Run only integration tests:
 
 - **Runner Isolation:**
 
-    - **Socket Security:** Uses `docker-socket-proxy` to restrict access to the Docker API (allowing only container creation/deletion), preventing full host takeover.
+    - **Docker API guard:** the Runner never touches the Docker socket. It talks to `DockerGuard` (`CodeLearning.DockerGuard`), a small proxy that allows only the calls the Runner makes and refuses everything else (exec, build, volumes, networks, listing containers, ...):
 
-    - Containers run as a non-root user (`nobody`).
+        - **Container creation is checked field by field.** The image must be one of the executor images, the network must be `none`, the user must not be root, all capabilities must be dropped, only `no-new-privileges` is allowed as a security option, and memory, CPU and PID limits are required. Anything else that would change the container (privileged mode, host mounts, added capabilities, devices, host namespaces, ...) is refused. The guard forwards a body rebuilt from the checked fields, never the original, so case-variant or duplicate JSON fields cannot slip past it.
 
-    - Filesystem is read-only (except tmpfs).
+        - **Start, wait, kill, logs, upload and remove work only on sandbox containers.** The guard asks the daemon for the container's labels and requires `codelearning.sandbox=true`, so the database, API and other containers cannot be touched. Uploads are allowed only into `/app`.
+
+        - The guard itself runs with a read-only filesystem, no capabilities and `no-new-privileges`.
+
+    - Containers run as a non-root user (`nobody`), with every capability dropped and `no-new-privileges`.
+
+    - Memory (no swap), CPU, file size and open-file limits, and a 50 MB tmpfs at `/tmp`. The root filesystem stays writable because the workspace is uploaded into `/app` and Java compiles there, but writes land only in the container's own layer, which is deleted with the container.
 
     - PIDs limit prevents fork bombs.
 
     - Network is completely disabled for user code.
+
+    - **Limitation:** containers share the host kernel, so a kernel exploit in student code could still escape the container. gVisor closes that gap (see below).
+
+### Running with gVisor (optional, WSL2/Linux)
+
+[gVisor](https://gvisor.dev) runs each executor container on a user-space kernel, so student code never talks to the host kernel directly. Docker Desktop cannot load extra runtimes, so this needs Docker Engine installed directly in a WSL2 distro (or on a Linux host):
+
+1. In WSL, turn on systemd: add `[boot]` / `systemd=true` to `/etc/wsl.conf`, then run `wsl --shutdown` and reopen the distro.
+2. Turn off Docker Desktop's WSL integration for that distro, and install Docker Engine from Docker's apt repository.
+3. Install gVisor and register it with Docker:
+   ```bash
+   curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+   sudo apt-get update && sudo apt-get install -y runsc
+   sudo runsc install
+   sudo systemctl restart docker
+   docker run --rm --runtime=runsc hello-world
+   ```
+4. Set `ExecutionSettings__ContainerRuntime: runsc` on the `runner` service. `runsc` is already in DockerGuard's `AllowedRuntimes`.
 

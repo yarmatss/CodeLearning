@@ -1,8 +1,4 @@
-using CodeLearning.Infrastructure.Data;
-using CodeLearning.Runner.Consumers;
-using CodeLearning.Runner.Services;
-using MassTransit;
-using Microsoft.EntityFrameworkCore;
+using CodeLearning.Runner;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -22,22 +18,7 @@ try
         .Enrich.WithMachineName()
         .Enrich.WithThreadId());
 
-    builder.Services.AddDbContext<ApplicationDbContext>(options =>
-        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-    // Services
-    builder.Services.AddSingleton<IDockerRunner, DockerRunner>();
-    builder.Services.AddSingleton<ICodeExecutor, UniversalExecutor>();
-
-    builder.Services.AddOptions<RabbitMqTransportOptions>().BindConfiguration("RabbitMqTransport");
-
-    builder.Services.AddMassTransit(x =>
-    {
-        x.AddConsumer<SubmissionCreatedConsumer, SubmissionCreatedConsumerDefinition>();
-        x.AddConsumer<SubmissionFaultConsumer>();
-
-        x.UsingRabbitMq((context, cfg) => cfg.ConfigureEndpoints(context));
-    });
+    builder.Services.AddRunner(builder.Configuration);
 
     var host = builder.Build();
 

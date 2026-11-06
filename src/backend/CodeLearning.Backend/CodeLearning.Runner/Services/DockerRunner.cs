@@ -11,6 +11,8 @@ namespace CodeLearning.Runner.Services;
 
 public class DockerRunner : IDockerRunner
 {
+    public const string SandboxLabel = "codelearning.sandbox";
+
     private const long MaxFileSizeBytes = 64L * 1024 * 1024;
     // ~10KB stdout + ~10KB stderr per test, up to 6x after JSON escaping
     private const int MaxLogBytes = 16 * 1024 * 1024;
@@ -24,6 +26,7 @@ public class DockerRunner : IDockerRunner
     private readonly ILogger<DockerRunner> _logger;
     private readonly string _sandboxTmpfsPath;
     private readonly int _maxContainerRuntimeSeconds;
+    private readonly string? _containerRuntime;
 
     public DockerRunner(IConfiguration configuration, ILogger<DockerRunner> logger)
     {
@@ -35,6 +38,8 @@ public class DockerRunner : IDockerRunner
             ?? throw new InvalidOperationException("SandboxTmpfsPath not configured");
         // Hard cap so problems created before the test case limit cannot hold an execution slot indefinitely
         _maxContainerRuntimeSeconds = configuration.GetValue("ExecutionSettings:MaxContainerRuntimeSeconds", 300);
+        // e.g. "runsc" for gVisor; null keeps the daemon's default runtime
+        _containerRuntime = configuration["ExecutionSettings:ContainerRuntime"] is { Length: > 0 } runtime ? runtime : null;
     }
 
     public async Task<ExecutionResult> ExecuteAsync(
@@ -217,9 +222,15 @@ public class DockerRunner : IDockerRunner
             Cmd = runCommandParts,
             WorkingDir = "/app",
             User = "65534:65534", // nobody
-            Labels = new Dictionary<string, string> { { "submission-id", context.Submission.Id.ToString() } },
+            Labels = new Dictionary<string, string>
+            {
+                { "submission-id", context.Submission.Id.ToString() },
+                // DockerGuard only lets the Runner act on containers carrying this label
+                { SandboxLabel, "true" }
+            },
             HostConfig = new HostConfig
             {
+                Runtime = _containerRuntime,
                 NetworkMode = "none",
                 Memory = context.Language.MemoryLimitMB * 1024L * 1024,
                 NanoCPUs = (long)(context.Language.CpuLimit * 1_000_000_000),
