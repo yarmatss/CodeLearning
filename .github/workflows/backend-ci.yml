@@ -47,7 +47,8 @@ jobs:
           /o:"yarmatss" \
           /d:sonar.token="$SONAR_TOKEN" \
           /d:sonar.host.url="https://sonarcloud.io" \
-          /d:sonar.coverage.exclusions="**/*"
+          /d:sonar.coverage.exclusions="**/*" \
+          /d:sonar.cpd.exclusions="**/Migrations/**"
 
     - name: Restore dependencies
       run: dotnet restore CodeLearning.Backend.slnx
