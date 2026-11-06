@@ -25,7 +25,7 @@ RUN dotnet publish "CodeLearning.Runner.csproj" -c "$BUILD_CONFIGURATION" -o /ap
 
 FROM base AS final
 # NOTE: Running as non-root user for security
-# Docker Socket Proxy handles Docker API access, so root is not needed
+# DockerGuard handles Docker API access, so root is not needed
 USER $APP_UID
 WORKDIR /app
 COPY --from=publish /app/publish .

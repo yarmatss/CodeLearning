@@ -25,7 +25,7 @@ public class SubmissionFaultConsumer(
 
         logger.LogError("Giving up on submission {SubmissionId} after its execution attempts failed", submissionId);
 
-        submission.RuntimeError = "Execution failed due to an internal error. Please submit your solution again.";
+        submission.RuntimeError = SubmissionCreatedConsumer.InternalErrorMessage;
         await SubmissionCreatedConsumer.UpdateSubmissionStatusAsync(
             dbContext, submission, SubmissionStatus.RuntimeError, context.CancellationToken);
     }

@@ -57,55 +57,29 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Docker Socket Proxy - Secure access to Docker API
-  # This service filters Docker API calls and prevents dangerous operations
-  # like mounting host volumes or running privileged containers
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: codelearning-docker-proxy
-    environment:
-      # Allow read-only operations (defaults to 1, but explicit is better)
-      PING: 1            # Health checks
-      VERSION: 1         # Docker version info
-      EVENTS: 0          # Disabled - not needed by Runner (fixes HAProxy warning)
-      
-      # Allow only necessary Docker operations for Runner
-      CONTAINERS: 1      # Container creation/management
-      IMAGES: 1          # Image pull/inspect
-      POST: 1            # POST requests (create containers, copy files)
-      DELETE: 1          # DELETE requests (cleanup containers)
-      
-      # Block dangerous operations (security-critical)
-      AUTH: 0            # Block Docker auth API
-      SECRETS: 0         # Block Docker secrets
-      VOLUMES: 0         # Block volume creation (containers still work)
-      
-      # Block unnecessary operations
-      BUILD: 0           # Block image building
-      COMMIT: 0          # Block container commits
-      CONFIGS: 0         # Block Docker configs
-      NETWORKS: 0        # Block network creation
-      SERVICES: 0        # Block service creation
-      SWARM: 0           # Block swarm operations
-      SYSTEM: 0          # Block system operations
-      EXEC: 0            # Block exec into containers
-      INFO: 0            # Block system info (exposes host details)
-      
-      # Granular container permissions
-      # Runner needs these for container lifecycle management
-      ALLOW_START: 1     # Required: Runner uses /containers/{id}/start
-      ALLOW_STOP: 1      # Required: Runner uses /containers/{id}/kill for timeout
-      ALLOW_RESTARTS: 0  # Not needed: Runner doesn't use /restart
-      
-      # Logging (optional)
-      LOG_LEVEL: info    # Logging level: debug, info, notice, warning, err, crit
+  # DockerGuard - the only way the Runner reaches the Docker daemon
+  # Allows just the calls DockerRunner makes. Container creation is checked field by field
+  # (allowed executor images, network none, non-root user, every capability dropped, no host
+  # mounts, no privileged mode) and only the checked fields are forwarded. Start, kill, logs,
+  # archive and remove work only on containers labelled codelearning.sandbox=true
+  docker-guard:
+    image: ${DOCKER_REGISTRY-}codelearningdockerguard
+    container_name: codelearning-docker-guard
+    build:
+      context: .
+      dockerfile: CodeLearning.DockerGuard/Dockerfile
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only access to host Docker
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - codelearning-network
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     security_opt:
-      - no-new-privileges:true  # Prevent privilege escalation
+      - no-new-privileges:true
 
   api:
     image: ${DOCKER_REGISTRY-}codelearningapi
@@ -162,7 +136,7 @@ services:
       RabbitMqTransport__Host: rabbitmq
       RabbitMqTransport__User: ${RABBITMQ_USER}
       RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
-      ExecutionSettings__DockerHost: "tcp://docker-proxy:2375"
+      ExecutionSettings__DockerHost: "tcp://docker-guard:2375"
       ExecutionSettings__WorkspaceBasePath: "/tmp/submissions"
       ExecutionSettings__MaxConcurrentExecutions: "5"
       Serilog__MinimumLevel__Default: "Debug"
@@ -171,7 +145,7 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      docker-proxy:
+      docker-guard:
         condition: service_started
     networks:
       - codelearning-network

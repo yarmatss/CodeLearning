@@ -38,8 +38,6 @@ public class AuthService(
             throw new BusinessRuleException($"Registration failed: {errors}");
         }
 
-        await signInManager.SignInAsync(user, isPersistent: false);
-
         return MapToAuthResponse(user, "Registration successful");
     }
 
@@ -51,6 +49,7 @@ public class AuthService(
             throw new AuthenticationFailedException("Invalid email or password");
         }
 
+        // Only checks the password and counts failures for lockout; the session itself is the JWT issued by the controller
         var result = await signInManager.CheckPasswordSignInAsync(user, loginDto.Password, lockoutOnFailure: true);
 
         if (!result.Succeeded)
@@ -73,8 +72,6 @@ public class AuthService(
         {
             await tokenService.RevokeAccessTokenAsync(jti, accessTokenExpiration);
         }
-
-        await signInManager.SignOutAsync();
     }
 
     public async Task<AuthResponseDto> RefreshTokenAsync(string refreshToken, Guid userId)

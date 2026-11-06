@@ -68,6 +68,8 @@ public class SubmissionCreatedConsumer(
             submission.Id, result.Status, result.Score);
     }
 
+    internal const string InternalErrorMessage = "Execution failed due to an internal error. Please submit your solution again.";
+
     internal static bool IsAwaitingResult(Submission submission) =>
         submission.Status is SubmissionStatus.Pending or SubmissionStatus.Running;
 
