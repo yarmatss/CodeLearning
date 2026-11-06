@@ -1,7 +1,5 @@
 using CodeLearning.DockerGuard;
 using Microsoft.Extensions.Options;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using Yarp.ReverseProxy.Forwarder;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,23 +27,23 @@ app.Run(async context =>
     {
         case RouteKind.Deny:
             app.Logger.LogWarning("Refused {Method} {Path}: {Reason}", request.Method, request.Path, decision.Reason);
-            await DenyAsync(context, decision.Reason!);
+            await GuardHttp.DenyAsync(context, decision.Reason!);
             return;
 
         case RouteKind.SandboxContainer:
             if (!await docker.IsSandboxContainerAsync(decision.ContainerId!, context.RequestAborted))
             {
                 app.Logger.LogWarning("Refused {Method} {Path}: not a sandbox container", request.Method, request.Path);
-                await DenyAsync(context, "Only sandbox containers can be managed");
+                await GuardHttp.DenyAsync(context, "Only sandbox containers can be managed");
                 return;
             }
             break;
 
         case RouteKind.CreateContainer:
-            var body = await ReadBodyAsync(request, MaxCreateBodyBytes, context.RequestAborted);
+            var body = await GuardHttp.ReadBodyAsync(request, MaxCreateBodyBytes, context.RequestAborted);
             if (body is null)
             {
-                await DenyAsync(context, "Body is too large");
+                await GuardHttp.DenyAsync(context, "Body is too large");
                 return;
             }
 
@@ -53,7 +51,7 @@ app.Run(async context =>
             if (!result.IsValid)
             {
                 app.Logger.LogWarning("Refused container create: {Reason}", result.Error);
-                await DenyAsync(context, result.Error!);
+                await GuardHttp.DenyAsync(context, result.Error!);
                 return;
             }
 
@@ -74,42 +72,3 @@ app.Run(async context =>
 });
 
 app.Run();
-
-static async Task<byte[]?> ReadBodyAsync(HttpRequest request, int maxBytes, CancellationToken cancellationToken)
-{
-    if (request.ContentLength > maxBytes)
-    {
-        return null;
-    }
-
-    using var buffer = new MemoryStream();
-    var chunk = new byte[16 * 1024];
-    int read;
-    while ((read = await request.Body.ReadAsync(chunk, cancellationToken)) > 0)
-    {
-        if (buffer.Length + read > maxBytes)
-        {
-            return null;
-        }
-
-        buffer.Write(chunk, 0, read);
-    }
-
-    return buffer.ToArray();
-}
-
-static async Task DenyAsync(HttpContext context, string reason)
-{
-    // Docker's error shape, so Docker.DotNet surfaces the reason in its DockerApiException
-    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-    context.Response.ContentType = "application/json";
-    await context.Response.WriteAsync(JsonSerializer.Serialize(new { message = $"DockerGuard: {reason}" }, ErrorJson.Options));
-}
-
-static class ErrorJson
-{
-    // Keeps quotes in the reason readable instead of ' escapes
-    public static readonly JsonSerializerOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-}
-
-public partial class Program;

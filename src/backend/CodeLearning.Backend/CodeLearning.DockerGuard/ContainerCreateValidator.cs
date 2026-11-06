@@ -42,29 +42,12 @@ public static class ContainerCreateValidator
         try
         {
             using var document = JsonDocument.Parse(json.ToArray());
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
+            if (CheckStructure(document.RootElement) is { } structureError)
             {
-                return ValidationResult.Fail("Body must be a JSON object");
+                return ValidationResult.Fail(structureError);
             }
 
-            if (FindDuplicate(root) is { } duplicate)
-            {
-                return ValidationResult.Fail($"Duplicate field '{duplicate}'");
-            }
-
-            if (FindUnexpected(root, TopLevelFields) is { } unexpected)
-            {
-                return ValidationResult.Fail($"Field '{unexpected}' is not allowed");
-            }
-
-            if (TryGetProperty(root, "HostConfig", out var hostConfig) && hostConfig.ValueKind == JsonValueKind.Object
-                && FindUnexpected(hostConfig, HostConfigFields) is { } unexpectedHost)
-            {
-                return ValidationResult.Fail($"HostConfig field '{unexpectedHost}' is not allowed");
-            }
-
-            request = root.Deserialize<CreateContainerRequest>(ReadOptions);
+            request = document.RootElement.Deserialize<CreateContainerRequest>(ReadOptions);
         }
         catch (JsonException ex)
         {
@@ -82,6 +65,33 @@ public static class ContainerCreateValidator
         }
 
         return new ValidationResult(true, null, JsonSerializer.SerializeToUtf8Bytes(request, WriteOptions));
+    }
+
+    // Shape checks on the raw JSON, before it is bound to the model and its unchecked fields are lost
+    private static string? CheckStructure(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return "Body must be a JSON object";
+        }
+
+        if (FindDuplicate(root) is { } duplicate)
+        {
+            return $"Duplicate field '{duplicate}'";
+        }
+
+        if (FindUnexpected(root, TopLevelFields) is { } unexpected)
+        {
+            return $"Field '{unexpected}' is not allowed";
+        }
+
+        if (FindProperty(root, "HostConfig") is { ValueKind: JsonValueKind.Object } hostConfig
+            && FindUnexpected(hostConfig, HostConfigFields) is { } unexpectedHost)
+        {
+            return $"HostConfig field '{unexpectedHost}' is not allowed";
+        }
+
+        return null;
     }
 
     private static string? CheckRules(CreateContainerRequest request, GuardOptions options)
@@ -211,20 +221,11 @@ public static class ContainerCreateValidator
         _ => false
     };
 
-    private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
-            {
-                value = property.Value;
-                return true;
-            }
-        }
-
-        value = default;
-        return false;
-    }
+    private static JsonElement? FindProperty(JsonElement element, string name) =>
+        element.EnumerateObject()
+            .Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+            .Select(p => (JsonElement?)p.Value)
+            .FirstOrDefault();
 }
 
 public sealed class CreateContainerRequest

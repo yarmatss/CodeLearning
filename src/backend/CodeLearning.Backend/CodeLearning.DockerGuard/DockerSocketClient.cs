@@ -8,6 +8,8 @@ namespace CodeLearning.DockerGuard;
 // HTTP over the Docker daemon's Unix socket: used both to forward allowed calls and for the guard's own checks
 public sealed class DockerSocketClient : IDisposable
 {
+    // Placeholder only: ConnectCallback sends every request over the local Unix socket, never over a network,
+    // so there is no transport to encrypt. HTTP is simply the protocol the Docker API speaks on that socket
     public const string BaseAddress = "http://docker/";
 
     private readonly HttpClient _client;

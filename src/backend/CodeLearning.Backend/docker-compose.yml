@@ -70,6 +70,10 @@ services:
       dockerfile: CodeLearning.DockerGuard/Dockerfile
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # The image runs as a non-root user; this group grants it the socket.
+    # Docker Desktop's socket belongs to group 0, Docker Engine's to the "docker" group (stat -c %g /var/run/docker.sock)
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
     networks:
       - codelearning-network
     restart: unless-stopped

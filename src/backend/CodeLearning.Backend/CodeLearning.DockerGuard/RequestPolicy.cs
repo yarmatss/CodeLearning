@@ -28,6 +28,9 @@ public static partial class RequestPolicy
     [GeneratedRegex(@"^/containers/(?<id>[A-Za-z0-9][A-Za-z0-9_.-]*)(?<action>/start|/wait|/kill|/logs|/archive)?$")]
     private static partial Regex ContainerRoute();
 
+    private static readonly RouteDecision ForwardDecision = new(RouteKind.Forward);
+    private static readonly RouteDecision NotAllowed = RouteDecision.Deny("Endpoint is not allowed");
+
     public static RouteDecision Evaluate(string method, string path, IQueryCollection query, GuardOptions options)
     {
         // Encoded or relative segments could be read differently by the daemon than by this check
@@ -38,37 +41,30 @@ public static partial class RequestPolicy
 
         path = VersionPrefix().Replace(path, string.Empty);
 
-        if (path is "/_ping" && method is "GET" or "HEAD")
-        {
-            return new RouteDecision(RouteKind.Forward);
-        }
+        return EvaluateDaemonRoute(method, path, query, options)
+            ?? EvaluateContainerRoute(method, path, query, options);
+    }
 
-        if (path is "/version" && method is "GET")
+    // Routes that don't target an existing container; null when the path is none of them
+    private static RouteDecision? EvaluateDaemonRoute(string method, string path, IQueryCollection query, GuardOptions options) =>
+        (path, method) switch
         {
-            return new RouteDecision(RouteKind.Forward);
-        }
+            ("/_ping", "GET" or "HEAD") => ForwardDecision,
+            ("/version", "GET") => ForwardDecision,
+            ("/images/create", "POST") => IsAllowedPull(query, options)
+                ? ForwardDecision
+                : RouteDecision.Deny("Image is not allowed"),
+            ("/containers/create", "POST") => new RouteDecision(RouteKind.CreateContainer),
+            (_, "GET") when ImageInspect().IsMatch(path) => ForwardDecision,
+            _ => null
+        };
 
-        if (method is "GET" && ImageInspect().IsMatch(path))
-        {
-            return new RouteDecision(RouteKind.Forward);
-        }
-
-        if (path is "/images/create" && method is "POST")
-        {
-            return IsAllowedPull(query, options)
-                ? new RouteDecision(RouteKind.Forward)
-                : RouteDecision.Deny("Image is not allowed");
-        }
-
-        if (path is "/containers/create" && method is "POST")
-        {
-            return new RouteDecision(RouteKind.CreateContainer);
-        }
-
+    private static RouteDecision EvaluateContainerRoute(string method, string path, IQueryCollection query, GuardOptions options)
+    {
         var match = ContainerRoute().Match(path);
         if (!match.Success || match.Groups["id"].Value is "create" or "json" or "prune")
         {
-            return RouteDecision.Deny("Endpoint is not allowed");
+            return NotAllowed;
         }
 
         var id = match.Groups["id"].Value;
@@ -83,7 +79,7 @@ public static partial class RequestPolicy
 
         return allowed
             ? new RouteDecision(RouteKind.SandboxContainer, id)
-            : RouteDecision.Deny("Endpoint is not allowed");
+            : NotAllowed;
     }
 
     private static bool IsAllowedPull(IQueryCollection query, GuardOptions options)
