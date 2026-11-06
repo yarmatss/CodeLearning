@@ -30,21 +30,22 @@ builder.Services
 
 var app = builder.Build();
 
-var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate", app.Environment.IsDevelopment());
-if (autoMigrate)
-{
-    await app.ApplyPendingMigrationsAsync();
-}
-
-app.UseApiPipeline();
-
-if (!isTesting)
-{
-    Log.Information("CodeLearning API started successfully");
-}
-
 try
 {
+    // Inside the try, so a failed migration is logged as fatal before the process exits
+    var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate", app.Environment.IsDevelopment());
+    if (autoMigrate)
+    {
+        await app.ApplyPendingMigrationsAsync();
+    }
+
+    app.UseApiPipeline();
+
+    if (!isTesting)
+    {
+        Log.Information("CodeLearning API started successfully");
+    }
+
     await app.RunAsync();
 }
 catch (Exception ex)

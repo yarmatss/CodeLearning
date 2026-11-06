@@ -63,7 +63,7 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, IConnectionMultiplex
 
         if (!previousHash.IsNullOrEmpty && previousHash != hash)
         {
-            await _db.KeyDeleteAsync(TokenKey(previousHash!));
+            await _db.KeyDeleteAsync(TokenKey(previousHash.ToString()));
         }
 
         await _db.StringSetAsync(TokenKey(hash), userId.ToString(), expiration);
@@ -98,7 +98,7 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, IConnectionMultiplex
         var hash = await _db.StringGetDeleteAsync(UserKey(userId));
         if (!hash.IsNullOrEmpty)
         {
-            await _db.KeyDeleteAsync(TokenKey(hash!));
+            await _db.KeyDeleteAsync(TokenKey(hash.ToString()));
         }
     }
 
