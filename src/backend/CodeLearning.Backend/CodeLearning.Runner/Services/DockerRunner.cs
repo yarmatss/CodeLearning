@@ -84,9 +84,11 @@ public class DockerRunner : IDockerRunner
     public static Dictionary<string, string> SandboxTmpfs(int sandboxSizeMb = 64) => new()
     {
         // tmpfs pages are charged to the container's memory cgroup, so these also count against its memory limit.
-        // Docker mounts tmpfs noexec,nosuid,nodev by default
+        // Docker mounts tmpfs noexec,nosuid,nodev by default.
+        // /tmp is a fresh per-container tmpfs that only the submission (uid 65534) uses as HOME/TMPDIR; the root
+        // agent and script never write there, so it is private to that uid rather than world-writable
         { WorkspacePath, $"size={sandboxSizeMb}m,uid=65534,gid=65534,mode=0755" },
-        { "/tmp", "size=32m,mode=1777" },
+        { "/tmp", "size=32m,uid=65534,gid=65534,mode=0700" },
         { AgentOutputPath, "size=32m,mode=0700" }
     };
 

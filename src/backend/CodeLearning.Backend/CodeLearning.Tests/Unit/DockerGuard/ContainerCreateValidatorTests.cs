@@ -17,7 +17,7 @@ public class ContainerCreateValidatorTests
          "Labels":{"submission-id":"x","codelearning.sandbox":"true"},
          "HostConfig":{"NetworkMode":"none","CapDrop":["ALL"],"CapAdd":["SETUID","SETGID","KILL"],
            "SecurityOpt":["no-new-privileges"],"ReadonlyRootfs":true,
-           "Tmpfs":{"/sandbox":"size=64m,uid=65534,gid=65534,mode=0755","/tmp":"size=32m,mode=1777","/app/out":"size=32m,mode=0700"},
+           "Tmpfs":{"/sandbox":"size=64m,uid=65534,gid=65534,mode=0755","/tmp":"size=32m,uid=65534,gid=65534,mode=0700","/app/out":"size=32m,mode=0700"},
            "Memory":268435456,"NanoCpus":1000000000,"MemorySwap":268435456,
            "PidsLimit":100,"Ulimits":[{"Name":"fsize","Hard":67108864,"Soft":67108864}]}}
         """;

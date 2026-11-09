@@ -73,6 +73,7 @@ RUN mkdir -p /sandbox /opt/codelearning \
 COPY --from=agent-build /out/CodeLearning.TestRunner /app/runner
 RUN chown -R 0:0 /app && chmod 0700 /app /app/runner && mkdir -p /app/out
 
-# DockerRunner always sets the command and user; these only make a manual `docker run` harmless
-USER 0:0
+# DockerRunner always sets the command and user (DockerGuard rejects a create without one), so these defaults
+# only apply to a manual `docker run`: it starts unprivileged and does nothing
+USER 65534:65534
 CMD ["/bin/false"]
