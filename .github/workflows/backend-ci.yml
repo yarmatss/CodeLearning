@@ -75,9 +75,9 @@ jobs:
         --collect:"XPlat Code Coverage"
         --results-directory ./TestResults
         --
-        DataCollectionRunSettings.DataCollector.Configuration.Format=opencover
-        DataCollectionRunSettings.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
-        DataCollectionRunSettings.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute
 
     - name: End SonarCloud Analysis
       if: env.SONAR_TOKEN != ''
