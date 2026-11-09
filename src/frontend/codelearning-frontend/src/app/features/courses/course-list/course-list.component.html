@@ -22,7 +22,7 @@
   <div class="mb-6 space-y-4">
     <input
       type="text"
-      placeholder="Search courses..."
+      [placeholder]="authService.isTeacher() ? 'Search courses...' : 'Filter courses on this page...'"
       (input)="onSearch($event)"
       class="w-full rounded-md border border-gray-300 px-4 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
     />
@@ -68,7 +68,7 @@
 
   @if (errorMessage()) {
     <div class="mb-6 rounded-md bg-red-50 p-4">
-      <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
     </div>
   }
 
@@ -113,7 +113,7 @@
               </div>
             </div>
 
-            <div class="mb-4 line-clamp-2 text-sm text-gray-600 markdown-content" [innerHTML]="renderDescription(course.description)">
+            <div class="mb-4 line-clamp-2 text-sm text-gray-600 markdown-content" [innerHTML]="descriptionHtml().get(course.id) ?? ''">
             </div>
 
             <div class="mb-4 flex items-center gap-4 text-sm text-gray-500">
@@ -171,19 +171,27 @@
                   View Details
                 </a>
 
-                @if (course.status === CourseStatus.Draft) {
-                  <a
-                    [routerLink]="['/courses', course.id, 'edit']"
-                    class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-blue-700"
-                  >
-                    Edit
-                  </a>
-                }
+                <a
+                  [routerLink]="['/courses', course.id, 'edit']"
+                  class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  {{ course.status === CourseStatus.Draft ? 'Edit' : 'Manage' }}
+                </a>
               }
             </div>
           </div>
         }
       </div>
     }
+  }
+
+  @if (authService.isStudent()) {
+    <app-pagination
+      [page]="page()"
+      [totalPages]="totalPages()"
+      [totalCount]="totalCount()"
+      [disabled]="isLoading()"
+      (pageChange)="loadCatalogPage($event)"
+    />
   }
 </div>

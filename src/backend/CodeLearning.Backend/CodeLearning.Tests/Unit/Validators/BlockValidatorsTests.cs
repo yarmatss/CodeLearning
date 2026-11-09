@@ -520,4 +520,96 @@ public class BlockValidatorsTests
     }
 
     #endregion
+
+    #region Review Fix Tests
+
+    [Fact]
+    public void QuizQuestionValidator_TrueFalseWithThreeAnswers_ShouldHaveError()
+    {
+        var dto = new CreateQuizQuestionDto
+        {
+            QuestionText = "Q",
+            Type = "TrueFalse",
+            Answers = [new() { AnswerText = "True", IsCorrect = true }, new() { AnswerText = "False" }, new() { AnswerText = "Maybe" }]
+        };
+
+        var result = new CreateQuizQuestionDtoValidator().TestValidate(dto);
+
+        result.ShouldHaveValidationErrorFor(x => x.Answers)
+            .WithErrorMessage("TrueFalse question must have exactly 2 answers");
+    }
+
+    [Fact]
+    public void QuizQuestionValidator_TrueFalseWithTwoCorrect_ShouldNameTrueFalseInMessage()
+    {
+        var dto = new CreateQuizQuestionDto
+        {
+            QuestionText = "Q",
+            Type = "TrueFalse",
+            Answers = [new() { AnswerText = "True", IsCorrect = true }, new() { AnswerText = "False", IsCorrect = true }]
+        };
+
+        var result = new CreateQuizQuestionDtoValidator().TestValidate(dto);
+
+        result.ShouldHaveValidationErrorFor(x => x)
+            .WithErrorMessage("TrueFalse question must have exactly one correct answer");
+    }
+
+    [Fact]
+    public void QuizQuestionValidator_NullAnswers_ShouldReportErrorsWithoutThrowing()
+    {
+        var dto = new CreateQuizQuestionDto { QuestionText = "Q", Type = "SingleChoice", Answers = null! };
+
+        var result = new CreateQuizQuestionDtoValidator().TestValidate(dto);
+
+        result.ShouldHaveValidationErrorFor(x => x.Answers);
+    }
+
+    [Fact]
+    public void QuizQuestionValidator_NullAnswerEntry_ShouldReportErrorWithoutThrowing()
+    {
+        var dto = new CreateQuizQuestionDto
+        {
+            QuestionText = "Q",
+            Type = "SingleChoice",
+            Answers = [new() { AnswerText = "A", IsCorrect = true }, null!]
+        };
+
+        var result = new CreateQuizQuestionDtoValidator().TestValidate(dto);
+
+        result.ShouldHaveValidationErrorFor("Answers[1]");
+    }
+
+    [Fact]
+    public void QuizBlockValidator_NullQuestionsOrEntries_ShouldReportErrorsWithoutThrowing()
+    {
+        var validator = new CreateQuizBlockDtoValidator();
+
+        validator.TestValidate(new CreateQuizBlockDto { Title = "T", Questions = null! })
+            .ShouldHaveValidationErrorFor(x => x.Questions);
+        validator.TestValidate(new CreateQuizBlockDto { Title = "T", Questions = [null!] })
+            .ShouldHaveValidationErrorFor("Questions[0]");
+    }
+
+    [Theory]
+    [InlineData("https://evil.example/?u=youtube.com/watch?v=dQw4w9WgXcQ")]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQX")]
+    public void VideoValidators_ShouldUseTheSameAnchoredRule(string url)
+    {
+        new CreateVideoBlockDtoValidator().TestValidate(new CreateVideoBlockDto { Title = "T", VideoUrl = url })
+            .ShouldHaveValidationErrorFor(x => x.VideoUrl);
+        new UpdateVideoBlockDtoValidator().TestValidate(new UpdateVideoBlockDto { Title = "T", VideoUrl = url })
+            .ShouldHaveValidationErrorFor(x => x.VideoUrl);
+    }
+
+    [Fact]
+    public void UpdateProblemBlockValidator_EmptyFields_ShouldHaveErrors()
+    {
+        var result = new UpdateProblemBlockDtoValidator().TestValidate(new UpdateProblemBlockDto { Title = "", ProblemId = Guid.Empty });
+
+        result.ShouldHaveValidationErrorFor(x => x.Title);
+        result.ShouldHaveValidationErrorFor(x => x.ProblemId);
+    }
+
+    #endregion
 }

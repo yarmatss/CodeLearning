@@ -77,7 +77,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", dto);
+        var response = await _factory.CreateAnonymousClient().PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", dto);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -258,7 +258,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video", dto);
+        var response = await _factory.CreateAnonymousClient().PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video", dto);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -531,7 +531,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/problem", dto);
+        var response = await _factory.CreateAnonymousClient().PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/problem", dto);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -625,7 +625,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var blockId = Guid.NewGuid();
 
         // Act
-        var response = await _client.DeleteAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}");
+        var response = await _factory.CreateAnonymousClient().DeleteAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -636,7 +636,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     #region Get Block Tests
 
     [Fact]
-    public async Task GetBlockById_TheoryBlock_ShouldReturnContent()
+    public async Task GetBlockById_TheoryBlock_AsEnrolledStudent_ShouldReturnContent()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
@@ -651,9 +651,10 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var blockId = created!.Id;
 
-        // Act (no auth needed - public endpoint)
         await PublishCourseAsync();
-        _client.DefaultRequestHeaders.Authorization = null;
+        await EnrollStudentAsync();
+
+        // Act
         var response = await _client.GetAsync($"/api/blocks/{blockId}");
 
         // Assert
@@ -663,7 +664,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         block.Should().NotBeNull();
         block!.Id.Should().Be(blockId);
         block.Title.Should().Be("C# Basics");
-        block.Type.ToString().Should().Be("Theory");
+        block.Type.Should().Be(BlockType.Theory);
         block.TheoryContent.Should().NotBeNull();
         block.TheoryContent!.Content.Should().Contain("Introduction");
         block.TheoryContent.Content.Should().Contain("powerful");
@@ -685,9 +686,10 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var blockId = created!.Id;
 
-        // Act
         await PublishCourseAsync();
-        _client.DefaultRequestHeaders.Authorization = null;
+        await EnrollStudentAsync();
+
+        // Act
         var response = await _client.GetAsync($"/api/blocks/{blockId}");
 
         // Assert
@@ -695,14 +697,14 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         var block = await response.Content.ReadFromJsonAsync<BlockResponseDto>();
         block.Should().NotBeNull();
-        block!.Type.ToString().Should().Be("Video");
+        block!.Type.Should().Be(BlockType.Video);
         block.VideoContent.Should().NotBeNull();
         block.VideoContent!.VideoId.Should().Be("ABC123DEF45");
         block.VideoContent.VideoUrl.Should().Be(createDto.VideoUrl);
     }
 
     [Fact]
-    public async Task GetBlockById_QuizBlock_ShouldHideCorrectAnswers()
+    public async Task GetBlockById_QuizBlock_AsEnrolledStudent_ShouldHideCorrectAnswersAndExplanation()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
@@ -717,6 +719,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
                     QuestionText = "What is 2+2?",
                     Type = "SingleChoice",
                     Points = 10,
+                    Explanation = "Because two plus two is FOUR-EXPLAINED",
                     Answers = new List<CreateQuizAnswerDto>
                     {
                         new() { AnswerText = "3", IsCorrect = false },
@@ -731,9 +734,10 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var created = await createResponse.Content.ReadFromJsonAsync<BlockCreatedResponseDto>();
         var blockId = created!.Id;
 
-        // Act - Student views quiz
         await PublishCourseAsync();
-        _client.DefaultRequestHeaders.Authorization = null;
+        await EnrollStudentAsync();
+
+        // Act
         var response = await _client.GetAsync($"/api/blocks/{blockId}");
 
         // Assert
@@ -741,24 +745,26 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
         var block = await response.Content.ReadFromJsonAsync<BlockResponseDto>();
         block.Should().NotBeNull();
-        block!.Type.ToString().Should().Be("Quiz");
+        block!.Type.Should().Be(BlockType.Quiz);
         block.Quiz.Should().NotBeNull();
         block.Quiz!.Questions.Should().HaveCount(1);
 
         var question = block.Quiz.Questions.First();
         question.Content.Should().Contain("2+2");
         question.Answers.Should().HaveCount(3);
+        question.Explanation.Should().BeNull();
 
-        // Verify IsCorrect is NOT in JSON (security check)
+        // Neither the correct flags nor the explanation may reach a student before submitting
         var jsonString = await response.Content.ReadAsStringAsync();
-        jsonString.Should().NotContain("isCorrect"); // JSON property names are camelCase
+        jsonString.Should().NotContain("isCorrect");
+        jsonString.Should().NotContain("FOUR-EXPLAINED");
     }
 
     [Fact]
-    public async Task GetBlockById_QuizBlock_AsCourseOwner_ShouldIncludeCorrectAnswers()
+    public async Task GetBlockById_QuizBlock_AsCourseOwner_ShouldIncludeCorrectAnswersAndExplanation()
     {
         // Arrange
-        var blockId = await CreateSimpleQuizBlockAsync();
+        var blockId = await CreateSimpleQuizBlockAsync(explanation: "Owner sees this");
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
 
         // Act
@@ -768,11 +774,13 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var block = await response.Content.ReadFromJsonAsync<BlockResponseDto>();
-        block!.Quiz!.Questions.First().Answers.Should().ContainSingle(a => a.IsCorrect == true);
+        var question = block!.Quiz!.Questions.First();
+        question.Answers.Should().ContainSingle(a => a.IsCorrect == true);
+        question.Explanation.Should().Be("Owner sees this");
     }
 
     [Fact]
-    public async Task GetBlockById_QuizBlock_AsAnotherTeacher_ShouldHideCorrectAnswers()
+    public async Task GetBlockById_PublishedCourse_AsAnotherTeacher_ShouldReturn403()
     {
         // Arrange
         var blockId = await CreateSimpleQuizBlockAsync();
@@ -784,34 +792,102 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var response = await _client.GetAsync($"/api/blocks/{blockId}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var jsonString = await response.Content.ReadAsStringAsync();
-        jsonString.Should().NotContain("isCorrect");
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
-    public async Task GetSubchapterBlocks_QuizBlock_AsAnotherTeacher_ShouldHideCorrectAnswers()
+    public async Task GetBlockById_PublishedCourse_AsNotEnrolledStudent_ShouldReturn403()
     {
         // Arrange
-        await CreateSimpleQuizBlockAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
         await PublishCourseAsync();
-        var anotherTeacherToken = await GetTeacherTokenAsync();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().NotContain("Test content");
+    }
+
+    [Fact]
+    public async Task GetSubchapterBlocks_PublishedCourse_AsNotEnrolledStudent_ShouldReturn403()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        await CreateTheoryBlockAsync();
+        await PublishCourseAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
 
         // Act
         var response = await _client.GetAsync($"/api/subchapters/{_subchapterId}/blocks");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
 
-        var jsonString = await response.Content.ReadAsStringAsync();
-        jsonString.Should().NotContain("isCorrect");
+    [Fact]
+    public async Task GetBlockById_PublishedCourse_WithoutAuth_ShouldReturn401()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        await PublishCourseAsync();
+        var anonymousClient = _factory.CreateAnonymousClient();
+
+        // Act
+        var response = await anonymousClient.GetAsync($"/api/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task GetSubchapterBlocks_PublishedCourse_WithoutAuth_ShouldReturn401()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        await CreateTheoryBlockAsync();
+        await PublishCourseAsync();
+        var anonymousClient = _factory.CreateAnonymousClient();
+
+        // Act
+        var response = await anonymousClient.GetAsync($"/api/subchapters/{_subchapterId}/blocks");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task GetBlockById_UnpublishedCourse_AsEnrolledStudent_ShouldReturn403()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        await PublishCourseAsync();
+        await EnrollStudentAsync();
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var unpublish = await _client.PostAsync($"/api/courses/{await GetCourseIdAsync()}/unpublish", null);
+        unpublish.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/blocks/{blockId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task GetBlockById_NonExisting_ShouldReturn404()
     {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
         // Act
         var response = await _client.GetAsync($"/api/blocks/{Guid.NewGuid()}");
 
@@ -820,18 +896,18 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
-    public async Task GetBlockById_DraftCourse_WithoutAuth_ShouldReturn404()
+    public async Task GetBlockById_DraftCourse_WithoutAuth_ShouldReturn401()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
         var blockId = await CreateTheoryBlockAsync();
-        _client.DefaultRequestHeaders.Authorization = null;
+        var anonymousClient = _factory.CreateAnonymousClient();
 
         // Act
-        var response = await _client.GetAsync($"/api/blocks/{blockId}");
+        var response = await anonymousClient.GetAsync($"/api/blocks/{blockId}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -867,23 +943,23 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
     }
 
     [Fact]
-    public async Task GetSubchapterBlocks_ShouldReturnOrderedList()
+    public async Task GetSubchapterBlocks_AsEnrolledStudent_ShouldReturnOrderedList()
     {
         // Arrange
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
 
-        // Create multiple blocks
         var theory = new CreateTheoryBlockDto { Title = "Theory 1", Content = "Content 1" };
-        var video = new CreateVideoBlockDto { Title = "Video 1", VideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }; // Valid YouTube ID
+        var video = new CreateVideoBlockDto { Title = "Video 1", VideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" };
         var theory2 = new CreateTheoryBlockDto { Title = "Theory 2", Content = "Content 2" };
 
         await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", theory);
         await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video", video);
         await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory", theory2);
 
-        // Act
         await PublishCourseAsync();
-        _client.DefaultRequestHeaders.Authorization = null;
+        await EnrollStudentAsync();
+
+        // Act
         var response = await _client.GetAsync($"/api/subchapters/{_subchapterId}/blocks");
 
         // Assert
@@ -893,7 +969,6 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         blocks.Should().NotBeNull();
         blocks!.Should().HaveCount(3);
 
-        // Verify order
         blocks[0].OrderIndex.Should().Be(1);
         blocks[0].Title.Should().Be("Theory 1");
         blocks[1].OrderIndex.Should().Be(2);
@@ -1258,7 +1333,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         var updateDto = new UpdateTheoryBlockDto { Title = "Test", Content = "Content" };
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/theory", updateDto);
+        var response = await _factory.CreateAnonymousClient().PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/theory", updateDto);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -1266,9 +1341,275 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
 
     #endregion
 
+    #region Ownership, Route And Problem Block Tests
+
+    public static TheoryData<string, string> BlockMutations => new()
+    {
+        { "PUT", "theory" },
+        { "PUT", "video" },
+        { "PUT", "quiz" },
+        { "PUT", "problem" },
+        { "PATCH", "order" },
+        { "DELETE", "" }
+    };
+
+    [Theory]
+    [MemberData(nameof(BlockMutations))]
+    public async Task BlockMutation_AsAnotherTeacher_ShouldReturn403(string method, string action)
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        var anotherTeacherToken = await GetTeacherTokenAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+
+        // Act
+        var response = await SendBlockMutationAsync(method, action, _subchapterId, blockId);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        await using var db = NewDbContext();
+        (await db.CourseBlocks.AnyAsync(b => b.Id == blockId)).Should().BeTrue();
+    }
+
+    [Theory]
+    [MemberData(nameof(BlockMutations))]
+    public async Task BlockMutation_UnderAnotherSubchapterRoute_ShouldReturn404(string method, string action)
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        var otherSubchapterId = await CreateSiblingSubchapterAsync();
+
+        // Act
+        var response = await SendBlockMutationAsync(method, action, otherSubchapterId, blockId);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task CreateTheoryBlock_AsAnotherTeacher_ShouldReturn403()
+    {
+        // Arrange
+        var anotherTeacherToken = await GetTeacherTokenAsync();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherTeacherToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/theory",
+            new CreateTheoryBlockDto { Title = "Intruder", Content = "x" });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CreateProblemBlock_WithAnotherAuthorsProblem_ShouldReturn403()
+    {
+        // Arrange
+        var foreignProblemId = await CreateProblemAsync(foreignAuthor: true);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/problem",
+            new CreateProblemBlockDto { Title = "Borrowed", ProblemId = foreignProblemId });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        await using var db = NewDbContext();
+        (await db.CourseBlocks.AnyAsync(b => b.SubchapterId == _subchapterId)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateProblemBlock_AsOwner_ShouldChangeTitleAndProblem()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var firstProblemId = await CreateProblemAsync();
+        var secondProblemId = await CreateProblemAsync();
+        var create = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/problem",
+            new CreateProblemBlockDto { Title = "Old", ProblemId = firstProblemId });
+        var blockId = (await create.Content.ReadFromJsonAsync<BlockCreatedResponseDto>())!.Id;
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/problem",
+            new UpdateProblemBlockDto { Title = "New", ProblemId = secondProblemId });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await using var db = NewDbContext();
+        var block = await db.CourseBlocks.SingleAsync(b => b.Id == blockId);
+        block.Title.Should().Be("New");
+        block.ProblemId.Should().Be(secondProblemId);
+    }
+
+    [Fact]
+    public async Task UpdateProblemBlock_WithAnotherAuthorsProblem_ShouldReturn403()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var ownProblemId = await CreateProblemAsync();
+        var foreignProblemId = await CreateProblemAsync(foreignAuthor: true);
+        var create = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/problem",
+            new CreateProblemBlockDto { Title = "Mine", ProblemId = ownProblemId });
+        var blockId = (await create.Content.ReadFromJsonAsync<BlockCreatedResponseDto>())!.Id;
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/problem",
+            new UpdateProblemBlockDto { Title = "Mine", ProblemId = foreignProblemId });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task UpdateProblemBlock_OnTheoryBlock_ShouldReturn400()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var blockId = await CreateTheoryBlockAsync();
+        var problemId = await CreateProblemAsync();
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/problem",
+            new UpdateProblemBlockDto { Title = "x", ProblemId = problemId });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateVideoBlock_WithShortLink_ShouldStoreCanonicalWatchUrl()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video",
+            new CreateVideoBlockDto { Title = "Short", VideoUrl = "https://youtu.be/dQw4w9WgXcQ?t=42" });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var blockId = (await response.Content.ReadFromJsonAsync<BlockCreatedResponseDto>())!.Id;
+        await using var db = NewDbContext();
+        var video = await db.CourseBlocks.Where(b => b.Id == blockId).Select(b => b.VideoContent!).SingleAsync();
+        video.VideoUrl.Should().Be("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        video.VideoId.Should().Be("dQw4w9WgXcQ");
+    }
+
+    [Fact]
+    public async Task CreateVideoBlock_WithUrlEmbeddedInText_ShouldReturn400()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/video",
+            new CreateVideoBlockDto { Title = "x", VideoUrl = "https://evil.example/?u=youtube.com/watch?v=dQw4w9WgXcQ" });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task DeleteBlock_ShouldReindexRemainingBlocks()
+    {
+        // Arrange
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
+        var first = await CreateTheoryBlockAsync();
+        var second = await CreateTheoryBlockAsync();
+        var third = await CreateTheoryBlockAsync();
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/subchapters/{_subchapterId}/blocks/{first}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await using var db = NewDbContext();
+        var indexes = await db.CourseBlocks.Where(b => b.SubchapterId == _subchapterId)
+            .OrderBy(b => b.OrderIndex).Select(b => new { b.Id, b.OrderIndex }).ToListAsync();
+        indexes.Select(i => i.Id).Should().Equal(second, third);
+        indexes.Select(i => i.OrderIndex).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task UpdateQuizBlock_ShouldReplaceQuestionsAtomically()
+    {
+        // Arrange
+        var blockId = await CreateSimpleQuizBlockAsync();
+        var quizId = await GetQuizIdAsync(blockId);
+        var updateDto = new UpdateQuizBlockDto
+        {
+            Title = "Updated",
+            Questions =
+            [
+                new CreateQuizQuestionDto
+                {
+                    QuestionText = "New question",
+                    Type = "TrueFalse",
+                    Answers = [new() { AnswerText = "True", IsCorrect = true }, new() { AnswerText = "False" }]
+                }
+            ]
+        };
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/subchapters/{_subchapterId}/blocks/{blockId}/quiz", updateDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await using var db = NewDbContext();
+        var questions = await db.QuizQuestions.Include(q => q.Answers).Where(q => q.QuizId == quizId).ToListAsync();
+        questions.Should().ContainSingle(q => q.Content == "New question");
+        questions.Single().Answers.Should().HaveCount(2);
+    }
+
+    #endregion
+
     #region Helper Methods
 
-    private async Task<Guid> CreateSimpleQuizBlockAsync()
+    private Task<HttpResponseMessage> SendBlockMutationAsync(string method, string action, Guid subchapterId, Guid blockId)
+    {
+        var baseUrl = $"/api/subchapters/{subchapterId}/blocks/{blockId}";
+
+        return (method, action) switch
+        {
+            ("PUT", "theory") => _client.PutAsJsonAsync($"{baseUrl}/theory", new UpdateTheoryBlockDto { Title = "t", Content = "c" }),
+            ("PUT", "video") => _client.PutAsJsonAsync($"{baseUrl}/video", new UpdateVideoBlockDto { Title = "t", VideoUrl = "https://youtu.be/dQw4w9WgXcQ" }),
+            ("PUT", "quiz") => _client.PutAsJsonAsync($"{baseUrl}/quiz", new UpdateQuizBlockDto
+            {
+                Title = "t",
+                Questions = [new() { QuestionText = "q", Type = "SingleChoice", Answers = [new() { AnswerText = "a", IsCorrect = true }, new() { AnswerText = "b" }] }]
+            }),
+            ("PUT", "problem") => _client.PutAsJsonAsync($"{baseUrl}/problem", new UpdateProblemBlockDto { Title = "t", ProblemId = Guid.NewGuid() }),
+            ("PATCH", "order") => _client.PatchAsJsonAsync($"{baseUrl}/order", new UpdateBlockOrderDto { NewOrderIndex = 1 }),
+            _ => _client.DeleteAsync(baseUrl)
+        };
+    }
+
+    private async Task EnrollStudentAsync()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+        var response = await _client.PostAsync($"/api/enrollments/courses/{await GetCourseIdAsync()}", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    private async Task<Guid> GetCourseIdAsync()
+    {
+        await using var db = NewDbContext();
+        return await db.Subchapters.Where(s => s.Id == _subchapterId).Select(s => s.Chapter.CourseId).SingleAsync();
+    }
+
+    private async Task<Guid> CreateSiblingSubchapterAsync()
+    {
+        await using var db = NewDbContext();
+        var chapterId = await db.Subchapters.Where(s => s.Id == _subchapterId).Select(s => s.ChapterId).SingleAsync();
+        var subchapter = new Subchapter { Title = "Subchapter 1.2", OrderIndex = 2, ChapterId = chapterId, Chapter = null! };
+        db.Subchapters.Add(subchapter);
+        await db.SaveChangesAsync();
+        return subchapter.Id;
+    }
+
+    private async Task<Guid> CreateSimpleQuizBlockAsync(string? explanation = null)
     {
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _teacherToken);
 
@@ -1282,6 +1623,7 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
                     QuestionText = "What is 2+2?",
                     Type = "SingleChoice",
                     Points = 10,
+                    Explanation = explanation,
                     Answers = new List<CreateQuizAnswerDto>
                     {
                         new() { AnswerText = "3", IsCorrect = false },
@@ -1384,20 +1726,43 @@ public class BlocksControllerTests : IClassFixture<IntegrationTestWebAppFactory>
         return responseDto!.Id;
     }
 
-    private async Task<Guid> CreateProblemAsync()
+    // A fresh context per assertion, so reads never come from a change tracker that saw the writes
+    private CodeLearning.Infrastructure.Data.ApplicationDbContext NewDbContext()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var connectionString = scope.ServiceProvider
+            .GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>().Database.GetConnectionString();
+        return new CodeLearning.Infrastructure.Data.ApplicationDbContext(
+            new DbContextOptionsBuilder<CodeLearning.Infrastructure.Data.ApplicationDbContext>().UseNpgsql(connectionString).Options);
+    }
+
+    // Authored by the course instructor, or by a different teacher when foreignAuthor is set
+    private async Task<Guid> CreateProblemAsync(bool foreignAuthor = false)
     {
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
 
-        var teacher = await dbContext.Users.FirstAsync(u => u.Role == UserRole.Teacher);
+        User author;
+        if (foreignAuthor)
+        {
+            author = TestDataBuilder.CreateValidUser(UserRole.Teacher);
+            dbContext.Users.Add(author);
+        }
+        else
+        {
+            author = await dbContext.Subchapters
+                .Where(s => s.Id == _subchapterId)
+                .Select(s => s.Chapter.Course.Instructor)
+                .SingleAsync();
+        }
 
         var problem = new Problem
         {
             Title = "Two Sum",
             Description = "Find two numbers that add up to target",
             Difficulty = DifficultyLevel.Easy,
-            AuthorId = teacher.Id,
-            Author = teacher
+            AuthorId = author.Id,
+            Author = author
         };
 
         dbContext.Problems.Add(problem);

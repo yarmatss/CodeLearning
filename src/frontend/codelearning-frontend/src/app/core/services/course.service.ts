@@ -7,9 +7,12 @@ import {
   UpdateCourseRequest,
   Enrollment,
   EnrolledCourse,
-  EnrollmentStatus
+  EnrollmentStatus,
+  CourseStatusChangeResponse,
+  TeacherStats
 } from '../models/course.model';
 import { CourseStructure } from '../models/progress.model';
+import { PagedResult, PageRequest, toQueryParams } from '../models/paging.model';
 
 @Injectable({
   providedIn: 'root'
@@ -22,6 +25,12 @@ export class CourseService {
   courses = signal<Course[]>([]);
   selectedCourse = signal<Course | null>(null);
 
+  /** Drops cached courses, e.g. when the session ends, so the next user never sees them. */
+  reset(): void {
+    this.courses.set([]);
+    this.selectedCourse.set(null);
+  }
+
   // Teacher: Get my courses
   getMyCourses(): Observable<Course[]> {
     return this.http.get<Course[]>(`${this.API_URL}/my-courses`).pipe(
@@ -29,11 +38,16 @@ export class CourseService {
     );
   }
 
-  // Public: Get published courses
-  getPublishedCourses(): Observable<Course[]> {
-    return this.http.get<Course[]>(`${this.API_URL}/published`).pipe(
-      tap(courses => this.courses.set(courses))
-    );
+  // Teacher: published/draft course counts and distinct students across the teacher's courses
+  getMyStats(): Observable<TeacherStats> {
+    return this.http.get<TeacherStats>(`${this.API_URL}/my/stats`);
+  }
+
+  // Public: one page of published courses; the page's items become the cached course list
+  getPublishedCourses(request: PageRequest = {}): Observable<PagedResult<Course>> {
+    return this.http
+      .get<PagedResult<Course>>(`${this.API_URL}/published`, { params: toQueryParams(request) })
+      .pipe(tap(page => this.courses.set(page.items)));
   }
 
   // Get course by ID
@@ -66,18 +80,18 @@ export class CourseService {
     );
   }
 
-  // Teacher: Publish course
-  publishCourse(id: string): Observable<{ message: string; course: Course }> {
-    return this.http.post<{ message: string; course: Course }>(`${this.API_URL}/${id}/publish`, {}).pipe(
-      tap(response => {
-        this.courses.update(courses =>
-          courses.map(c => c.id === id ? response.course : c)
-        );
-        if (this.selectedCourse()?.id === id) {
-          this.selectedCourse.set(response.course);
-        }
-      })
-    );
+  // Teacher: Publish course (idempotent)
+  publishCourse(id: string): Observable<CourseStatusChangeResponse> {
+    return this.http
+      .post<CourseStatusChangeResponse>(`${this.API_URL}/${id}/publish`, {})
+      .pipe(tap(response => this.replaceCachedCourse(response.course)));
+  }
+
+  // Teacher: Unpublish course so it can be edited again; enrollments are kept
+  unpublishCourse(id: string): Observable<CourseStatusChangeResponse> {
+    return this.http
+      .post<CourseStatusChangeResponse>(`${this.API_URL}/${id}/unpublish`, {})
+      .pipe(tap(response => this.replaceCachedCourse(response.course)));
   }
 
   // Teacher: Delete course
@@ -92,9 +106,11 @@ export class CourseService {
     );
   }
 
-  // Student: Get enrolled courses
-  getEnrolledCourses(): Observable<EnrolledCourse[]> {
-    return this.http.get<EnrolledCourse[]>(`${this.ENROLLMENT_URL}/my-courses`);
+  // Student: one page of enrolled courses
+  getEnrolledCourses(request: PageRequest = {}): Observable<PagedResult<EnrolledCourse>> {
+    return this.http.get<PagedResult<EnrolledCourse>>(`${this.ENROLLMENT_URL}/my-courses`, {
+      params: toQueryParams(request)
+    });
   }
 
   // Student: Enroll in course
@@ -112,8 +128,15 @@ export class CourseService {
     return this.http.get<EnrollmentStatus>(`${this.ENROLLMENT_URL}/courses/${courseId}/status`);
   }
 
-  // Get course structure (for non-enrolled users)
+  // Public outline: chapters, subchapters and block titles/types, without block content
   getCourseStructure(courseId: string): Observable<CourseStructure> {
     return this.http.get<CourseStructure>(`${this.API_URL}/${courseId}/structure`);
+  }
+
+  private replaceCachedCourse(course: Course): void {
+    this.courses.update(courses => courses.map(c => (c.id === course.id ? course : c)));
+    if (this.selectedCourse()?.id === course.id) {
+      this.selectedCourse.set(course);
+    }
   }
 }

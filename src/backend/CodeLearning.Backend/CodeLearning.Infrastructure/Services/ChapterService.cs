@@ -5,6 +5,7 @@ using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Infrastructure.Extensions;
+using CodeLearning.Infrastructure.Services.Learning;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -13,22 +14,17 @@ public class ChapterService(ApplicationDbContext context) : IChapterService
 {
     public async Task<ChapterResponseDto> AddChapterAsync(Guid courseId, CreateChapterDto dto, Guid instructorId)
     {
-        var course = await context.Courses
-            .Include(c => c.Chapters)
-            .FirstOrDefaultAsync(c => c.Id == courseId)
+        await using var scope = await CourseEditScope.BeginAsync(context, courseId);
+
+        var course = await context.Courses.FirstOrDefaultAsync(c => c.Id == courseId)
             ?? throw new NotFoundException($"Course with ID {courseId} not found");
 
-        if (course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only add chapters to your own courses");
-        }
+        EnsureEditable(course, instructorId, "You can only add chapters to your own courses");
 
-        if (course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot modify a published course");
-        }
-
-        var maxOrder = course.Chapters.Count > 0 ? course.Chapters.Max(c => c.OrderIndex) : 0;
+        // Read under the course lock, so two concurrent adds cannot both take the same index
+        var maxOrder = await context.Chapters
+            .Where(c => c.CourseId == courseId)
+            .MaxAsync(c => (int?)c.OrderIndex) ?? 0;
 
         var chapter = new Chapter
         {
@@ -40,8 +36,9 @@ public class ChapterService(ApplicationDbContext context) : IChapterService
 
         context.Chapters.Add(chapter);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
 
-        return MapToChapterResponseDto(chapter);
+        return MapToChapterResponseDto(chapter, subchaptersCount: 0);
     }
 
     public async Task<IEnumerable<ChapterResponseDto>> GetCourseChaptersAsync(Guid courseId, Guid? viewerId = null)
@@ -51,108 +48,112 @@ public class ChapterService(ApplicationDbContext context) : IChapterService
             throw new NotFoundException($"Course with ID {courseId} not found");
         }
 
-        var chapters = await context.Chapters
-            .Include(c => c.Subchapters)
+        return await context.Chapters
             .Where(c => c.CourseId == courseId)
             .OrderBy(c => c.OrderIndex)
+            .Select(c => new ChapterResponseDto
+            {
+                Id = c.Id,
+                Title = c.Title,
+                OrderIndex = c.OrderIndex,
+                CourseId = c.CourseId,
+                SubchaptersCount = c.Subchapters.Count
+            })
+            .ToListAsync();
+    }
+
+    public async Task<ChapterResponseDto> RenameChapterAsync(Guid courseId, Guid chapterId, UpdateChapterDto dto, Guid instructorId)
+    {
+        await using var scope = await CourseEditScope.BeginAsync(context, courseId);
+
+        var chapter = await LoadEditableChapterAsync(courseId, chapterId, instructorId);
+        chapter.Title = dto.Title;
+
+        await context.SaveChangesAsync();
+        await scope.CommitAsync();
+
+        return await GetResponseAsync(chapter);
+    }
+
+    public async Task<ChapterResponseDto> UpdateChapterOrderAsync(Guid courseId, Guid chapterId, int newOrderIndex, Guid instructorId)
+    {
+        await using var scope = await CourseEditScope.BeginAsync(context, courseId);
+
+        var chapter = await LoadEditableChapterAsync(courseId, chapterId, instructorId);
+
+        var siblings = await context.Chapters
+            .Where(c => c.CourseId == courseId && c.Id != chapterId)
             .ToListAsync();
 
-        return chapters.Select(MapToChapterResponseDto);
-    }
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, siblings.Count + 1);
+        OrderIndexRules.Move(chapter, siblings, c => c.OrderIndex, (c, index) => c.OrderIndex = index, newOrderIndex);
 
-    public async Task<ChapterResponseDto> UpdateChapterOrderAsync(Guid chapterId, int newOrderIndex, Guid instructorId)
-    {
-        var chapter = await context.Chapters
-            .Include(c => c.Course)
-            .Include(c => c.Subchapters)
-            .FirstOrDefaultAsync(c => c.Id == chapterId)
-            ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
-
-        if (chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only modify your own course chapters");
-        }
-
-        if (chapter.Course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot modify a published course");
-        }
-
-        var chapterCount = await context.Chapters.CountAsync(c => c.CourseId == chapter.CourseId);
-        OrderIndexRules.EnsureWithinRange(newOrderIndex, chapterCount);
-
-        await ReorderChapters(chapter, newOrderIndex);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
 
-        return MapToChapterResponseDto(chapter);
+        return await GetResponseAsync(chapter);
     }
 
-    public async Task DeleteChapterAsync(Guid chapterId, Guid instructorId)
+    public async Task DeleteChapterAsync(Guid courseId, Guid chapterId, Guid instructorId)
     {
-        var chapter = await context.Chapters
-            .Include(c => c.Course)
-            .FirstOrDefaultAsync(c => c.Id == chapterId)
-            ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
+        await using var scope = await CourseEditScope.BeginAsync(context, courseId);
 
-        if (chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only delete chapters from your own courses");
-        }
+        var chapter = await LoadEditableChapterAsync(courseId, chapterId, instructorId);
 
-        if (chapter.Course.Status == CourseStatus.Published)
+        await BlockContentCleanup.RemoveForBlocksAsync(context, b => b.Subchapter.ChapterId == chapterId);
+
+        var following = await context.Chapters
+            .Where(c => c.CourseId == courseId && c.OrderIndex > chapter.OrderIndex)
+            .ToListAsync();
+
+        foreach (var sibling in following)
         {
-            throw new BusinessRuleException("Cannot delete chapters from a published course");
+            sibling.OrderIndex--;
         }
 
         context.Chapters.Remove(chapter);
-
-        await ReorderAfterDeletion(chapter);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
     }
 
-    private async Task ReorderChapters(Chapter chapter, int newOrderIndex)
+    // A chapter id under another course's route is answered as not found
+    private async Task<Chapter> LoadEditableChapterAsync(Guid courseId, Guid chapterId, Guid instructorId)
     {
-        var oldOrderIndex = chapter.OrderIndex;
-        chapter.OrderIndex = newOrderIndex;
+        var chapter = await context.Chapters
+            .Include(c => c.Course)
+            .FirstOrDefaultAsync(c => c.Id == chapterId && c.CourseId == courseId)
+            ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
 
-        var otherChapters = await context.Chapters
-            .Where(c => c.CourseId == chapter.CourseId && c.Id != chapter.Id)
-            .ToListAsync();
+        EnsureEditable(chapter.Course, instructorId, "You can only modify chapters of your own courses");
 
-        if (newOrderIndex < oldOrderIndex)
-        {
-            foreach (var other in otherChapters.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
-            {
-                other.OrderIndex++;
-            }
-        }
-        else
-        {
-            foreach (var other in otherChapters.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
-            {
-                other.OrderIndex--;
-            }
-        }
+        return chapter;
     }
 
-    private async Task ReorderAfterDeletion(Chapter deletedChapter)
+    private static void EnsureEditable(Course course, Guid instructorId, string forbiddenMessage)
     {
-        var remainingChapters = await context.Chapters
-            .Where(c => c.CourseId == deletedChapter.CourseId && c.OrderIndex > deletedChapter.OrderIndex)
-            .ToListAsync();
-
-        foreach (var chapter in remainingChapters)
+        if (course.InstructorId != instructorId)
         {
-            chapter.OrderIndex--;
+            throw new ForbiddenException(forbiddenMessage);
+        }
+
+        if (course.Status == CourseStatus.Published)
+        {
+            throw new BusinessRuleException("Cannot modify a published course");
         }
     }
 
-    private static ChapterResponseDto MapToChapterResponseDto(Chapter chapter) => new()
+    private async Task<ChapterResponseDto> GetResponseAsync(Chapter chapter)
+    {
+        var subchaptersCount = await context.Subchapters.CountAsync(s => s.ChapterId == chapter.Id);
+        return MapToChapterResponseDto(chapter, subchaptersCount);
+    }
+
+    private static ChapterResponseDto MapToChapterResponseDto(Chapter chapter, int subchaptersCount) => new()
     {
         Id = chapter.Id,
         Title = chapter.Title,
         OrderIndex = chapter.OrderIndex,
         CourseId = chapter.CourseId,
-        SubchaptersCount = chapter.Subchapters?.Count ?? 0
+        SubchaptersCount = subchaptersCount
     };
 }

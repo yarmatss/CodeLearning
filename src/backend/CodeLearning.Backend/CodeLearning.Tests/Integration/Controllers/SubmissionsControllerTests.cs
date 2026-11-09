@@ -74,7 +74,7 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
     }
 
     // Students may only submit to problems used in a course they are enrolled in
-    private async Task EnrollInCourseWithProblem(ProblemResponseDto problem, string studentToken)
+    private async Task EnrollInCourseWithProblem(ProblemResponseDto problem, string studentToken, CourseStatus status = CourseStatus.Published)
     {
         Guid courseId;
 
@@ -116,6 +116,16 @@ public class SubmissionsControllerTests : IClassFixture<IntegrationTestWebAppFac
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
         var response = await _client.PostAsync($"/api/enrollments/courses/{courseId}", null);
         response.EnsureSuccessStatusCode();
+
+        if (status != CourseStatus.Published)
+        {
+            // Unpublishing keeps the enrollment but hides the course content
+            using var scope = _factory.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await dbContext.Courses
+                .Where(c => c.Id == courseId)
+                .ExecuteUpdateAsync(c => c.SetProperty(x => x.Status, status));
+        }
     }
 
     #endregion
@@ -232,8 +242,10 @@ function solution() {
             Code = "def solution(): pass"
         };
 
+        using var anonymousClient = _factory.CreateAnonymousClient();
+
         // Act
-        var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
+        var response = await anonymousClient.PostAsJsonAsync("/api/submissions", submitDto);
 
         // Assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -313,7 +325,7 @@ function solution() {
     }
 
     [Fact]
-    public async Task SubmitCode_NotEnrolledInCourseWithProblem_ShouldReturn400()
+    public async Task SubmitCode_NotEnrolledInCourseWithProblem_ShouldReturn403()
     {
         // Arrange
         var teacherToken = await GetTeacherToken();
@@ -333,11 +345,106 @@ function solution() {
         var response = await _client.PostAsJsonAsync("/api/submissions", submitDto);
 
         // Assert
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
         var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(error);
         Assert.Contains("enrolled", error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SubmitCode_EnrolledInUnpublishedCourse_ShouldReturn403()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken, CourseStatus.Draft);
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        });
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SubmitCode_UnsupportedLanguage_ShouldListLanguageNames()
+    {
+        // Arrange - the problem has Python and JavaScript starter codes only
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            Code = "class Solution {}"
+        });
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Contains("JavaScript", error!.Detail);
+        Assert.Contains("Python", error.Detail);
+        Assert.DoesNotContain(_pythonLanguageId.ToString(), error.Detail);
+    }
+
+    [Fact]
+    public async Task SubmitCode_WithNulCharacters_ShouldStripThemAndReturn202()
+    {
+        // Arrange
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)\0\0"
+        });
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var submission = await response.Content.ReadFromJsonAsync<SubmissionResponseDto>();
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var stored = await dbContext.Submissions.SingleAsync(s => s.Id == submission!.Id);
+        Assert.Equal("print(1)", stored.Code);
+    }
+
+    [Fact]
+    public async Task SubmitCode_OnlyNulCharacters_ShouldReturn400()
+    {
+        // Arrange - the author may submit without a course
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "\0\0"
+        });
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
@@ -489,10 +596,10 @@ function solution() {
     public async Task GetSubmission_WithoutAuthentication_ShouldReturn401()
     {
         // Arrange
-        _client.DefaultRequestHeaders.Authorization = null;
+        using var anonymousClient = _factory.CreateAnonymousClient();
 
         // Act
-        var response = await _client.GetAsync($"/api/submissions/{Guid.NewGuid()}");
+        var response = await anonymousClient.GetAsync($"/api/submissions/{Guid.NewGuid()}");
 
         // Assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -621,13 +728,111 @@ function solution() {
     public async Task GetMySubmissions_WithoutAuthentication_ShouldReturn401()
     {
         // Arrange
-        _client.DefaultRequestHeaders.Authorization = null;
+        using var anonymousClient = _factory.CreateAnonymousClient();
 
         // Act
-        var response = await _client.GetAsync($"/api/submissions/problem/{Guid.NewGuid()}");
+        var response = await anonymousClient.GetAsync($"/api/submissions/problem/{Guid.NewGuid()}");
 
         // Assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    #endregion
+
+    #region Hidden Test Result Tests
+
+    // Seeds a graded submission with a passing public result and a failing hidden result whose
+    // output carries a marker; neither the hidden test's data nor the marker may reach the student
+    private async Task<(Guid SubmissionId, Guid HiddenTestCaseId, string HiddenInput)> SeedGradedSubmissionWithHiddenFailure(
+        ProblemResponseDto problem, string marker)
+    {
+        var submitResponse = await _client.PostAsJsonAsync("/api/submissions", new SubmitCodeDto
+        {
+            ProblemId = problem.Id,
+            LanguageId = _pythonLanguageId,
+            Code = "print(1)"
+        });
+        var submitted = await submitResponse.Content.ReadFromJsonAsync<SubmissionResponseDto>();
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var submission = await dbContext.Submissions.SingleAsync(s => s.Id == submitted!.Id);
+        var testCases = await dbContext.TestCases.Where(tc => tc.ProblemId == problem.Id).ToListAsync();
+        var publicTest = testCases.Single(tc => tc.IsPublic);
+        var hiddenTest = testCases.Single(tc => !tc.IsPublic);
+
+        submission.Status = SubmissionStatus.Completed;
+        submission.Score = 50;
+        dbContext.SubmissionTestResults.AddRange(
+            new SubmissionTestResult
+            {
+                Submission = submission,
+                TestCase = publicTest,
+                TestCaseId = publicTest.Id,
+                Status = TestResultStatus.Passed,
+                ActualOutput = publicTest.ExpectedOutput
+            },
+            new SubmissionTestResult
+            {
+                Submission = submission,
+                TestCase = hiddenTest,
+                TestCaseId = hiddenTest.Id,
+                Status = TestResultStatus.Failed,
+                ActualOutput = marker,
+                ErrorMessage = marker
+            });
+        await dbContext.SaveChangesAsync();
+
+        return (submission.Id, hiddenTest.Id, hiddenTest.Input);
+    }
+
+    [Fact]
+    public async Task GetSubmission_WithHiddenFailingResult_ShouldNeverExposeIt()
+    {
+        // Arrange
+        const string marker = "HIDDEN-RESULT-MARKER";
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+        var (submissionId, hiddenTestCaseId, hiddenInput) = await SeedGradedSubmissionWithHiddenFailure(problem, marker);
+
+        // Act
+        var response = await _client.GetAsync($"/api/submissions/{submissionId}");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(marker, body);
+        Assert.DoesNotContain(hiddenTestCaseId.ToString(), body);
+        Assert.DoesNotContain(hiddenInput, body);
+
+        var result = await response.Content.ReadFromJsonAsync<SubmissionResponseDto>();
+        var visible = Assert.Single(result!.TestResults!);
+        Assert.True(visible.IsPublic);
+        Assert.Equal(TestResultStatus.Passed, visible.Status);
+    }
+
+    [Fact]
+    public async Task GetMySubmissions_WithHiddenFailingResult_ShouldNeverExposeIt()
+    {
+        // Arrange
+        const string marker = "HIDDEN-LIST-MARKER";
+        var teacherToken = await GetTeacherToken();
+        var problem = await CreateProblem(teacherToken);
+        var studentToken = await GetStudentToken();
+        await EnrollInCourseWithProblem(problem, studentToken);
+        var (_, hiddenTestCaseId, hiddenInput) = await SeedGradedSubmissionWithHiddenFailure(problem, marker);
+
+        // Act
+        var response = await _client.GetAsync($"/api/submissions/problem/{problem.Id}");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(marker, body);
+        Assert.DoesNotContain(hiddenTestCaseId.ToString(), body);
+        Assert.DoesNotContain(hiddenInput, body);
     }
 
     #endregion

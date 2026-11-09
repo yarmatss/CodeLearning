@@ -6,32 +6,27 @@ namespace CodeLearning.Core.Grading;
 
 public static class SubmissionGrader
 {
-    private static readonly HashSet<SubmissionStatus> FailureStatuses =
-    [
-        SubmissionStatus.CompilationError,
-        SubmissionStatus.RuntimeError,
-        SubmissionStatus.TimeLimitExceeded,
-        SubmissionStatus.MemoryLimitExceeded
-    ];
+    public const string NoResultMessage = "No result produced for this test case";
+    public const string IncompleteExecutionMessage = "Execution stopped before every test case was run.";
+    public const string CompilationFailedMessage = "Compilation failed.";
+    public const int MaxCompilationErrorLength = 10_000;
 
     public static ExecutionResult Grade(ExecutionResult sandboxResult, IReadOnlyList<TestCase> testCases)
     {
-        if ((sandboxResult.TestResults.Count == 0 && sandboxResult.Status != SubmissionStatus.Completed)
-            || sandboxResult.Status == SubmissionStatus.CompilationError)
+        // The compiler output is captured by the agent before any submitted code runs, so it is shown as is
+        if (sandboxResult.Status == SubmissionStatus.CompilationError)
         {
             return new ExecutionResult
             {
-                // Pending/Running would leave the submission unfinished forever
-                Status = FailureStatuses.Contains(sandboxResult.Status)
-                    ? sandboxResult.Status
-                    : SubmissionStatus.RuntimeError,
+                Status = SubmissionStatus.CompilationError,
                 Score = 0,
                 TotalTests = testCases.Count,
                 PassedTests = 0,
                 TotalExecutionTimeMs = sandboxResult.TotalExecutionTimeMs,
                 MaxMemoryUsedKB = sandboxResult.MaxMemoryUsedKB,
-                CompilationError = sandboxResult.CompilationError,
-                RuntimeError = sandboxResult.RuntimeError
+                CompilationError = Truncate(sandboxResult.CompilationError) is { Length: > 0 } error
+                    ? error
+                    : CompilationFailedMessage
             };
         }
 
@@ -39,24 +34,35 @@ public static class SubmissionGrader
             .GroupBy(tr => tr.TestIndex)
             .ToDictionary(g => g.Key, g => g.First());
 
+        // A whole-run time or memory limit explains why the remaining tests have no result
+        var missingStatus = sandboxResult.Status switch
+        {
+            SubmissionStatus.TimeLimitExceeded => TestResultStatus.TimeLimitExceeded,
+            SubmissionStatus.MemoryLimitExceeded => TestResultStatus.MemoryLimitExceeded,
+            _ => TestResultStatus.RuntimeError
+        };
+
         var gradedResults = testCases
             .Select((testCase, index) => GradeTestCase(
                 testCase,
                 reportedByIndex.GetValueOrDefault(index),
-                index))
+                index,
+                missingStatus))
             .ToList();
 
         var passedTests = gradedResults.Count(tr => tr.Status == TestResultStatus.Passed);
 
         var status = GetOverallStatus(gradedResults);
 
-        // The submission-level error is shown to the student, so it is taken only from public tests:
-        // a hidden test's error output could reveal its input
+        // The submission-level error is shown to the student. The sandbox's own RuntimeError is never passed
+        // through, and a test's error output is used only for public tests: a hidden test's could reveal its input
         var runtimeError = status == SubmissionStatus.RuntimeError
-            ? sandboxResult.RuntimeError
-              ?? gradedResults
+            ? gradedResults
                   .Where((_, index) => testCases[index].IsPublic)
-                  .FirstOrDefault(tr => !string.IsNullOrWhiteSpace(tr.ErrorMessage))?.ErrorMessage
+                  .FirstOrDefault(tr => tr.Status == TestResultStatus.RuntimeError
+                                        && !string.IsNullOrWhiteSpace(tr.ErrorMessage)
+                                        && tr.ErrorMessage != NoResultMessage)?.ErrorMessage
+              ?? (gradedResults.Any(tr => tr.ErrorMessage == NoResultMessage) ? IncompleteExecutionMessage : null)
             : null;
 
         return new ExecutionResult
@@ -72,6 +78,7 @@ public static class SubmissionGrader
         };
     }
 
+    // Line endings, trailing whitespace on each line, and blank lines or whitespace around the whole output are ignored
     public static bool OutputsMatch(string? actualOutput, string expectedOutput)
     {
         return Normalize(actualOutput ?? string.Empty) == Normalize(expectedOutput);
@@ -91,7 +98,11 @@ public static class SubmissionGrader
         return SubmissionStatus.Completed;
     }
 
-    private static TestCaseResult GradeTestCase(TestCase testCase, TestCaseResult? reported, int index)
+    private static TestCaseResult GradeTestCase(
+        TestCase testCase,
+        TestCaseResult? reported,
+        int index,
+        TestResultStatus missingStatus)
     {
         if (reported == null)
         {
@@ -99,14 +110,16 @@ public static class SubmissionGrader
             {
                 TestCaseId = testCase.Id,
                 TestIndex = index,
-                Status = TestResultStatus.RuntimeError,
-                ErrorMessage = "No result produced for this test case"
+                Status = missingStatus,
+                ErrorMessage = missingStatus == TestResultStatus.RuntimeError ? NoResultMessage : null
             };
         }
 
         var status = reported.Status switch
         {
-            TestResultStatus.RuntimeError => TestResultStatus.RuntimeError,
+            TestResultStatus.RuntimeError => TestRunVerdict.IsOutOfMemoryMessage(reported.ErrorMessage)
+                ? TestResultStatus.MemoryLimitExceeded
+                : TestResultStatus.RuntimeError,
             TestResultStatus.TimeLimitExceeded => TestResultStatus.TimeLimitExceeded,
             TestResultStatus.MemoryLimitExceeded => TestResultStatus.MemoryLimitExceeded,
             _ => OutputsMatch(reported.ActualOutput, testCase.ExpectedOutput)
@@ -126,5 +139,14 @@ public static class SubmissionGrader
         };
     }
 
-    private static string Normalize(string output) => output.Replace("\r\n", "\n").Trim();
+    private static string Normalize(string output)
+    {
+        var lines = output.Replace("\r\n", "\n").Split('\n').Select(line => line.TrimEnd());
+        return string.Join('\n', lines).Trim();
+    }
+
+    private static string? Truncate(string? value) =>
+        value is { Length: > MaxCompilationErrorLength }
+            ? value[..MaxCompilationErrorLength] + "\n" + BoundedOutputCapture.TruncationMarker
+            : value;
 }

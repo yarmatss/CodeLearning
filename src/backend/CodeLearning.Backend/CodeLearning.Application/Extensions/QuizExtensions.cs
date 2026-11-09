@@ -27,7 +27,8 @@ public static class QuizExtensions
             Content = question.Content,
             Type = question.Type.ToString(),
             Points = question.Points,
-            Explanation = question.Explanation,
+            // The explanation gives the answer away, so students see it only in their attempt result
+            Explanation = includeCorrectAnswers ? question.Explanation : null,
             OrderIndex = question.OrderIndex,
             Answers = question.Answers
                 .OrderBy(a => a.OrderIndex)

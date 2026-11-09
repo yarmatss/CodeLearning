@@ -5,287 +5,340 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
-using CodeLearning.Infrastructure.Extensions;
+using CodeLearning.Infrastructure.Services.Learning;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
 
-// Text is stored as written; the frontend sanitizes rendered markdown (DOMPurify) and escapes plain text
+// Text is stored as written; the frontend sanitizes rendered markdown (DOMPurify) and escapes plain text.
+// Every mutation runs in a CourseEditScope (course row locked) and saves once
 public class BlockService(ApplicationDbContext context) : IBlockService
 {
     public async Task<Guid> CreateTheoryBlockAsync(Guid subchapterId, CreateTheoryBlockDto dto, Guid instructorId)
     {
-        await VerifyOwnershipAsync(subchapterId, instructorId);
-        var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
-
-        var theoryContent = new TheoryContent
+        return await CreateBlockAsync(subchapterId, instructorId, BlockType.Theory, dto.Title, block =>
         {
-            Content = dto.Content,
-            Block = null!
-        };
-
-        var block = new CourseBlock
-        {
-            Title = dto.Title,
-            Type = BlockType.Theory,
-            OrderIndex = nextOrderIndex,
-            SubchapterId = subchapterId,
-            Subchapter = null!,
-            TheoryContent = theoryContent
-        };
-
-        context.CourseBlocks.Add(block);
-        await context.SaveChangesAsync();
-
-        return block.Id;
+            block.TheoryContent = new TheoryContent { Content = dto.Content, Block = null! };
+            return Task.CompletedTask;
+        });
     }
 
     public async Task<Guid> CreateVideoBlockAsync(Guid subchapterId, CreateVideoBlockDto dto, Guid instructorId)
     {
-        await VerifyOwnershipAsync(subchapterId, instructorId);
+        var videoId = RequireVideoId(dto.VideoUrl);
 
-        var videoId = dto.VideoUrl.ExtractYouTubeVideoId();
-        if (string.IsNullOrEmpty(videoId))
+        return await CreateBlockAsync(subchapterId, instructorId, BlockType.Video, dto.Title, block =>
         {
-            throw new BusinessRuleException("Invalid YouTube URL");
-        }
-
-        var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
-        var videoContent = new VideoContent
-        {
-            VideoUrl = dto.VideoUrl,
-            VideoId = videoId,
-            Block = null!
-        };
-
-        var block = new CourseBlock
-        {
-            Title = dto.Title,
-            Type = BlockType.Video,
-            OrderIndex = nextOrderIndex,
-            SubchapterId = subchapterId,
-            Subchapter = null!,
-            VideoContent = videoContent
-        };
-
-        context.CourseBlocks.Add(block);
-        await context.SaveChangesAsync();
-
-        return block.Id;
+            block.VideoContent = new VideoContent
+            {
+                VideoUrl = videoId.ToYouTubeWatchUrl(),
+                VideoId = videoId,
+                Block = null!
+            };
+            return Task.CompletedTask;
+        });
     }
 
     public async Task<Guid> CreateQuizBlockAsync(Guid subchapterId, CreateQuizBlockDto dto, Guid instructorId)
     {
-        await VerifyOwnershipAsync(subchapterId, instructorId);
-
-        var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
-        var quiz = new Quiz
+        return await CreateBlockAsync(subchapterId, instructorId, BlockType.Quiz, dto.Title, block =>
         {
-            Block = null!
-        };
-
-        var block = new CourseBlock
-        {
-            Title = dto.Title,
-            Type = BlockType.Quiz,
-            OrderIndex = nextOrderIndex,
-            SubchapterId = subchapterId,
-            Subchapter = null!,
-            Quiz = quiz
-        };
-
-        context.CourseBlocks.Add(block);
-        context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, quiz));
-        await context.SaveChangesAsync();
-
-        return block.Id;
+            var quiz = new Quiz { Block = null! };
+            block.Quiz = quiz;
+            context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, quiz));
+            return Task.CompletedTask;
+        });
     }
 
     public async Task<Guid> CreateProblemBlockAsync(Guid subchapterId, CreateProblemBlockDto dto, Guid instructorId)
     {
-        await VerifyOwnershipAsync(subchapterId, instructorId);
-
-        var problemExists = await context.Problems.AnyAsync(p => p.Id == dto.ProblemId);
-        if (!problemExists)
+        return await CreateBlockAsync(subchapterId, instructorId, BlockType.Problem, dto.Title, async block =>
         {
-            throw new NotFoundException($"Problem with ID {dto.ProblemId} not found");
-        }
-
-        var nextOrderIndex = await GetNextOrderIndexAsync(subchapterId);
-        var block = new CourseBlock
-        {
-            Title = dto.Title,
-            Type = BlockType.Problem,
-            OrderIndex = nextOrderIndex,
-            SubchapterId = subchapterId,
-            Subchapter = null!,
-            ProblemId = dto.ProblemId
-        };
-
-        context.CourseBlocks.Add(block);
-        await context.SaveChangesAsync();
-
-        return block.Id;
+            await EnsureProblemAttachableAsync(dto.ProblemId, instructorId);
+            block.ProblemId = dto.ProblemId;
+        });
     }
 
-    public async Task DeleteBlockAsync(Guid blockId, Guid instructorId)
+    public async Task DeleteBlockAsync(Guid subchapterId, Guid blockId, Guid instructorId)
     {
-        var block = await context.CourseBlocks
-            .Include(b => b.Subchapter.Chapter.Course)
-            .Include(b => b.TheoryContent)
-            .Include(b => b.VideoContent)
-            .Include(b => b.Quiz)
-            .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new NotFoundException($"Block with ID {blockId} not found");
+        await using var scope = await BeginEditAsync(subchapterId);
 
-        VerifyBlockOwnership(block, instructorId);
-
+        var block = await LoadEditableBlockAsync(subchapterId, blockId, instructorId);
         var deletedOrderIndex = block.OrderIndex;
-        var subchapterId = block.SubchapterId;
 
-        context.CourseBlocks.Remove(block);
-        RemoveBlockContent(context, block.TheoryContent, block.VideoContent, block.Quiz);
-        await context.SaveChangesAsync();
+        await BlockContentCleanup.RemoveForBlocksAsync(context, b => b.Id == blockId);
 
-        // Reindex remaining blocks: all blocks with orderIndex > deletedOrderIndex should decrease by 1
-        var blocksToReindex = await context.CourseBlocks
+        var following = await context.CourseBlocks
             .Where(b => b.SubchapterId == subchapterId && b.OrderIndex > deletedOrderIndex)
             .ToListAsync();
 
-        foreach (var blockToReindex in blocksToReindex)
+        foreach (var sibling in following)
         {
-            blockToReindex.OrderIndex--;
+            sibling.OrderIndex--;
         }
 
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
     }
 
-    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, Guid? viewerId = null)
+    public async Task<BlockResponseDto> GetBlockByIdAsync(Guid blockId, Guid viewerId)
     {
-        var block = await GetBlockWithIncludesAsync(blockId)
+        var subchapterId = await context.CourseBlocks
+            .Where(b => b.Id == blockId)
+            .Select(b => (Guid?)b.SubchapterId)
+            .FirstOrDefaultAsync()
             ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
-        var instructorId = await GetVisibleCourseInstructorIdAsync(block.SubchapterId, viewerId)
-            ?? throw new NotFoundException($"Block with ID {blockId} not found");
+        var isInstructor = await AuthorizeContentAccessAsync(subchapterId, viewerId, $"Block with ID {blockId} not found");
 
-        var includeCorrectAnswers = instructorId == viewerId;
+        var block = await BlocksWithContent()
+            .FirstAsync(b => b.Id == blockId);
 
-        return block.ToResponseDto(includeCorrectAnswers);
+        return block.ToResponseDto(includeCorrectAnswers: isInstructor);
     }
 
-    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, Guid? viewerId = null)
+    public async Task<IEnumerable<BlockResponseDto>> GetSubchapterBlocksAsync(Guid subchapterId, Guid viewerId)
     {
-        var instructorId = await GetVisibleCourseInstructorIdAsync(subchapterId, viewerId)
-            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
+        var isInstructor = await AuthorizeContentAccessAsync(subchapterId, viewerId, $"Subchapter with ID {subchapterId} not found");
 
-        var includeCorrectAnswers = instructorId == viewerId;
-
-        var blocks = await context.CourseBlocks
-            .Include(b => b.TheoryContent)
-            .Include(b => b.VideoContent)
-            .Include(b => b.Quiz!.Questions.OrderBy(qq => qq.OrderIndex))
-                .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
-            .Include(b => b.Problem)
+        var blocks = await BlocksWithContent()
             .Where(b => b.SubchapterId == subchapterId)
             .OrderBy(b => b.OrderIndex)
             .ToListAsync();
 
-        return blocks.ToResponseDtos(includeCorrectAnswers);
+        return blocks.ToResponseDtos(includeCorrectAnswers: isInstructor);
     }
 
-    public async Task UpdateTheoryBlockAsync(Guid blockId, UpdateTheoryBlockDto dto, Guid instructorId)
+    public async Task UpdateTheoryBlockAsync(Guid subchapterId, Guid blockId, UpdateTheoryBlockDto dto, Guid instructorId)
     {
-        var block = await GetBlockForUpdateAsync(blockId, BlockType.Theory, instructorId);
-
-        block.Title = dto.Title;
-
-        if (block.TheoryContent != null)
+        await UpdateBlockAsync(subchapterId, blockId, instructorId, BlockType.Theory, block =>
         {
-            block.TheoryContent.Content = dto.Content;
-        }
+            block.Title = dto.Title;
 
-        await context.SaveChangesAsync();
-    }
-
-    public async Task UpdateVideoBlockAsync(Guid blockId, UpdateVideoBlockDto dto, Guid instructorId)
-    {
-        var block = await GetBlockForUpdateAsync(blockId, BlockType.Video, instructorId);
-
-        var videoId = dto.VideoUrl.ExtractYouTubeVideoId();
-        if (string.IsNullOrEmpty(videoId))
-        {
-            throw new BusinessRuleException("Invalid YouTube URL");
-        }
-
-        block.Title = dto.Title;
-
-        if (block.VideoContent != null)
-        {
-            block.VideoContent.VideoUrl = dto.VideoUrl;
-            block.VideoContent.VideoId = videoId;
-        }
-
-        await context.SaveChangesAsync();
-    }
-
-    public async Task UpdateQuizBlockAsync(Guid blockId, UpdateQuizBlockDto dto, Guid instructorId)
-    {
-        var block = await GetBlockForUpdateAsync(blockId, BlockType.Quiz, instructorId);
-
-        block.Title = dto.Title;
-
-        if (block.Quiz?.Questions != null)
-        {
-            foreach (var question in block.Quiz.Questions.ToList())
+            if (block.TheoryContent != null)
             {
-                context.QuizAnswers.RemoveRange(question.Answers);
+                block.TheoryContent.Content = dto.Content;
             }
-            context.QuizQuestions.RemoveRange(block.Quiz.Questions);
-        }
 
-        await context.SaveChangesAsync();
-
-        context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, block.Quiz!));
-        await context.SaveChangesAsync();
+            return Task.CompletedTask;
+        });
     }
 
-    public async Task UpdateBlockOrderAsync(Guid blockId, int newOrderIndex, Guid instructorId)
+    public async Task UpdateVideoBlockAsync(Guid subchapterId, Guid blockId, UpdateVideoBlockDto dto, Guid instructorId)
+    {
+        var videoId = RequireVideoId(dto.VideoUrl);
+
+        await UpdateBlockAsync(subchapterId, blockId, instructorId, BlockType.Video, block =>
+        {
+            block.Title = dto.Title;
+
+            if (block.VideoContent != null)
+            {
+                block.VideoContent.VideoUrl = videoId.ToYouTubeWatchUrl();
+                block.VideoContent.VideoId = videoId;
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    // Questions are replaced, not merged: the old ones (answers cascade) are removed and the new ones added
+    // in the same SaveChanges, so a failure leaves the quiz as it was
+    public async Task UpdateQuizBlockAsync(Guid subchapterId, Guid blockId, UpdateQuizBlockDto dto, Guid instructorId)
+    {
+        await UpdateBlockAsync(subchapterId, blockId, instructorId, BlockType.Quiz, async block =>
+        {
+            block.Title = dto.Title;
+
+            var quiz = block.Quiz ?? throw new BusinessRuleException("Quiz block has no quiz");
+
+            var oldQuestions = await context.QuizQuestions
+                .Include(q => q.Answers)
+                .Where(q => q.QuizId == quiz.Id)
+                .ToListAsync();
+
+            context.QuizAnswers.RemoveRange(oldQuestions.SelectMany(q => q.Answers));
+            context.QuizQuestions.RemoveRange(oldQuestions);
+            context.QuizQuestions.AddRange(BuildQuizQuestions(dto.Questions, quiz));
+        });
+    }
+
+    public async Task UpdateProblemBlockAsync(Guid subchapterId, Guid blockId, UpdateProblemBlockDto dto, Guid instructorId)
+    {
+        await UpdateBlockAsync(subchapterId, blockId, instructorId, BlockType.Problem, async block =>
+        {
+            if (block.ProblemId != dto.ProblemId)
+            {
+                await EnsureProblemAttachableAsync(dto.ProblemId, instructorId);
+                block.ProblemId = dto.ProblemId;
+            }
+
+            block.Title = dto.Title;
+        });
+    }
+
+    public async Task UpdateBlockOrderAsync(Guid subchapterId, Guid blockId, int newOrderIndex, Guid instructorId)
+    {
+        await using var scope = await BeginEditAsync(subchapterId);
+
+        var block = await LoadEditableBlockAsync(subchapterId, blockId, instructorId);
+
+        var siblings = await context.CourseBlocks
+            .Where(b => b.SubchapterId == subchapterId && b.Id != blockId)
+            .ToListAsync();
+
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, siblings.Count + 1);
+        OrderIndexRules.Move(block, siblings, b => b.OrderIndex, (b, index) => b.OrderIndex = index, newOrderIndex);
+
+        await context.SaveChangesAsync();
+        await scope.CommitAsync();
+    }
+
+    private async Task<Guid> CreateBlockAsync(
+        Guid subchapterId,
+        Guid instructorId,
+        BlockType type,
+        string title,
+        Func<CourseBlock, Task> attachContent)
+    {
+        await using var scope = await BeginEditAsync(subchapterId);
+
+        var subchapter = await context.Subchapters
+            .Include(s => s.Chapter.Course)
+            .FirstAsync(s => s.Id == subchapterId);
+
+        EnsureEditable(subchapter.Chapter.Course, instructorId);
+
+        // Read under the course lock, so two concurrent creates cannot both take the same index
+        var maxOrder = await context.CourseBlocks
+            .Where(b => b.SubchapterId == subchapterId)
+            .MaxAsync(b => (int?)b.OrderIndex) ?? 0;
+
+        var block = new CourseBlock
+        {
+            Title = title,
+            Type = type,
+            OrderIndex = maxOrder + 1,
+            SubchapterId = subchapterId,
+            Subchapter = subchapter
+        };
+
+        await attachContent(block);
+
+        context.CourseBlocks.Add(block);
+        await context.SaveChangesAsync();
+        await scope.CommitAsync();
+
+        return block.Id;
+    }
+
+    private async Task UpdateBlockAsync(
+        Guid subchapterId,
+        Guid blockId,
+        Guid instructorId,
+        BlockType expectedType,
+        Func<CourseBlock, Task> apply)
+    {
+        await using var scope = await BeginEditAsync(subchapterId);
+
+        var block = await LoadEditableBlockAsync(subchapterId, blockId, instructorId);
+
+        if (block.Type != expectedType)
+        {
+            throw new BusinessRuleException($"Block is not a {expectedType.ToString().ToLowerInvariant()} block");
+        }
+
+        await apply(block);
+
+        await context.SaveChangesAsync();
+        await scope.CommitAsync();
+    }
+
+    private async Task<CourseEditScope> BeginEditAsync(Guid subchapterId)
+    {
+        var courseId = await context.Subchapters
+            .Where(s => s.Id == subchapterId)
+            .Select(s => (Guid?)s.Chapter.CourseId)
+            .FirstOrDefaultAsync()
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
+
+        return await CourseEditScope.BeginAsync(context, courseId);
+    }
+
+    // A block id under another subchapter's route is answered as not found
+    private async Task<CourseBlock> LoadEditableBlockAsync(Guid subchapterId, Guid blockId, Guid instructorId)
     {
         var block = await context.CourseBlocks
+            .Include(b => b.TheoryContent)
+            .Include(b => b.VideoContent)
+            .Include(b => b.Quiz)
             .Include(b => b.Subchapter.Chapter.Course)
-            .FirstOrDefaultAsync(b => b.Id == blockId)
+            .FirstOrDefaultAsync(b => b.Id == blockId && b.SubchapterId == subchapterId)
             ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
-        VerifyBlockOwnership(block, instructorId);
+        EnsureEditable(block.Subchapter.Chapter.Course, instructorId);
 
-        var blockCount = await context.CourseBlocks.CountAsync(b => b.SubchapterId == block.SubchapterId);
-        OrderIndexRules.EnsureWithinRange(newOrderIndex, blockCount);
+        return block;
+    }
 
-        var oldOrderIndex = block.OrderIndex;
-
-        if (oldOrderIndex == newOrderIndex)
+    private static void EnsureEditable(Course course, Guid instructorId)
+    {
+        if (course.InstructorId != instructorId)
         {
-            return;
+            throw new ForbiddenException("You can only modify blocks in your own courses");
         }
 
-        block.OrderIndex = newOrderIndex;
-
-        await ReorderBlocks(block.SubchapterId, blockId, oldOrderIndex, newOrderIndex);
-        await context.SaveChangesAsync();
+        if (course.Status == CourseStatus.Published)
+        {
+            throw new BusinessRuleException("Cannot modify blocks in a published course");
+        }
     }
 
-    // The block holds the foreign keys, so its content is not deleted with it; questions and answers
-    // cascade from the quiz. Attempts cannot exist, as only draft courses can be edited
-    internal static void RemoveBlockContent(
-        ApplicationDbContext context,
-        TheoryContent? theoryContent,
-        VideoContent? videoContent,
-        Quiz? quiz)
+    // Teachers attach only problems they authored: the course must not depend on a problem someone else
+    // can change or lock
+    private async Task EnsureProblemAttachableAsync(Guid problemId, Guid instructorId)
     {
-        if (theoryContent != null) context.TheoryContents.Remove(theoryContent);
-        if (videoContent != null) context.VideoContents.Remove(videoContent);
-        if (quiz != null) context.Quizzes.Remove(quiz);
+        var authorId = await context.Problems
+            .Where(p => p.Id == problemId)
+            .Select(p => (Guid?)p.AuthorId)
+            .FirstOrDefaultAsync()
+            ?? throw new NotFoundException($"Problem with ID {problemId} not found");
+
+        if (authorId != instructorId)
+        {
+            throw new ForbiddenException("You can only attach problems you authored");
+        }
     }
+
+    // Returns whether the viewer is the course instructor (who also sees quiz answers). Students need an
+    // enrollment in a published course; a draft course stays hidden (404) from everyone else
+    private async Task<bool> AuthorizeContentAccessAsync(Guid subchapterId, Guid viewerId, string notFoundMessage)
+    {
+        var course = await context.Subchapters
+            .Where(s => s.Id == subchapterId)
+            .Select(s => new { s.Chapter.CourseId, s.Chapter.Course.InstructorId, s.Chapter.Course.Status })
+            .FirstOrDefaultAsync()
+            ?? throw new NotFoundException(notFoundMessage);
+
+        if (course.InstructorId == viewerId)
+        {
+            return true;
+        }
+
+        var isEnrolled = await context.StudentCourseProgresses
+            .AnyAsync(p => p.CourseId == course.CourseId && p.StudentId == viewerId);
+
+        return (course.Status, isEnrolled) switch
+        {
+            (CourseStatus.Published, true) => false,
+            (CourseStatus.Published, false) => throw new ForbiddenException("Enroll in this course to view its content"),
+            (_, true) => throw new ForbiddenException("This course is not published at the moment"),
+            _ => throw new NotFoundException(notFoundMessage)
+        };
+    }
+
+    private static string RequireVideoId(string videoUrl) =>
+        videoUrl.ExtractYouTubeVideoId() ?? throw new BusinessRuleException("Invalid YouTube URL");
 
     // Shared by create and update so both persist every question field
     private static List<QuizQuestion> BuildQuizQuestions(IEnumerable<CreateQuizQuestionDto> questions, Quiz quiz) =>
@@ -308,106 +361,13 @@ public class BlockService(ApplicationDbContext context) : IBlockService
             }).ToList()
         }).ToList();
 
-    // Null when the subchapter does not exist or belongs to a draft course the viewer does not own;
-    // the course instructor is also the only viewer who sees quiz answers
-    private async Task<Guid?> GetVisibleCourseInstructorIdAsync(Guid subchapterId, Guid? viewerId) =>
-        await context.Courses
-            .VisibleTo(viewerId)
-            .Where(c => c.Chapters.Any(ch => ch.Subchapters.Any(s => s.Id == subchapterId)))
-            .Select(c => (Guid?)c.InstructorId)
-            .FirstOrDefaultAsync();
-
-    private async Task VerifyOwnershipAsync(Guid subchapterId, Guid instructorId)
-    {
-        var subchapter = await context.Subchapters
-            .Include(s => s.Chapter.Course)
-            .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
-
-        if (subchapter.Chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only add blocks to your own courses");
-        }
-
-        if (subchapter.Chapter.Course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot add blocks to a published course");
-        }
-    }
-
-    private static void VerifyBlockOwnership(CourseBlock block, Guid instructorId)
-    {
-        if (block.Subchapter.Chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only modify blocks in your own courses");
-        }
-
-        if (block.Subchapter.Chapter.Course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot modify blocks in a published course");
-        }
-    }
-
-    private async Task<CourseBlock> GetBlockForUpdateAsync(Guid blockId, BlockType expectedType, Guid instructorId)
-    {
-        var block = await context.CourseBlocks
-            .Include(b => b.TheoryContent)
-            .Include(b => b.VideoContent)
-            .Include(b => b.Quiz!.Questions)
-                .ThenInclude(qq => qq.Answers)
-            .Include(b => b.Subchapter.Chapter.Course)
-            .FirstOrDefaultAsync(b => b.Id == blockId)
-            ?? throw new NotFoundException($"Block with ID {blockId} not found");
-
-        VerifyBlockOwnership(block, instructorId);
-
-        if (block.Type != expectedType)
-        {
-            throw new BusinessRuleException($"Block is not a {expectedType.ToString().ToLower()} block");
-        }
-
-        return block;
-    }
-
-    private async Task<CourseBlock?> GetBlockWithIncludesAsync(Guid blockId)
-    {
-        return await context.CourseBlocks
+    private IQueryable<CourseBlock> BlocksWithContent() =>
+        context.CourseBlocks
+            .AsNoTracking()
             .Include(b => b.TheoryContent)
             .Include(b => b.VideoContent)
             .Include(b => b.Quiz!.Questions.OrderBy(qq => qq.OrderIndex))
                 .ThenInclude(qq => qq.Answers.OrderBy(a => a.OrderIndex))
             .Include(b => b.Problem)
-            .FirstOrDefaultAsync(b => b.Id == blockId);
-    }
-
-    private async Task ReorderBlocks(Guid subchapterId, Guid excludeBlockId, int oldOrderIndex, int newOrderIndex)
-    {
-        var otherBlocks = await context.CourseBlocks
-            .Where(b => b.SubchapterId == subchapterId && b.Id != excludeBlockId)
-            .ToListAsync();
-
-        if (newOrderIndex < oldOrderIndex)
-        {
-            foreach (var other in otherBlocks.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
-            {
-                other.OrderIndex++;
-            }
-        }
-        else
-        {
-            foreach (var other in otherBlocks.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
-            {
-                other.OrderIndex--;
-            }
-        }
-    }
-
-    private async Task<int> GetNextOrderIndexAsync(Guid subchapterId)
-    {
-        var maxOrder = await context.CourseBlocks
-            .Where(b => b.SubchapterId == subchapterId)
-            .MaxAsync(b => (int?)b.OrderIndex);
-
-        return (maxOrder ?? 0) + 1;
-    }
+            .AsSplitQuery();
 }

@@ -53,26 +53,24 @@ public class StuckSubmissionSweeper(
         var runningCutoff = now - _runningTimeout;
         var pendingCutoff = now - _pendingTimeout;
 
-        var stuck = await dbContext.Submissions
+        // One guarded UPDATE: the status and age are checked again on each row as it is written, so a submission
+        // the consumer finishes (or claims, refreshing UpdatedAt) in the meantime is left alone
+        var failed = await dbContext.Submissions
             .Where(s => (s.Status == SubmissionStatus.Running && s.UpdatedAt < runningCutoff)
                      || (s.Status == SubmissionStatus.Pending && s.UpdatedAt < pendingCutoff))
-            .ToListAsync(cancellationToken);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, SubmissionStatus.RuntimeError)
+                .SetProperty(x => x.Score, 0)
+                .SetProperty(x => x.RuntimeError, SubmissionCreatedConsumer.InternalErrorMessage)
+                .SetProperty(x => x.CompletedAt, now)
+                .SetProperty(x => x.UpdatedAt, now),
+                cancellationToken);
 
-        if (stuck.Count == 0)
+        if (failed > 0)
         {
-            return 0;
+            logger.LogWarning("Failed {Count} submissions that made no progress in time", failed);
         }
 
-        foreach (var submission in stuck)
-        {
-            submission.Status = SubmissionStatus.RuntimeError;
-            submission.RuntimeError = SubmissionCreatedConsumer.InternalErrorMessage;
-            submission.CompletedAt = now;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogWarning("Failed {Count} submissions that made no progress in time", stuck.Count);
-        return stuck.Count;
+        return failed;
     }
 }

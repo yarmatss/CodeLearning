@@ -20,13 +20,11 @@ public class CoursesController(
     {
         await createCourseValidator.ValidateAndThrowAsync(dto);
 
-        var userId = User.GetRequiredUserId();
-        var course = await courseService.CreateCourseAsync(dto, userId);
-
+        var course = await courseService.CreateCourseAsync(dto, User.GetRequiredUserId());
         return CreatedAtAction(nameof(GetCourseById), new { id = course.Id }, course);
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseById(Guid id)
     {
@@ -34,7 +32,8 @@ public class CoursesController(
         return Ok(course);
     }
 
-    [HttpGet("{id}/structure")]
+    // Public outline (titles, block types, order); no block content
+    [HttpGet("{id:guid}/structure")]
     [AllowAnonymous]
     public async Task<IActionResult> GetCourseStructure(Guid id)
     {
@@ -46,45 +45,57 @@ public class CoursesController(
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> GetMyCourses()
     {
-        var userId = User.GetRequiredUserId();
-        var courses = await courseService.GetInstructorCoursesAsync(userId);
+        var courses = await courseService.GetInstructorCoursesAsync(User.GetRequiredUserId());
         return Ok(courses);
+    }
+
+    [HttpGet("my/stats")]
+    [Authorize(Roles = "Teacher")]
+    public async Task<IActionResult> GetMyStats()
+    {
+        var stats = await courseService.GetInstructorStatsAsync(User.GetRequiredUserId());
+        return Ok(stats);
     }
 
     [HttpGet("published")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetPublishedCourses()
+    public async Task<IActionResult> GetPublishedCourses([FromQuery] int? page, [FromQuery] int? pageSize)
     {
-        var courses = await courseService.GetPublishedCoursesAsync();
+        var courses = await courseService.GetPublishedCoursesAsync(page, pageSize);
         return Ok(courses);
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("{id:guid}")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> UpdateCourse(Guid id, [FromBody] UpdateCourseDto dto)
     {
         await updateCourseValidator.ValidateAndThrowAsync(dto);
 
-        var userId = User.GetRequiredUserId();
-        var course = await courseService.UpdateCourseAsync(id, dto, userId);
+        var course = await courseService.UpdateCourseAsync(id, dto, User.GetRequiredUserId());
         return Ok(course);
     }
 
-    [HttpPost("{id}/publish")]
+    [HttpPost("{id:guid}/publish")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> PublishCourse(Guid id)
     {
-        var userId = User.GetRequiredUserId();
-        var course = await courseService.PublishCourseAsync(id, userId);
+        var course = await courseService.PublishCourseAsync(id, User.GetRequiredUserId());
         return Ok(new { message = "Course published successfully", course });
     }
 
-    [HttpDelete("{id}")]
+    [HttpPost("{id:guid}/unpublish")]
+    [Authorize(Roles = "Teacher")]
+    public async Task<IActionResult> UnpublishCourse(Guid id)
+    {
+        var course = await courseService.UnpublishCourseAsync(id, User.GetRequiredUserId());
+        return Ok(new { message = "Course unpublished successfully", course });
+    }
+
+    [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Teacher")]
     public async Task<IActionResult> DeleteCourse(Guid id)
     {
-        var userId = User.GetRequiredUserId();
-        await courseService.DeleteCourseAsync(id, userId);
+        await courseService.DeleteCourseAsync(id, User.GetRequiredUserId());
         return Ok(new { message = "Course deleted successfully" });
     }
 }

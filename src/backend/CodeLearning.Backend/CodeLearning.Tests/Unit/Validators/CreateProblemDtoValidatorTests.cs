@@ -32,7 +32,7 @@ public class CreateProblemDtoValidatorTests
                     IsPublic = true
                 }
             ],
-            StarterCodes = [],
+            StarterCodes = [ValidStarterCode()],
             TagIds = []
         };
 
@@ -191,19 +191,25 @@ public class CreateProblemDtoValidatorTests
     }
 
     [Fact]
-    public void Validate_TestCaseWithEmptyExpectedOutput_ShouldFail()
+    public void Validate_TestCaseWithEmptyExpectedOutput_ShouldPass()
+    {
+        // Arrange - a program that prints nothing is a valid test
+        var dto = ValidDto();
+        dto.TestCases = [new CreateTestCaseDto { Input = "1", ExpectedOutput = "", IsPublic = true }];
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_TestCaseWithNullExpectedOutput_ShouldFail()
     {
         // Arrange
-        var dto = new CreateProblemDto
-        {
-            Title = "Valid Title",
-            Description = "Valid description with more than 20 characters",
-            Difficulty = "Easy",
-            TestCases =
-            [
-                new CreateTestCaseDto { Input = "1", ExpectedOutput = "", IsPublic = true }
-            ]
-        };
+        var dto = ValidDto();
+        dto.TestCases = [new CreateTestCaseDto { Input = "1", ExpectedOutput = null!, IsPublic = true }];
 
         // Act
         var result = _validator.Validate(dto);
@@ -212,6 +218,126 @@ public class CreateProblemDtoValidatorTests
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.PropertyName.Contains("ExpectedOutput"));
     }
+
+    [Fact]
+    public void Validate_NullTestCaseElement_ShouldFailWithoutThrowing()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.TestCases.Add(null!);
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName.StartsWith("TestCases["));
+    }
+
+    [Fact]
+    public void Validate_NoStarterCodes_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.StarterCodes = [];
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "StarterCodes");
+    }
+
+    [Fact]
+    public void Validate_DuplicateStarterCodeLanguages_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.StarterCodes.Add(new CreateStarterCodeDto { Code = "x", LanguageId = dto.StarterCodes[0].LanguageId });
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "StarterCodes");
+    }
+
+    [Fact]
+    public void Validate_TooManyStarterCodes_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.StarterCodes = Enumerable.Range(0, ProblemValidationRules.MaxStarterCodes + 1)
+            .Select(_ => new CreateStarterCodeDto { Code = "x", LanguageId = Guid.NewGuid() })
+            .ToList();
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "StarterCodes");
+    }
+
+    [Fact]
+    public void Validate_TooManyTagIds_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.TagIds = Enumerable.Range(0, ProblemValidationRules.MaxTagIds + 1).Select(_ => Guid.NewGuid()).ToList();
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "TagIds");
+    }
+
+    [Fact]
+    public void Validate_DescriptionTooLong_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.Description = new string('a', ProblemValidationRules.MaxDescriptionLength + 1);
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Description");
+    }
+
+    [Fact]
+    public void Validate_NulCharacterInTestInput_ShouldFail()
+    {
+        // Arrange
+        var dto = ValidDto();
+        dto.TestCases[0].Input = "1\0";
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName.Contains("Input"));
+    }
+
+    private static CreateStarterCodeDto ValidStarterCode() =>
+        new() { Code = "def solution():\n    pass", LanguageId = Guid.NewGuid() };
+
+    private static CreateProblemDto ValidDto() => new()
+    {
+        Title = "Valid Title",
+        Description = "Valid description with more than 20 characters",
+        Difficulty = "Easy",
+        TestCases = [new CreateTestCaseDto { Input = "1", ExpectedOutput = "1", IsPublic = true }],
+        StarterCodes = [ValidStarterCode()],
+        TagIds = []
+    };
 
     [Fact]
     public void Validate_TooManyTestCases_ShouldFail()

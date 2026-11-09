@@ -5,15 +5,54 @@
     </div>
   } @else {
     <!-- Header -->
-    <div class="mb-6 flex items-center justify-between">
-      <h1 class="text-3xl font-bold text-gray-900">Manage Blocks</h1>
+    <div class="mb-6 flex items-start justify-between gap-4">
+      <div class="min-w-0 flex-1">
+        <p class="text-sm text-gray-500">{{ course()?.title ?? 'Course' }} › Blocks</p>
+        @if (isRenaming()) {
+          <form [formGroup]="renameForm" (ngSubmit)="saveRename()" class="mt-1 flex flex-wrap items-center gap-2">
+            <label for="subchapterRename" class="sr-only">Subchapter title</label>
+            <input
+              id="subchapterRename"
+              type="text"
+              formControlName="title"
+              class="min-w-0 flex-1 rounded-md border border-gray-300 px-3 py-2 text-xl font-semibold focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <button type="submit" class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">Save</button>
+            <button
+              type="button"
+              (click)="cancelRename()"
+              class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </form>
+          @if (renameForm.get('title')?.invalid && renameForm.get('title')?.touched) {
+            <p class="mt-1 text-sm text-red-600">Subchapter title must be at least 3 characters</p>
+          }
+        } @else {
+          <div class="mt-1 flex items-center gap-3">
+            <h1 class="text-3xl font-bold text-gray-900">{{ subchapter()?.title ?? 'Manage Blocks' }}</h1>
+            @if (subchapter() && !isLocked()) {
+              <button
+                type="button"
+                (click)="startRename()"
+                class="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Rename
+              </button>
+            }
+          </div>
+        }
+      </div>
       <a
         [routerLink]="['/courses', courseId, 'chapters', chapterId, 'edit']"
-        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
+        class="shrink-0 rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
       >
         ← Back to Subchapters
       </a>
     </div>
+
+    <app-course-lock-banner [course]="course()" (unpublished)="onUnpublished($event)" />
 
     <!-- Messages -->
     @if (successMessage()) {
@@ -23,7 +62,7 @@
     }
     @if (errorMessage()) {
       <div class="mb-6 rounded-md bg-red-50 p-4">
-        <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+        <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
       </div>
     }
 
@@ -31,7 +70,7 @@
     <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-xl font-semibold text-gray-900">Learning Blocks</h2>
-        @if (!isAddingBlock()) {
+        @if (!isAddingBlock() && !isLocked()) {
           <button
             (click)="toggleAddBlock()"
             class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
@@ -42,7 +81,7 @@
       </div>
 
       <!-- Add Block Form -->
-      @if (isAddingBlock()) {
+      @if (isAddingBlock() && !isLocked()) {
         <form [formGroup]="blockForm" (ngSubmit)="addBlock()" class="mb-6 rounded-md bg-gray-50 p-4">
           <!-- Block Type Selection -->
           <div class="mb-4">
@@ -123,8 +162,11 @@
                   type="url"
                   formControlName="videoUrl"
                   class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="https://youtube.com/watch?v=..."
+                  placeholder="https://www.youtube.com/watch?v=..."
                 />
+                <p class="mt-1 text-xs text-gray-500">
+                  A YouTube link of the form https://www.youtube.com/watch?v=… or https://youtu.be/…
+                </p>
               </div>
             }
 
@@ -328,13 +370,15 @@
                         </option>
                       }
                     </select>
-                    
+
                     @if (selectedProblemId()) {
                       <div class="mt-2 rounded-md bg-blue-50 p-3">
                         @for (problem of myProblems(); track problem.id) {
                           @if (problem.id === selectedProblemId()) {
                             <p class="text-sm text-blue-800"><strong>{{ problem.title }}</strong></p>
-                            <p class="mt-1 text-xs text-blue-700">Difficulty: {{ problem.difficulty }}</p>
+                            <p class="mt-1 text-xs text-blue-700">
+                              Difficulty: {{ problem.difficulty }} · {{ problem.testCasesCount }} test case(s) · {{ problem.languagesCount }} language(s)
+                            </p>
                           }
                         }
                       </div>
@@ -383,17 +427,17 @@
                       {{ getBlockTypeLabel(block.type) }}
                     </span>
                   </div>
-                  
+
                   <!-- Show additional info based on block type -->
                   @if (block.type === BlockType.Problem && block.problem) {
                     <div class="mt-2 text-sm text-gray-600">
                       <p><strong>Problem:</strong> {{ block.problem.description.substring(0, 100) }}{{ block.problem.description.length > 100 ? '...' : '' }}</p>
                       <p class="mt-1">
                         <span class="inline-flex items-center">
-                          Difficulty: 
-                          <span 
-                            [class]="block.problem.difficulty === 'Easy' ? 'ml-1 text-green-600' : 
-                                     block.problem.difficulty === 'Medium' ? 'ml-1 text-yellow-600' : 
+                          Difficulty:
+                          <span
+                            [class]="block.problem.difficulty === 'Easy' ? 'ml-1 text-green-600' :
+                                     block.problem.difficulty === 'Medium' ? 'ml-1 text-yellow-600' :
                                      'ml-1 text-red-600'"
                           >
                             {{ block.problem.difficulty }}
@@ -402,20 +446,20 @@
                       </p>
                     </div>
                   }
-                  
+
                   @if (block.type === BlockType.Video && block.videoContent) {
                     <div class="mt-2 text-sm text-gray-600">
                       <p><strong>Video URL:</strong> <a [href]="block.videoContent.videoUrl" target="_blank" class="text-blue-600 hover:underline">{{ block.videoContent.videoUrl }}</a></p>
                     </div>
                   }
-                  
+
                   @if (block.type === BlockType.Quiz && block.quiz) {
                     <div class="mt-2 text-sm text-gray-600">
                       <p><strong>Questions:</strong> {{ block.quiz.questions.length }}</p>
                       <p class="mt-1"><strong>Total Points:</strong> {{ getTotalQuizPoints(block.quiz) }}</p>
                     </div>
                   }
-                  
+
                   @if (block.type === BlockType.Theory && block.theoryContent) {
                     <div class="mt-2 text-sm text-gray-600">
                       <p>{{ block.theoryContent.content.substring(0, 100) }}{{ block.theoryContent.content.length > 100 ? '...' : '' }}</p>
@@ -423,6 +467,16 @@
                   }
                 </div>
                 <div class="flex gap-2">
+                  @if (block.type === BlockType.Problem && block.problem) {
+                    <button
+                      (click)="editProblem(block.problem.id)"
+                      class="rounded-md border border-orange-300 bg-white px-3 py-1 text-sm text-orange-700 hover:bg-orange-50"
+                      title="Edit the problem's description, test cases and starter code"
+                    >
+                      Problem
+                    </button>
+                  }
+                  @if (!isLocked()) {
                   <button
                     (click)="startEditBlock(block)"
                     class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
@@ -456,6 +510,7 @@
                   >
                     Delete
                   </button>
+                  }
                 </div>
               </div>
             </div>

@@ -1,15 +1,17 @@
-import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal, OnInit } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { ChapterService } from '../../../core/services/chapter.service';
 import { MarkdownService } from '../../../core/services/markdown.service';
-import { Course, Chapter, UpdateCourseRequest } from '../../../core/models/course.model';
+import { Course, CourseStatus, Chapter, UpdateCourseRequest } from '../../../core/models/course.model';
+import { DialogService } from '../../../core/services/dialog.service';
+import { extractApiError } from '../../../core/utils/api-error';
+import { CourseLockBannerComponent } from '../../../shared/components/course-lock-banner/course-lock-banner.component';
 
 @Component({
   selector: 'app-course-editor',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, CourseLockBannerComponent],
   templateUrl: './course-editor.component.html',
   styleUrl: './course-editor.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -20,18 +22,30 @@ export class CourseEditorComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
   readonly courseService = inject(CourseService);
   private readonly chapterService = inject(ChapterService);
-  readonly markdownService = inject(MarkdownService);
+  private readonly dialogService = inject(DialogService);
+  private readonly markdownService = inject(MarkdownService);
 
   readonly course = signal<Course | null>(null);
   readonly chapters = signal<Chapter[]>([]);
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly successMessage = signal<string>('');
-  
+
   readonly courseForm: FormGroup;
   readonly chapterForm: FormGroup;
   readonly isEditingCourse = signal(false);
   readonly isAddingChapter = signal(false);
+
+  readonly descriptionHtml = computed(() => this.markdownService.render(this.course()?.description));
+
+  // The API refuses every change to a published course
+  readonly isLocked = computed(() => this.course()?.status === CourseStatus.Published);
+
+  onUnpublished(course: Course): void {
+    this.course.set(course);
+    this.successMessage.set('Course unpublished. You can edit it now.');
+    setTimeout(() => this.successMessage.set(''), 3000);
+  }
 
   constructor() {
     this.courseForm = this.fb.group({
@@ -63,9 +77,9 @@ export class CourseEditorComponent implements OnInit {
         });
         this.isLoading.set(false);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load course');
+        this.errorMessage.set(extractApiError(error, 'Failed to load course'));
       }
     });
   }
@@ -115,8 +129,8 @@ export class CourseEditorComponent implements OnInit {
         this.isEditingCourse.set(false);
         setTimeout(() => this.successMessage.set(''), 3000);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to update course');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to update course'));
       }
     });
   }
@@ -147,8 +161,8 @@ export class CourseEditorComponent implements OnInit {
         this.successMessage.set('Chapter added successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to add chapter');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to add chapter'));
       }
     });
   }
@@ -164,8 +178,8 @@ export class CourseEditorComponent implements OnInit {
       next: () => {
         this.loadChapters(courseId);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder chapter');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to reorder chapter'));
       }
     });
   }
@@ -182,14 +196,21 @@ export class CourseEditorComponent implements OnInit {
       next: () => {
         this.loadChapters(courseId);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder chapter');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to reorder chapter'));
       }
     });
   }
 
-  deleteChapter(chapterId: string): void {
-    if (!confirm('Are you sure you want to delete this chapter? This will also delete all subchapters and blocks.')) {
+  async deleteChapter(chapterId: string): Promise<void> {
+    const { confirmed } = await this.dialogService.confirm({
+      title: 'Delete chapter?',
+      message: 'Are you sure you want to delete this chapter? This will also delete all subchapters and blocks.',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      type: 'warning'
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -203,30 +224,34 @@ export class CourseEditorComponent implements OnInit {
         this.successMessage.set('Chapter deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to delete chapter');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to delete chapter'));
       }
     });
   }
 
-  publishCourse(): void {
+  async publishCourse(): Promise<void> {
     const courseId = this.course()?.id;
     if (!courseId) return;
 
-    if (confirm('Are you sure you want to publish this course? Published courses cannot be edited.')) {
+    const { confirmed } = await this.dialogService.confirm({
+      title: 'Publish course?',
+      message: 'Students will be able to enroll and learn. While it is published the course and the problems it uses cannot be edited; you can unpublish it later to make changes.',
+      confirmText: 'Publish',
+      cancelText: 'Cancel',
+      type: 'warning'
+    });
+    if (confirmed) {
       this.courseService.publishCourse(courseId).subscribe({
         next: () => {
           this.router.navigate(['/courses', courseId]);
         },
-        error: (error: any) => {
-          const errorMessage = error.error?.detail || error.error?.message || error.message || 'Failed to publish course';
+        error: (error: unknown) => {
+          const errorMessage = extractApiError(error, 'Failed to publish course');
           this.errorMessage.set(errorMessage);
         }
       });
     }
   }
 
-  renderDescription(description: string): SafeHtml {
-    return this.markdownService.renderMarkdownSync(description);
-  }
 }

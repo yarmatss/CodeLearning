@@ -18,20 +18,24 @@
           "options": {
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
+            "webWorkerTsConfig": "tsconfig.worker.json",
             "loader": {
               ".ttf": "file"
             },
             "assets": [
               {
                 "glob": "**/*",
-                "input": "node_modules/monaco-editor",
-                "output": "/assets/monaco/"
+                "input": "public"
               }
             ],
             "styles": [
               "src/styles.css",
-              "node_modules/monaco-editor/min/vs/editor/editor.main.css",
-              "node_modules/highlight.js/styles/monokai-sublime.css"
+              "node_modules/highlight.js/styles/monokai-sublime.css",
+              {
+                "input": "node_modules/monaco-editor/min/vs/editor/editor.main.css",
+                "bundleName": "monaco-editor",
+                "inject": false
+              }
             ]
           },
           "configurations": {

@@ -21,5 +21,4 @@ public class CourseBlock : BaseEntity
     public Problem? Problem { get; set; }
 
     public ICollection<StudentBlockProgress> StudentProgress { get; init; } = [];
-    public ICollection<Comment> Comments { get; init; } = [];
 }

@@ -134,7 +134,7 @@ public class YouTubeExtensionsTests
     #region Edge Cases
 
     [Theory]
-    [InlineData("https://www.youtube.com/watch?v=dQw-4w9WgXcQ")] // Hyphen in ID
+    [InlineData("https://www.youtube.com/watch?v=dQw-4w9WgXc")] // Hyphen in ID
     [InlineData("https://www.youtube.com/watch?v=dQw_4w9WgXc")]  // Underscore in ID
     public void ExtractYouTubeVideoId_SpecialCharactersInId_ShouldExtract(string url)
     {
@@ -144,6 +144,34 @@ public class YouTubeExtensionsTests
         // Assert
         result.Should().NotBeNull();
         result.Should().HaveLength(11);
+    }
+
+    [Theory]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQX")]                     // 12-character id
+    [InlineData("https://evil.example/?next=youtube.com/watch?v=dQw4w9WgXcQ")]       // link embedded in another URL
+    [InlineData("see https://youtu.be/dQw4w9WgXcQ")]                                 // text around the link
+    [InlineData("https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ")]             // look-alike host
+    [InlineData("javascript:alert(1)//youtu.be/dQw4w9WgXcQ")]
+    public void ExtractYouTubeVideoId_UnanchoredOrMalformed_ShouldReturnNull(string url)
+    {
+        url.ExtractYouTubeVideoId().Should().BeNull();
+        url.IsValidYouTubeUrl().Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("https://www.youtube.com/watch?feature=share&v=dQw4w9WgXcQ")]
+    [InlineData("https://m.youtube.com/watch?v=dQw4w9WgXcQ#t=10")]
+    [InlineData("youtu.be/dQw4w9WgXcQ?si=abc")]
+    [InlineData("  https://youtu.be/dQw4w9WgXcQ  ")]
+    public void ExtractYouTubeVideoId_AcceptedShapes_ShouldExtract(string url)
+    {
+        url.ExtractYouTubeVideoId().Should().Be("dQw4w9WgXcQ");
+    }
+
+    [Fact]
+    public void ToYouTubeWatchUrl_ShouldBuildCanonicalUrl()
+    {
+        "dQw4w9WgXcQ".ToYouTubeWatchUrl().Should().Be("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     }
 
     [Fact]

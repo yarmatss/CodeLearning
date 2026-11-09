@@ -25,6 +25,11 @@ export class LanguageService {
     );
   }
 
+  /** Drops the cached language list, e.g. when the session ends. */
+  reset(): void {
+    this.languages.set([]);
+  }
+
   getLanguageName(id: string): string {
     const language = this.languages().find(l => l.id === id);
     return language?.name || 'Unknown';

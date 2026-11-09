@@ -187,9 +187,9 @@ public class ReorderTestCasesDtoValidatorTests
     }
 
     [Fact]
-    public void Validate_EmptyGuid_ShouldStillValidate()
+    public void Validate_EmptyGuid_ShouldFail()
     {
-        // Arrange - Guid.Empty is technically a valid Guid, just semantically wrong
+        // Arrange - Guid.Empty never identifies a test case
         var dto = new ReorderTestCasesDto
         {
             TestCaseIds =
@@ -203,8 +203,8 @@ public class ReorderTestCasesDtoValidatorTests
         var result = _validator.Validate(dto);
 
         // Assert
-        // Validator doesn't check for Guid.Empty, only for duplicates
-        result.IsValid.Should().BeTrue();
+        // Empty ids are rejected like null list elements
+        result.IsValid.Should().BeFalse();
     }
 
     [Fact]

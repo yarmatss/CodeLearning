@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Block, BlockType } from '../models/course.model';
+import { Block } from '../models/course.model';
 
 export interface CreateTheoryBlockRequest {
   title: string;
@@ -55,6 +55,25 @@ export interface UpdateProblemBlockRequest {
   problemId: string;
 }
 
+/** Body of 201 Created from every block create endpoint; the block itself is not returned. */
+export interface BlockCreatedResponse {
+  id: string;
+  message: string;
+}
+
+/** Body of 200 OK from block update, reorder and delete endpoints. */
+export interface MessageResponse {
+  message: string;
+}
+
+export interface CompleteBlockResponse {
+  blockId: string;
+  completedAt: string;
+  nextBlockId?: string | null;
+  message: string;
+  courseCompleted: boolean;
+}
+
 export interface UpdateBlockOrderRequest {
   newOrderIndex: number;
 }
@@ -74,55 +93,55 @@ export class BlockService {
   }
 
   // Theory Block
-  addTheoryBlock(subchapterId: string, data: CreateTheoryBlockRequest): Observable<Block> {
-    return this.http.post<Block>(`/api/subchapters/${subchapterId}/blocks/theory`, data);
+  addTheoryBlock(subchapterId: string, data: CreateTheoryBlockRequest): Observable<BlockCreatedResponse> {
+    return this.http.post<BlockCreatedResponse>(`/api/subchapters/${subchapterId}/blocks/theory`, data);
   }
 
-  updateTheoryBlock(subchapterId: string, blockId: string, data: UpdateTheoryBlockRequest): Observable<Block> {
-    return this.http.put<Block>(`/api/subchapters/${subchapterId}/blocks/${blockId}/theory`, data);
+  updateTheoryBlock(subchapterId: string, blockId: string, data: UpdateTheoryBlockRequest): Observable<MessageResponse> {
+    return this.http.put<MessageResponse>(`/api/subchapters/${subchapterId}/blocks/${blockId}/theory`, data);
   }
 
   // Video Block
-  addVideoBlock(subchapterId: string, data: CreateVideoBlockRequest): Observable<Block> {
-    return this.http.post<Block>(`/api/subchapters/${subchapterId}/blocks/video`, data);
+  addVideoBlock(subchapterId: string, data: CreateVideoBlockRequest): Observable<BlockCreatedResponse> {
+    return this.http.post<BlockCreatedResponse>(`/api/subchapters/${subchapterId}/blocks/video`, data);
   }
 
-  updateVideoBlock(subchapterId: string, blockId: string, data: UpdateVideoBlockRequest): Observable<Block> {
-    return this.http.put<Block>(`/api/subchapters/${subchapterId}/blocks/${blockId}/video`, data);
+  updateVideoBlock(subchapterId: string, blockId: string, data: UpdateVideoBlockRequest): Observable<MessageResponse> {
+    return this.http.put<MessageResponse>(`/api/subchapters/${subchapterId}/blocks/${blockId}/video`, data);
   }
 
   // Quiz Block
-  addQuizBlock(subchapterId: string, data: CreateQuizBlockRequest): Observable<Block> {
-    return this.http.post<Block>(`/api/subchapters/${subchapterId}/blocks/quiz`, data);
+  addQuizBlock(subchapterId: string, data: CreateQuizBlockRequest): Observable<BlockCreatedResponse> {
+    return this.http.post<BlockCreatedResponse>(`/api/subchapters/${subchapterId}/blocks/quiz`, data);
   }
 
-  updateQuizBlock(subchapterId: string, blockId: string, data: UpdateQuizBlockRequest): Observable<Block> {
-    return this.http.put<Block>(`/api/subchapters/${subchapterId}/blocks/${blockId}/quiz`, data);
+  updateQuizBlock(subchapterId: string, blockId: string, data: UpdateQuizBlockRequest): Observable<MessageResponse> {
+    return this.http.put<MessageResponse>(`/api/subchapters/${subchapterId}/blocks/${blockId}/quiz`, data);
   }
 
   // Problem Block
-  addProblemBlock(subchapterId: string, data: CreateProblemBlockRequest): Observable<Block> {
-    return this.http.post<Block>(`/api/subchapters/${subchapterId}/blocks/problem`, data);
+  addProblemBlock(subchapterId: string, data: CreateProblemBlockRequest): Observable<BlockCreatedResponse> {
+    return this.http.post<BlockCreatedResponse>(`/api/subchapters/${subchapterId}/blocks/problem`, data);
   }
 
-  updateProblemBlock(subchapterId: string, blockId: string, data: UpdateProblemBlockRequest): Observable<Block> {
-    return this.http.put<Block>(`/api/subchapters/${subchapterId}/blocks/${blockId}/problem`, data);
+  updateProblemBlock(subchapterId: string, blockId: string, data: UpdateProblemBlockRequest): Observable<MessageResponse> {
+    return this.http.put<MessageResponse>(`/api/subchapters/${subchapterId}/blocks/${blockId}/problem`, data);
   }
 
   // Common operations
-  updateBlockOrder(subchapterId: string, blockId: string, newOrderIndex: number): Observable<Block> {
-    return this.http.patch<Block>(
+  updateBlockOrder(subchapterId: string, blockId: string, newOrderIndex: number): Observable<MessageResponse> {
+    return this.http.patch<MessageResponse>(
       `/api/subchapters/${subchapterId}/blocks/${blockId}/order`,
       { newOrderIndex }
     );
   }
 
-  deleteBlock(subchapterId: string, blockId: string): Observable<{ message: string }> {
-    return this.http.delete<{ message: string }>(`/api/subchapters/${subchapterId}/blocks/${blockId}`);
+  deleteBlock(subchapterId: string, blockId: string): Observable<MessageResponse> {
+    return this.http.delete<MessageResponse>(`/api/subchapters/${subchapterId}/blocks/${blockId}`);
   }
 
   // Progress tracking
-  completeBlock(blockId: string): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`/api/progress/blocks/${blockId}/complete`, {});
+  completeBlock(blockId: string): Observable<CompleteBlockResponse> {
+    return this.http.post<CompleteBlockResponse>(`/api/progress/blocks/${blockId}/complete`, {});
   }
 }

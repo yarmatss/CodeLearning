@@ -5,7 +5,7 @@
     </div>
   } @else if (errorMessage()) {
     <div class="mb-4 rounded-md bg-red-50 p-4">
-      <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
       <a [routerLink]="['/problems']" class="mt-2 inline-block text-sm text-blue-600 hover:text-blue-700">
         ← Back to Problems
       </a>
@@ -32,7 +32,7 @@
             }
           </div>
         </div>
-        @if (authService.currentUser()?.userId === problem()!.authorId) {
+        @if (authService.currentUser()?.userId === problem()!.authorId && !problem()!.isUsedByPublishedCourse) {
           <a
             [routerLink]="['/problems', problem()!.id, 'edit']"
             class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
@@ -43,10 +43,18 @@
       </div>
     </div>
 
+    @if (problem()!.isUsedByPublishedCourse) {
+      <div class="mb-6 rounded-md border border-yellow-200 bg-yellow-50 p-4" role="status">
+        <p class="text-sm text-yellow-800">
+          🔒 A published course uses this problem, so it can't be edited. Unpublish the course to make changes.
+        </p>
+      </div>
+    }
+
     <!-- Problem Description -->
     <div class="mb-6 rounded-lg border border-gray-200 bg-white p-6">
       <h2 class="mb-4 text-xl font-semibold text-gray-900">Description</h2>
-      <div class="markdown-content max-w-none text-gray-700" [innerHTML]="problem()!.description | markdown">
+      <div class="markdown-content max-w-none text-gray-700" [innerHTML]="descriptionHtml()">
       </div>
     </div>
 

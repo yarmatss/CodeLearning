@@ -6,7 +6,7 @@
     @if (isSidebarOpen() && courseProgress()) {
       <div class="flex-1 overflow-y-auto p-4">
         <h2 class="mb-4 text-lg font-bold text-gray-900">{{ courseProgress()!.courseTitle }}</h2>
-        
+
         <!-- Progress Overview -->
         <div class="mb-6 rounded-lg bg-gray-50 p-3">
           <div class="mb-2 flex items-center justify-between text-sm">
@@ -33,7 +33,7 @@
                   {{ chapter.orderIndex }}. {{ chapter.title }}
                 </h3>
               </div>
-              
+
               <div class="space-y-1 p-2">
                 @for (subchapter of chapter.subchapters; track subchapter.subchapterId) {
                   <div>
@@ -43,13 +43,13 @@
                         {{ getBlockProgress(chapter.chapterId, subchapter.subchapterId).completed }}/{{ getBlockProgress(chapter.chapterId, subchapter.subchapterId).total }}
                       </span>
                     </div>
-                    
+
                     <!-- Blocks -->
                     <div class="ml-4 space-y-1">
                       @for (block of subchapter.blocks; track block.blockId) {
                         <button
                           (click)="selectBlock(block.blockId)"
-                          [class]="'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ' + 
+                          [class]="'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ' +
                                    (currentBlock()?.id === block.blockId ? 'bg-blue-100 text-blue-900' : 'text-gray-700 hover:bg-gray-100')"
                         >
                           @if (block.isCompleted) {
@@ -93,7 +93,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        
+
         @if (currentBlock()) {
           <div>
             <h1 class="text-xl font-bold text-gray-900">{{ currentBlock()!.title }}</h1>
@@ -111,7 +111,7 @@
       </div>
 
       <a
-        [routerLink]="['/courses', courseProgress()?.courseId]"
+        [routerLink]="['/courses', courseId]"
         class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
       >
         Exit Course
@@ -124,15 +124,36 @@
         <div class="flex items-center justify-center py-12">
           <p class="text-gray-500">Loading...</p>
         </div>
+      } @else if (accessDeniedMessage()) {
+        <div class="mx-auto max-w-xl rounded-lg border border-blue-200 bg-blue-50 p-6 text-center" role="status">
+          <p class="mb-2 text-lg font-semibold text-blue-900">🔒 Content unavailable</p>
+          <p class="mb-4 whitespace-pre-line text-sm text-blue-800">{{ accessDeniedMessage() }}</p>
+          <a
+            [routerLink]="['/courses', courseId]"
+            class="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            Go to the course page to enroll
+          </a>
+        </div>
       } @else if (errorMessage()) {
         <div class="rounded-md bg-red-50 p-4">
-          <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+          <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
         </div>
       } @else if (currentBlock()) {
+        @if (actionError()) {
+          <div class="mb-4 rounded-md bg-red-50 p-4" role="alert">
+            <p class="whitespace-pre-line text-sm text-red-800">{{ actionError() }}</p>
+          </div>
+        }
+        @if (infoMessage()) {
+          <div class="mb-4 rounded-md bg-yellow-50 p-4" role="status">
+            <p class="text-sm text-yellow-800">{{ infoMessage() }}</p>
+          </div>
+        }
         <!-- Theory Block -->
         @if (currentBlock()!.type === BlockType.Theory && currentBlock()!.theoryContent) {
           <div class="markdown-content text-gray-700">
-            <div [innerHTML]="renderMarkdown(currentBlock()!.theoryContent!.content)"></div>
+            <div [innerHTML]="theoryHtml()"></div>
           </div>
         }
 
@@ -140,13 +161,18 @@
         @if (currentBlock()!.type === BlockType.Video && currentBlock()!.videoContent) {
           <div class="mx-auto max-w-4xl">
             <div class="aspect-video w-full overflow-hidden rounded-lg bg-black">
-              <iframe
-                [src]="getSafeYouTubeUrl(currentBlock()!.videoContent!.videoUrl)"
-                class="h-full w-full"
-                frameborder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowfullscreen
-              ></iframe>
+              @if (videoEmbedUrl()) {
+                <iframe
+                  [src]="videoEmbedUrl()"
+                  [title]="currentBlock()!.title"
+                  class="h-full w-full"
+                  frameborder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowfullscreen
+                ></iframe>
+              } @else {
+                <p class="p-6 text-sm text-gray-300">This video cannot be embedded.</p>
+              }
             </div>
             @if (currentBlock()!.videoContent!.durationSeconds) {
               <p class="mt-4 text-sm text-gray-500">
@@ -163,9 +189,9 @@
               <!-- Quiz Questions -->
               <div class="space-y-6">
                 @for (question of currentBlock()!.quiz!.questions; track question.id; let i = $index) {
-                  <div [class]="'rounded-lg border p-6 ' + 
-                               (unansweredQuestions().has(question.id) 
-                                 ? 'border-red-300 bg-red-50' 
+                  <div [class]="'rounded-lg border p-6 ' +
+                               (unansweredQuestions().has(question.id)
+                                 ? 'border-red-300 bg-red-50'
                                  : 'border-gray-200 bg-white')">
                     <div class="mb-4">
                       <div class="flex items-center gap-2">
@@ -177,25 +203,25 @@
                       <h3 class="mt-1 text-lg font-semibold text-gray-900">{{ question.content }}</h3>
                       <p class="mt-1 text-sm text-gray-600">{{ question.points }} points</p>
                     </div>
-                    
+
                     <div class="space-y-2">
                       @for (answer of question.answers; track answer.id) {
-                        <label [class]="'flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ' + 
+                        <label [class]="'flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ' +
                                         (isAnswerSelected(question.id, answer.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50')">
-                          @if (question.type === 'SingleChoice') {
-                            <input 
-                              type="radio" 
-                              [name]="'question-' + question.id" 
+                          @if (question.type !== 'MultipleChoice') {
+                            <input
+                              type="radio"
+                              [name]="'question-' + question.id"
                               [checked]="isAnswerSelected(question.id, answer.id)"
                               (change)="selectQuizAnswer(question.id, answer.id, true)"
-                              class="h-4 w-4" 
+                              class="h-4 w-4"
                             />
                           } @else {
-                            <input 
-                              type="checkbox" 
+                            <input
+                              type="checkbox"
                               [checked]="isAnswerSelected(question.id, answer.id)"
                               (change)="selectQuizAnswer(question.id, answer.id, false)"
-                              class="h-4 w-4" 
+                              class="h-4 w-4"
                             />
                           }
                           <span class="text-sm text-gray-900">{{ answer.text }}</span>
@@ -204,8 +230,8 @@
                     </div>
                   </div>
                 }
-                
-                <button 
+
+                <button
                   (click)="submitQuiz()"
                   [disabled]="isSubmittingQuiz()"
                   class="w-full rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700 disabled:bg-gray-400"
@@ -249,13 +275,13 @@
                         {{ question.isCorrect ? question.points : 0 }} / {{ question.points }} points
                       </p>
                     </div>
-                    
+
                     <!-- Answers -->
                     <div class="space-y-2 mb-3">
                       @for (answer of question.answers; track answer.answerId) {
-                        <div [class]="'rounded-md border p-3 ' + 
-                                     (answer.isCorrect ? 'bg-green-50 border-green-200' : 
-                                      answer.wasSelected && !answer.isCorrect ? 'bg-red-50 border-red-200' : 
+                        <div [class]="'rounded-md border p-3 ' +
+                                     (answer.isCorrect ? 'bg-green-50 border-green-200' :
+                                      answer.wasSelected && !answer.isCorrect ? 'bg-red-50 border-red-200' :
                                       'bg-gray-50 border-gray-200')">
                           <div class="flex items-start gap-2">
                             @if (answer.isCorrect) {
@@ -265,14 +291,14 @@
                             } @else {
                               <span class="text-gray-400">○</span>
                             }
-                            <span [class]="answer.isCorrect ? 'text-green-900' : 
-                                          answer.wasSelected && !answer.isCorrect ? 'text-red-900' : 
+                            <span [class]="answer.isCorrect ? 'text-green-900' :
+                                          answer.wasSelected && !answer.isCorrect ? 'text-red-900' :
                                           'text-gray-700'">{{ answer.text }}</span>
                           </div>
                         </div>
                       }
                     </div>
-                    
+
                     @if (question.explanation) {
                       <div class="mt-3 rounded-md bg-blue-50 border border-blue-200 p-3">
                         <p class="text-sm text-blue-900">
@@ -284,10 +310,9 @@
                 }
 
                 <div class="flex justify-end">
-                  <button 
-                    (click)="goToNextBlock()"
-                    [disabled]="!hasNextBlock()"
-                    class="rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  <button
+                    (click)="hasNextBlock() ? goToNextBlock() : completeCourse()"
+                    class="rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700"
                   >
                     @if (hasNextBlock()) {
                       Continue to Next Block →
@@ -309,11 +334,11 @@
               <!-- Problem Header -->
               <div class="rounded-lg border border-gray-200 bg-white p-4">
                 <h2 class="text-xl font-bold text-gray-900 mb-3">{{ currentBlock()!.title }}</h2>
-                
+
                 <div class="flex flex-wrap gap-2 mb-3">
-                  <span [class]="'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ' + 
-                               (currentBlock()!.problem!.difficulty === 'Easy' ? 'bg-green-100 text-green-800' : 
-                                currentBlock()!.problem!.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-800' : 
+                  <span [class]="'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ' +
+                               (currentBlock()!.problem!.difficulty === 'Easy' ? 'bg-green-100 text-green-800' :
+                                currentBlock()!.problem!.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
                                 'bg-red-100 text-red-800')">
                     {{ currentBlock()!.problem!.difficulty }}
                   </span>
@@ -325,9 +350,9 @@
                     }
                   }
                 </div>
-                
+
                 <div class="markdown-content text-gray-700 text-sm">
-                  <div [innerHTML]="renderMarkdown(currentBlock()!.problem!.description)"></div>
+                  <div [innerHTML]="problemDescriptionHtml()"></div>
                 </div>
               </div>
 
@@ -385,8 +410,8 @@
                       <button
                         (click)="selectLanguage(starter.languageId, starter.code)"
                         [class]="'rounded-md px-3 py-1.5 text-xs font-medium transition-colors ' +
-                                 (selectedLanguage() === starter.languageId 
-                                   ? 'bg-blue-600 text-white' 
+                                 (selectedLanguage() === starter.languageId
+                                   ? 'bg-blue-600 text-white'
                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200')"
                       >
                         {{ starter.languageName }}
@@ -407,10 +432,10 @@
                     <h3 class="text-sm font-semibold text-gray-900">Code Editor</h3>
                     <button
                       (click)="submitCode()"
-                      [disabled]="isPolling()"
+                      [disabled]="isSubmitting() || isPolling()"
                       class="rounded-md bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                     >
-                      @if (isPolling()) {
+                      @if (isSubmitting() || isPolling()) {
                         <span class="flex items-center gap-2">
                           <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
                           Running...
@@ -423,7 +448,7 @@
 
                   <app-code-editor
                     [code]="userCode()"
-                    [language]="getLanguageName(selectedLanguage()!)"
+                    [language]="editorLanguage()"
                     (codeChange)="updateCode($event)"
                   ></app-code-editor>
                 </div>
@@ -438,9 +463,9 @@
               <div [class]="'submission-results ' + getStatusClass(currentSubmission()!.status)">
                 <div class="flex items-center justify-between mb-3">
                   <h3 class="text-lg font-semibold">
-                    @if (currentSubmission()!.status === 0 || currentSubmission()!.status === 1) {
+                    @if (currentSubmission()!.status === SubmissionStatus.Pending || currentSubmission()!.status === SubmissionStatus.Running) {
                       ⏳ Executing code...
-                    } @else if (currentSubmission()!.status === 2) {
+                    } @else if (currentSubmission()!.status === SubmissionStatus.Completed) {
                       @if (currentSubmission()!.score === 100) {
                         ✅ All tests passed!
                       } @else {
@@ -450,8 +475,8 @@
                       ❌ {{ getStatusName(currentSubmission()!.status) }}
                     }
                   </h3>
-                  
-                  @if (currentSubmission()!.status === 2 && currentSubmission()!.score !== undefined) {
+
+                  @if (currentSubmission()!.status === SubmissionStatus.Completed && currentSubmission()!.score !== undefined) {
                     <span class="text-2xl font-bold">
                       {{ currentSubmission()!.score }}%
                     </span>
@@ -468,7 +493,7 @@
                   </div>
                 }
 
-                @if (currentSubmission()!.status === 2) {
+                @if (currentSubmission()!.status === SubmissionStatus.Completed) {
                   <div class="grid grid-cols-3 gap-4 mb-4">
                     <div class="rounded-md bg-white/50 p-3">
                       <div class="text-sm text-gray-600">Test Cases</div>
@@ -485,26 +510,26 @@
                     @if (currentSubmission()!.memoryUsedKB) {
                       <div class="rounded-md bg-white/50 p-3">
                         <div class="text-sm text-gray-600">Memory Used</div>
-                        <div class="text-lg font-semibold">{{ (currentSubmission()!.memoryUsedKB / 1024) | number:'1.0-2' }}MB</div>
+                        <div class="text-lg font-semibold">{{ (currentSubmission()!.memoryUsedKB! / 1024) | number:'1.0-2' }}MB</div>
                       </div>
                     }
                   </div>
 
                   <!-- Test Results (Public Only) -->
-                  @if (currentSubmission()!.testResults && currentSubmission()!.testResults.length > 0) {
+                  @if (currentSubmission()!.testResults?.length) {
                     <div class="space-y-2">
                       <h4 class="font-semibold text-sm text-gray-700 mb-2">Test Results:</h4>
-                      @for (test of currentSubmission()!.testResults; track test.testCaseId; let i = $index) {
-                        <div [class]="'rounded-md p-3 ' + (test.status === 1 ? 'bg-green-100 border border-green-300' : 'bg-red-100 border border-red-300')">
+                      @for (test of currentSubmission()!.testResults!; track test.testCaseId; let i = $index) {
+                        <div [class]="'rounded-md p-3 ' + (test.status === TestResultStatus.Passed ? 'bg-green-100 border border-green-300' : 'bg-red-100 border border-red-300')">
                           <div class="flex items-center justify-between mb-1">
                             <span class="font-medium text-sm">
-                              {{ test.status === 1 ? '✓' : '✗' }} Test Case #{{ i + 1 }}
+                              {{ test.status === TestResultStatus.Passed ? '✓' : '✗' }} Test Case #{{ i + 1 }}
                             </span>
                             @if (test.executionTimeMs) {
                               <span class="text-xs text-gray-600">{{ test.executionTimeMs }}ms</span>
                             }
                           </div>
-                          @if (test.status !== 1) {
+                          @if (test.status !== TestResultStatus.Passed) {
                             @if (test.errorMessage) {
                               <div class="text-xs text-red-800 mt-1">
                                 <strong>Error:</strong> {{ test.errorMessage }}
@@ -552,7 +577,7 @@
         <button
           (click)="goToPreviousBlock()"
           [disabled]="!hasPreviousBlock()"
-          [class]="'rounded-md border px-6 py-2 transition-colors ' + 
+          [class]="'rounded-md border px-6 py-2 transition-colors ' +
                    (hasPreviousBlock() ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50' : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed')"
         >
           ← Previous
@@ -564,7 +589,7 @@
 
         <button
           (click)="hasNextBlock() ? goToNextBlock() : completeCourse()"
-          [class]="'rounded-md px-6 py-2 transition-colors ' + 
+          [class]="'rounded-md px-6 py-2 transition-colors ' +
                    (hasNextBlock() ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-green-600 text-white hover:bg-green-700')"
         >
           @if (hasNextBlock()) {

@@ -1,4 +1,5 @@
 using CodeLearning.Api.Extensions;
+using CodeLearning.Application.DTOs.Common;
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Application.Services;
 using CodeLearning.Core.Enums;
@@ -15,6 +16,7 @@ public class ProblemsController(
     IProblemService problemService,
     IValidator<CreateProblemDto> createValidator,
     IValidator<UpdateProblemDto> updateValidator,
+    IValidator<ProblemListQuery> listQueryValidator,
     IValidator<CreateTestCaseDto> createTestCaseValidator,
     IValidator<UpdateTestCaseDto> updateTestCaseValidator,
     IValidator<BulkAddTestCasesDto> bulkAddTestCasesValidator,
@@ -23,6 +25,8 @@ public class ProblemsController(
 {
     [HttpPost]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(ProblemResponseDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateProblem([FromBody] CreateProblemDto dto)
     {
         await createValidator.ValidateAndThrowAsync(dto);
@@ -34,6 +38,9 @@ public class ProblemsController(
     }
 
     [HttpGet("{id:guid}")]
+    [ProducesResponseType(typeof(ProblemResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetProblem(Guid id)
     {
         var userId = User.GetRequiredUserId();
@@ -41,22 +48,29 @@ public class ProblemsController(
         return Ok(result);
     }
 
+    // The caller's own problems plus problems in published courses the caller is enrolled in
     [HttpGet]
-    public async Task<IActionResult> GetProblems(
-        [FromQuery] string? difficulty = null,
-        [FromQuery] Guid? tagId = null,
-        [FromQuery] string? search = null)
+    [ProducesResponseType(typeof(PagedResult<ProblemListDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetProblems([FromQuery] ProblemListQuery query)
     {
-        var results = await problemService.GetProblemsAsync(difficulty, tagId, search);
+        await listQueryValidator.ValidateAndThrowAsync(query);
+
+        var userId = User.GetRequiredUserId();
+        var results = await problemService.GetProblemsAsync(query, userId);
         return Ok(results);
     }
 
     [HttpGet("my")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
-    public async Task<IActionResult> GetMyProblems()
+    [ProducesResponseType(typeof(PagedResult<ProblemListDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetMyProblems([FromQuery] ProblemListQuery query)
     {
+        await listQueryValidator.ValidateAndThrowAsync(query);
+
         var userId = User.GetRequiredUserId();
-        var results = await problemService.GetMyProblemsAsync(userId);
+        var results = await problemService.GetMyProblemsAsync(query, userId);
         return Ok(results);
     }
 
@@ -69,6 +83,8 @@ public class ProblemsController(
 
     [HttpPut("{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(ProblemResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateProblem(Guid id, [FromBody] UpdateProblemDto dto)
     {
         await updateValidator.ValidateAndThrowAsync(dto);
@@ -81,6 +97,8 @@ public class ProblemsController(
 
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> DeleteProblem(Guid id)
     {
         var userId = User.GetRequiredUserId();
@@ -93,6 +111,8 @@ public class ProblemsController(
 
     [HttpPost("{id:guid}/testcases")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(TestCaseResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> AddTestCase(Guid id, [FromBody] CreateTestCaseDto dto)
     {
         await createTestCaseValidator.ValidateAndThrowAsync(dto);
@@ -105,6 +125,8 @@ public class ProblemsController(
 
     [HttpPost("{id:guid}/testcases/bulk")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(BulkAddTestCasesResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> AddTestCasesBulk(Guid id, [FromBody] BulkAddTestCasesDto dto)
     {
         await bulkAddTestCasesValidator.ValidateAndThrowAsync(dto);
@@ -117,6 +139,8 @@ public class ProblemsController(
 
     [HttpPut("testcases/{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(TestCaseResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateTestCase(Guid id, [FromBody] UpdateTestCaseDto dto)
     {
         await updateTestCaseValidator.ValidateAndThrowAsync(dto);
@@ -129,6 +153,8 @@ public class ProblemsController(
 
     [HttpDelete("testcases/{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> DeleteTestCase(Guid id)
     {
         var userId = User.GetRequiredUserId();
@@ -139,6 +165,8 @@ public class ProblemsController(
 
     [HttpPut("{id:guid}/testcases/reorder")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> ReorderTestCases(Guid id, [FromBody] ReorderTestCasesDto dto)
     {
         await reorderTestCasesValidator.ValidateAndThrowAsync(dto);
@@ -155,6 +183,9 @@ public class ProblemsController(
 
     [HttpPost("{id:guid}/startercodes")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(typeof(StarterCodeResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> AddStarterCode(Guid id, [FromBody] CreateStarterCodeDto dto)
     {
         await createStarterCodeValidator.ValidateAndThrowAsync(dto);
@@ -167,6 +198,9 @@ public class ProblemsController(
 
     [HttpDelete("startercodes/{id:guid}")]
     [Authorize(Roles = nameof(UserRole.Teacher))]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> DeleteStarterCode(Guid id)
     {
         var userId = User.GetRequiredUserId();

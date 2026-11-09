@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, AbstractContro
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { RegisterRequest } from '../../../core/models/auth.model';
+import { extractApiError } from '../../../core/utils/api-error';
 
 @Component({
   selector: 'app-register',
@@ -23,7 +24,15 @@ export class RegisterComponent {
   constructor() {
     this.registerForm = this.fb.group({
       email: ['', [Validators.required, Validators.email]],
-      password: ['', [Validators.required, Validators.minLength(6)]],
+      // Mirrors the API's password rules: 8+ characters with an uppercase letter, a lowercase letter
+      // and a digit
+      password: ['', [
+        Validators.required,
+        Validators.minLength(8),
+        Validators.pattern(/[A-Z]/),
+        Validators.pattern(/[a-z]/),
+        Validators.pattern(/[0-9]/)
+      ]],
       confirmPassword: ['', [Validators.required]],
       firstName: ['', [Validators.required]],
       lastName: ['', [Validators.required]],
@@ -58,9 +67,9 @@ export class RegisterComponent {
         this.isLoading.set(false);
         this.router.navigate(['/dashboard']);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Registration failed. Please try again.');
+        this.errorMessage.set(extractApiError(error, 'Registration failed. Please try again.'));
       }
     });
   }

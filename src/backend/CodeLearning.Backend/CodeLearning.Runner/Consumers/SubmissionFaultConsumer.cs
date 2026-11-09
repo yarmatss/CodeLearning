@@ -1,8 +1,6 @@
-using CodeLearning.Core.Enums;
 using CodeLearning.Core.Messages;
 using CodeLearning.Infrastructure.Data;
 using MassTransit;
-using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Runner.Consumers;
 
@@ -15,18 +13,14 @@ public class SubmissionFaultConsumer(
     {
         var submissionId = context.Message.Message.SubmissionId;
 
-        var submission = await dbContext.Submissions
-            .FirstOrDefaultAsync(s => s.Id == submissionId, context.CancellationToken);
-
-        if (submission == null || !SubmissionCreatedConsumer.IsAwaitingResult(submission))
+        // Guarded, so a submission that was graded meanwhile keeps its result
+        if (await SubmissionCreatedConsumer.FailAsync(
+                dbContext,
+                submissionId,
+                SubmissionCreatedConsumer.InternalErrorMessage,
+                context.CancellationToken))
         {
-            return;
+            logger.LogError("Gave up on submission {SubmissionId} after its execution attempts failed", submissionId);
         }
-
-        logger.LogError("Giving up on submission {SubmissionId} after its execution attempts failed", submissionId);
-
-        submission.RuntimeError = SubmissionCreatedConsumer.InternalErrorMessage;
-        await SubmissionCreatedConsumer.UpdateSubmissionStatusAsync(
-            dbContext, submission, SubmissionStatus.RuntimeError, context.CancellationToken);
     }
 }

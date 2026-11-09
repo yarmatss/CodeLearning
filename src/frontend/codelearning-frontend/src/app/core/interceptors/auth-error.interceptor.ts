@@ -1,90 +1,45 @@
-import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { catchError, throwError, switchMap, filter, take, BehaviorSubject, timeout, of } from 'rxjs';
-import { AuthService } from '../services/auth.service';
+import { catchError, switchMap, throwError } from 'rxjs';
+import { AuthService, SKIP_AUTH_REFRESH, returnUrlParams } from '../services/auth.service';
 
-// Pages an anonymous visitor may stay on; on every other page a lost session sends them to sign in
-const PUBLIC_PATHS = ['/login', '/register'];
+// Endpoints whose 401 means "wrong credentials" or "no session", never "access token expired"
+const AUTH_ENDPOINTS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/auth/logout'];
 
-let isRefreshing = false;
-
-function endSession(authService: AuthService, router: Router): void {
-  authService.currentUser.set(null);
-
-  // Read from location: during app start-up the router has not navigated yet
-  if (!PUBLIC_PATHS.includes(window.location.pathname)) {
-    router.navigate(['/login']);
-  }
-}
-let refreshTokenSubject: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
-
+/**
+ * On a 401 from an expired access token, refreshes the session once and retries the request.
+ * Concurrent requests share the single refresh in flight (see `AuthService.refresh$`), so they all
+ * retry when it succeeds and all fail at once when it does not.
+ */
 export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
+  if (req.context.get(SKIP_AUTH_REFRESH) || AUTH_ENDPOINTS.some(path => req.url.startsWith(path))) {
+    return next(req);
+  }
+
   const authService = inject(AuthService);
   const router = inject(Router);
 
   return next(req).pipe(
-    catchError((error: HttpErrorResponse) => {
-      // Only handle 401 Unauthorized errors
-      if (error.status !== 401) {
+    catchError((error: unknown) => {
+      if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
         return throwError(() => error);
       }
 
-      // Don't retry on login, register, or refresh endpoints
-      const url = req.url;
-      if (url.includes('/auth/login') || 
-          url.includes('/auth/register') || 
-          url.includes('/auth/refresh')) {
-        // If refresh fails, logout user
-        if (url.includes('/auth/refresh')) {
-          isRefreshing = false;
-          refreshTokenSubject.next(false);
-          endSession(authService, router);
-        }
-        return throwError(() => error);
-      }
-
-      // If already refreshing, wait for refresh to complete (max 10 seconds)
-      if (isRefreshing) {
-        return refreshTokenSubject.pipe(
-          filter(completed => completed === true),
-          take(1),
-          timeout(10000),
-          switchMap(() => {
-            // Retry the original request after refresh completes
-            return next(req);
-          }),
-          catchError((timeoutError) => {
-            // Timeout or error waiting for refresh
-            console.error('Timeout waiting for token refresh');
-            isRefreshing = false;
-            refreshTokenSubject.next(false);
-            endSession(authService, router);
-            return throwError(() => timeoutError);
-          })
-        );
-      }
-
-      // Start refresh process
-      isRefreshing = true;
-      refreshTokenSubject.next(false);
-
-      // Try to refresh the token
-      return authService.refreshToken().pipe(
-        switchMap(() => {
-          // Refresh successful
-          isRefreshing = false;
-          refreshTokenSubject.next(true);
-          // Retry the original request with new token from cookie
-          return next(req);
+      return authService.refresh$().pipe(
+        catchError((refreshError: unknown) => {
+          // Only a rejected refresh token ends the session; a network failure or server error
+          // leaves the user signed in so a later request can try again
+          if (refreshError instanceof HttpErrorResponse && refreshError.status === 401) {
+            const wasSignedIn = authService.isAuthenticated();
+            authService.endSession();
+            if (wasSignedIn) {
+              router.navigate(['/login'], { queryParams: returnUrlParams(router.url) });
+            }
+          }
+          return throwError(() => error);
         }),
-        catchError((refreshError) => {
-          // Refresh failed - logout user
-          isRefreshing = false;
-          refreshTokenSubject.next(false);
-          endSession(authService, router);
-          return throwError(() => refreshError);
-        })
+        switchMap(() => next(req))
       );
     })
   );

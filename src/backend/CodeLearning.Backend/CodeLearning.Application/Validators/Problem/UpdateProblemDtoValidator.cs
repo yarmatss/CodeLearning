@@ -7,21 +7,11 @@ public class UpdateProblemDtoValidator : AbstractValidator<UpdateProblemDto>
 {
     public UpdateProblemDtoValidator()
     {
-        RuleFor(x => x.Title)
-            .NotEmpty().WithMessage("Title is required")
-            .MaximumLength(200).WithMessage("Title must not exceed 200 characters");
+        RuleLevelCascadeMode = CascadeMode.Stop;
 
-        RuleFor(x => x.Description)
-            .NotEmpty().WithMessage("Description is required")
-            .MinimumLength(20).WithMessage("Description must be at least 20 characters");
-
-        RuleFor(x => x.Difficulty)
-            .NotEmpty().WithMessage("Difficulty is required")
-            .Must(BeValidDifficulty).WithMessage("Difficulty must be Easy, Medium, or Hard");
-    }
-
-    private static bool BeValidDifficulty(string difficulty)
-    {
-        return difficulty is "Easy" or "Medium" or "Hard";
+        ProblemValidationRules.TitleRules(RuleFor(x => x.Title));
+        ProblemValidationRules.DescriptionRules(RuleFor(x => x.Description));
+        ProblemValidationRules.DifficultyRules(RuleFor(x => x.Difficulty));
+        ProblemValidationRules.TagIdsRules(RuleFor(x => x.TagIds));
     }
 }

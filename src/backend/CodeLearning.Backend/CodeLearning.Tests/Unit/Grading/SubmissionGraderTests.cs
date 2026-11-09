@@ -80,6 +80,24 @@ public class SubmissionGraderTests
         SubmissionGrader.OutputsMatch(actual, expected).Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("1 2 \n3\t\n", "1 2\n3")]
+    [InlineData("a\n\n\n", "a")]
+    [InlineData("a   \r\nb  \r\n\r\n", "a\nb")]
+    public void OutputsMatch_ShouldIgnoreTrailingWhitespaceOnEachLineAndTrailingBlankLines(string actual, string expected)
+    {
+        SubmissionGrader.OutputsMatch(actual, expected).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("1 2", "12")]
+    [InlineData("a\n\nb", "a\nb")]
+    [InlineData("a\0", "a")]
+    public void OutputsMatch_ShouldStillCompareInnerWhitespaceAndContent(string actual, string expected)
+    {
+        SubmissionGrader.OutputsMatch(actual, expected).Should().BeFalse();
+    }
+
     #endregion
 
     #region Untrusted Sandbox Report Tests
@@ -182,9 +200,9 @@ public class SubmissionGraderTests
         // Act
         var result = SubmissionGrader.Grade(sandbox, testCases);
 
-        // Assert
+        // Assert - the sandbox's own error text is never shown to the student
         result.Status.Should().Be(SubmissionStatus.RuntimeError);
-        result.RuntimeError.Should().Be("Internal Runner Error: boom");
+        result.RuntimeError.Should().Be(SubmissionGrader.IncompleteExecutionMessage);
         result.TestResults[0].Status.Should().Be(TestResultStatus.Passed);
         result.TestResults[1].Status.Should().Be(TestResultStatus.RuntimeError);
         result.Score.Should().Be(50);
@@ -305,6 +323,158 @@ public class SubmissionGraderTests
         result.CompilationError.Should().Contain("CS1002");
         result.Score.Should().Be(0);
         result.TotalTests.Should().Be(1);
+    }
+
+    #endregion
+
+    #region Review Fix Tests
+
+    [Fact]
+    public void Grade_SandboxRuntimeErrorWithoutResults_ShouldNotPassItsTextThrough()
+    {
+        // Arrange - text the sandbox reported (possibly forged, possibly a hidden input)
+        var testCases = CreateTestCases("3");
+        testCases[0].IsPublic = true;
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.RuntimeError,
+            RuntimeError = "hidden input: 42 17"
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.RuntimeError);
+        result.RuntimeError.Should().Be(SubmissionGrader.IncompleteExecutionMessage);
+        result.TestResults.Single().ErrorMessage.Should().Be(SubmissionGrader.NoResultMessage);
+    }
+
+    [Fact]
+    public void Grade_CompilationError_ShouldNotPassRuntimeErrorTextThrough()
+    {
+        // Arrange
+        var testCases = CreateTestCases("3");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.CompilationError,
+            CompilationError = "",
+            RuntimeError = "secret"
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.CompilationError.Should().Be(SubmissionGrader.CompilationFailedMessage);
+        result.RuntimeError.Should().BeNull();
+    }
+
+    [Fact]
+    public void Grade_VeryLongCompilationError_ShouldBeTruncated()
+    {
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.CompilationError,
+            CompilationError = new string('e', SubmissionGrader.MaxCompilationErrorLength * 2)
+        };
+
+        var result = SubmissionGrader.Grade(sandbox, CreateTestCases("3"));
+
+        result.CompilationError!.Length.Should().BeLessThan(SubmissionGrader.MaxCompilationErrorLength + 100);
+        result.CompilationError.Should().EndWith(BoundedOutputCapture.TruncationMarker);
+    }
+
+    [Theory]
+    [InlineData(SubmissionStatus.TimeLimitExceeded, TestResultStatus.TimeLimitExceeded)]
+    [InlineData(SubmissionStatus.MemoryLimitExceeded, TestResultStatus.MemoryLimitExceeded)]
+    public void Grade_GlobalLimitWithPartialResults_ShouldTakePriorityOverNoResult(
+        SubmissionStatus sandboxStatus,
+        TestResultStatus expectedMissingStatus)
+    {
+        // Arrange - the container-level limit fired after the first test
+        var testCases = CreateTestCases("3", "15", "7");
+        var sandbox = new ExecutionResult
+        {
+            Status = sandboxStatus,
+            TestResults = [Ran(0, "3")]
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(sandboxStatus);
+        result.TestResults[0].Status.Should().Be(TestResultStatus.Passed);
+        result.TestResults.Skip(1).Should().OnlyContain(tr => tr.Status == expectedMissingStatus && tr.ErrorMessage == null);
+        result.RuntimeError.Should().BeNull();
+        result.Score.Should().Be(33);
+    }
+
+    [Fact]
+    public void Grade_GlobalTimeLimitWithoutAnyResults_ShouldReportTimeLimitExceededForEveryTest()
+    {
+        var testCases = CreateTestCases("3", "15");
+        var sandbox = new ExecutionResult { Status = SubmissionStatus.TimeLimitExceeded };
+
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        result.Status.Should().Be(SubmissionStatus.TimeLimitExceeded);
+        result.TestResults.Should().HaveCount(2).And.OnlyContain(tr => tr.Status == TestResultStatus.TimeLimitExceeded);
+    }
+
+    [Theory]
+    [InlineData("Traceback (most recent call last):\n  File \"solution.py\", line 1\nMemoryError")]
+    [InlineData("Traceback (most recent call last):\nMemoryError: cannot allocate")]
+    [InlineData("Exception in thread \"main\" java.lang.OutOfMemoryError: Java heap space")]
+    public void Grade_RuntimeOutOfMemoryMessage_ShouldBecomeMemoryLimitExceeded(string errorOutput)
+    {
+        // Arrange
+        var testCases = CreateTestCases("3");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.Completed,
+            TestResults =
+            [
+                new TestCaseResult { TestIndex = 0, Status = TestResultStatus.RuntimeError, ErrorMessage = errorOutput }
+            ]
+        };
+
+        // Act
+        var result = SubmissionGrader.Grade(sandbox, testCases);
+
+        // Assert
+        result.Status.Should().Be(SubmissionStatus.MemoryLimitExceeded);
+        result.TestResults.Single().Status.Should().Be(TestResultStatus.MemoryLimitExceeded);
+    }
+
+    [Fact]
+    public void Grade_ErrorMentioningMemoryErrorInsideALine_ShouldStayRuntimeError()
+    {
+        var testCases = CreateTestCases("3");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.Completed,
+            TestResults =
+            [
+                new TestCaseResult { TestIndex = 0, Status = TestResultStatus.RuntimeError, ErrorMessage = "ValueError: not a MemoryError" }
+            ]
+        };
+
+        SubmissionGrader.Grade(sandbox, testCases).Status.Should().Be(SubmissionStatus.RuntimeError);
+    }
+
+    [Fact]
+    public void Grade_OutputWithTrailingSpacesOnEachLine_ShouldPass()
+    {
+        var testCases = CreateTestCases("1 2\n3 4");
+        var sandbox = new ExecutionResult
+        {
+            Status = SubmissionStatus.Completed,
+            TestResults = [Ran(0, "1 2 \n3 4 \n\n")]
+        };
+
+        SubmissionGrader.Grade(sandbox, testCases).Score.Should().Be(100);
     }
 
     #endregion

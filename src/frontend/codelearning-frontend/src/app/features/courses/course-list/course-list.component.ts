@@ -4,11 +4,17 @@ import { SafeHtml } from '@angular/platform-browser';
 import { CourseService } from '../../../core/services/course.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { MarkdownService } from '../../../core/services/markdown.service';
-import { Course, CourseStatus, EnrolledCourse } from '../../../core/models/course.model';
+import { CourseStatus, EnrolledCourse } from '../../../core/models/course.model';
+import { MAX_PAGE_SIZE } from '../../../core/models/paging.model';
+import { extractApiError } from '../../../core/utils/api-error';
+import { PaginationComponent } from '../../../shared/components/pagination/pagination.component';
+
+// Published courses shown per page in the student catalog
+const CATALOG_PAGE_SIZE = 12;
 
 @Component({
   selector: 'app-course-list',
-  imports: [RouterLink],
+  imports: [RouterLink, PaginationComponent],
   templateUrl: './course-list.component.html',
   styleUrl: './course-list.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -18,13 +24,23 @@ export class CourseListComponent implements OnInit {
   readonly CourseStatus = CourseStatus;
   readonly courseService = inject(CourseService);
   readonly authService = inject(AuthService);
-  readonly markdownService = inject(MarkdownService);
+  private readonly markdownService = inject(MarkdownService);
 
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly searchQuery = signal('');
   readonly statusFilter = signal<'all' | 'draft' | 'published'>('all');
   readonly enrolledCourses = signal<EnrolledCourse[]>([]);
+
+  // Student catalog paging (teachers get all their courses at once)
+  readonly page = signal(1);
+  readonly totalPages = signal(0);
+  readonly totalCount = signal(0);
+
+  // Each description is rendered once when the course list loads, not on every change detection pass
+  readonly descriptionHtml = computed(() => new Map<string, SafeHtml>(
+    this.courseService.courses().map(course => [course.id, this.markdownService.render(course.description)])
+  ));
 
   readonly filteredCourses = computed(() => {
     let courses = this.courseService.courses();
@@ -60,34 +76,44 @@ export class CourseListComponent implements OnInit {
   }
 
   loadCourses(): void {
-    this.isLoading.set(true);
     this.errorMessage.set('');
 
-    // Teachers see all their courses (filtering happens in computed)
-    // Students see only published courses
-    const observable = this.authService.isTeacher()
-      ? this.courseService.getMyCourses()
-      : this.courseService.getPublishedCourses();
-
-    observable.subscribe({
-      next: () => {
-        this.isLoading.set(false);
-        
-        // If student, also load enrolled courses to show enrollment status
-        if (this.authService.isStudent()) {
-          this.courseService.getEnrolledCourses().subscribe({
-            next: (enrolled) => {
-              this.enrolledCourses.set(enrolled);
-            },
-            error: (error) => {
-              console.error('Failed to load enrolled courses:', error);
-            }
-          });
+    if (this.authService.isTeacher()) {
+      // Teachers see all their courses (filtering happens in computed)
+      this.isLoading.set(true);
+      this.courseService.getMyCourses().subscribe({
+        next: () => this.isLoading.set(false),
+        error: (error: unknown) => {
+          this.isLoading.set(false);
+          this.errorMessage.set(extractApiError(error, 'Failed to load courses'));
         }
-      },
-      error: (error: any) => {
+      });
+      return;
+    }
+
+    this.loadCatalogPage(1);
+
+    // Enrollment badges are optional decoration; the course list still works without them.
+    // The largest page covers every enrollment of all but the most prolific students.
+    this.courseService.getEnrolledCourses({ page: 1, pageSize: MAX_PAGE_SIZE }).subscribe({
+      next: (enrolled) => this.enrolledCourses.set(enrolled.items),
+      error: () => this.enrolledCourses.set([])
+    });
+  }
+
+  loadCatalogPage(page: number): void {
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.courseService.getPublishedCourses({ page, pageSize: CATALOG_PAGE_SIZE }).subscribe({
+      next: (result) => {
+        this.page.set(result.page);
+        this.totalPages.set(result.totalPages);
+        this.totalCount.set(result.totalCount);
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load courses');
+      },
+      error: (error: unknown) => {
+        this.isLoading.set(false);
+        this.errorMessage.set(extractApiError(error, 'Failed to load courses'));
       }
     });
   }
@@ -115,9 +141,6 @@ export class CourseListComponent implements OnInit {
     return status === CourseStatus.Published ? 'Published' : 'Draft';
   }
 
-  renderDescription(description: string): SafeHtml {
-    return this.markdownService.renderMarkdownSync(description);
-  }
 
   isEnrolledIn(courseId: string): boolean {
     return this.enrolledCourses().some(ec => ec.courseId === courseId);

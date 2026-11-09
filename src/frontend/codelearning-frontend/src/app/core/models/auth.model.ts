@@ -29,3 +29,8 @@ export interface AuthResponse {
   message: string;
   accessTokenExpiresAt?: string;
 }
+
+/** GET /api/auth/me. `accessTokenExpiresAt` is optional: newer servers send it so a reloaded page can schedule its refresh. */
+export interface CurrentUserResponse extends User {
+  accessTokenExpiresAt?: string;
+}

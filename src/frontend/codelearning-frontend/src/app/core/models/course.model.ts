@@ -45,6 +45,10 @@ export interface CreateChapterRequest {
   title: string;
 }
 
+export interface RenameChapterRequest {
+  title: string;
+}
+
 export interface Subchapter {
   id: string;
   title: string;
@@ -54,6 +58,10 @@ export interface Subchapter {
 }
 
 export interface CreateSubchapterRequest {
+  title: string;
+}
+
+export interface RenameSubchapterRequest {
   title: string;
 }
 
@@ -87,9 +95,10 @@ export interface Quiz {
 export interface QuizQuestion {
   id: string;
   content: string;
-  type: string; // "SingleChoice" | "MultipleChoice" | "TrueFalse"
+  type: string; // "SingleChoice" | "MultipleChoice" | "TrueFalse" (serialized as a string by the API)
   points: number;
-  explanation?: string;
+  // Null for students until they submit the quiz
+  explanation?: string | null;
   orderIndex: number;
   answers: QuizAnswer[];
 }
@@ -98,11 +107,12 @@ export interface QuizAnswer {
   id: string;
   text: string;
   orderIndex: number;
-  isCorrect?: boolean; // Only populated for instructors/admins editing quizzes
+  isCorrect?: boolean; // Only sent to the course owner; students learn it from the quiz result
 }
 
 export interface Problem {
   id: string;
+  title: string;
   description: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   tags?: Tag[];
@@ -131,6 +141,8 @@ export interface EnrolledCourse {
   courseId: string;
   courseTitle: string;
   courseDescription: string;
+  // Enrollments survive unpublishing; the content is unavailable while the course is a draft
+  courseStatus: CourseStatus;
   instructorName: string;
   enrolledAt: Date;
   lastActivityAt: Date;
@@ -142,4 +154,17 @@ export interface EnrolledCourse {
 
 export interface EnrollmentStatus {
   isEnrolled: boolean;
+}
+
+/** Course response of POST /api/courses/{id}/publish and /unpublish. */
+export interface CourseStatusChangeResponse {
+  message: string;
+  course: Course;
+}
+
+/** GET /api/courses/my/stats */
+export interface TeacherStats {
+  publishedCourses: number;
+  draftCourses: number;
+  totalStudents: number;
 }

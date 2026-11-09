@@ -1,6 +1,7 @@
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Grading;
 using CodeLearning.Core.Models;
+using System.Globalization;
 using System.Text;
 
 namespace CodeLearning.Runner.Services;
@@ -20,6 +21,7 @@ public class UniversalExecutor(
         var workspaceBasePath = configuration["ExecutionSettings:WorkspaceBasePath"]
                            ?? throw new InvalidOperationException("WorkspaceBasePath not configured");
         var workspaceDir = Path.Combine(workspaceBasePath, workspaceId.ToString());
+        var maxContainerRuntimeSeconds = configuration.GetValue("ExecutionSettings:MaxContainerRuntimeSeconds", SandboxTimeBudget.DefaultMaxContainerRuntimeSeconds);
 
         try
         {
@@ -29,12 +31,8 @@ public class UniversalExecutor(
                 "Created workspace {WorkspaceId} for {Language} submission {SubmissionId}",
                 workspaceId, language.Name, submission.Id);
 
-            await PrepareWorkspaceAsync(
-                workspaceDir,
-                submission.Code,
-                testCases,
-                language,
-                cancellationToken);
+            var budget = SandboxTimeBudget.For(language, testCases.Count, maxContainerRuntimeSeconds);
+            await PrepareWorkspaceAsync(workspaceDir, submission.Code, testCases, language, budget, cancellationToken);
 
             var context = new Models.ExecutionContext
             {
@@ -54,108 +52,123 @@ public class UniversalExecutor(
         }
     }
 
-    private static async Task PrepareWorkspaceAsync(
+    // Workspace layout, sent to the container as the job archive (unpacked to /app/out/job, root-only):
+    //   run.sh              the script below
+    //   src/<source file>   copied to /sandbox as the student user
+    //   tests/input_<n>.txt read and deleted by the agent before any submitted code runs
+    public static async Task PrepareWorkspaceAsync(
         string workspaceDir,
         string code,
-        List<TestCase> testCases,
+        IReadOnlyList<TestCase> testCases,
         Language language,
+        SandboxTimeBudget budget,
         CancellationToken cancellationToken)
     {
-        string solutionFile;
+        var profile = SandboxLanguage.For(language);
 
-        if (language.Name.Equals("C#", StringComparison.OrdinalIgnoreCase))
+        var sourceDir = Directory.CreateDirectory(Path.Combine(workspaceDir, "src")).FullName;
+        var testsDir = Directory.CreateDirectory(Path.Combine(workspaceDir, "tests")).FullName;
+
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, profile.SourceFile), code, cancellationToken);
+
+        for (var i = 0; i < testCases.Count; i++)
         {
-            // write to StudentCode.cs to avoid conflicts with Program.cs created by dotnet new
-            solutionFile = "StudentCode.cs";
-            await File.WriteAllTextAsync(Path.Combine(workspaceDir, solutionFile), code, cancellationToken);
-        }
-        else if (language.Name.Equals("Java", StringComparison.OrdinalIgnoreCase))
-        {
-            // In Java file must be named Solution.java
-            // Student must provide code in class named Solution
-            solutionFile = "Solution.java";
-            await File.WriteAllTextAsync(Path.Combine(workspaceDir, solutionFile), code, cancellationToken);
-        }
-        else
-        {
-            solutionFile = $"solution{language.FileExtension}";
-            await File.WriteAllTextAsync(Path.Combine(workspaceDir, solutionFile), code, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(testsDir, $"input_{i}.txt"), testCases[i].Input, cancellationToken);
         }
 
-        for (int i = 0; i < testCases.Count; i++)
-        {
-            await File.WriteAllTextAsync(
-                Path.Combine(workspaceDir, $"input_{i}.txt"),
-                testCases[i].Input,
-                cancellationToken);
-        }
-
-        var shellScript = GenerateShellScript(language, solutionFile);
-
-        await File.WriteAllTextAsync(
-            Path.Combine(workspaceDir, "run_tests.sh"),
-            shellScript,
-            cancellationToken);
+        var script = GenerateShellScript(profile, language, budget);
+        // LF only: bash reads the file inside a Linux container whatever the Runner's platform
+        await File.WriteAllTextAsync(Path.Combine(workspaceDir, DockerRunner.ScriptFileName), script, cancellationToken);
     }
 
-    private static string GenerateShellScript(Language language, string solutionFileName)
+    // Every command that touches submitted code runs through $STUDENT: uid/gid 65534, no supplementary groups,
+    // no inheritable capabilities, cwd /sandbox. The bounding set is left as the container's
+    // (SETUID, SETGID, KILL): clearing it needs CAP_SETPCAP, and with no permitted or effective capabilities and
+    // no-new-privileges it grants nothing
+    public const string StudentPrefix =
+        "setpriv --reuid=65534 --regid=65534 --clear-groups --inh-caps=-all -- env -C " + DockerRunner.WorkspacePath + " HOME=/tmp TMPDIR=/tmp";
+
+    public static string GenerateShellScript(SandboxLanguage profile, Language language, SandboxTimeBudget budget)
     {
+        var runCommand = $"{StudentPrefix} {profile.RunCommand}";
+        var memoryLimitKb = language.MemoryLimitMB * 1024L;
+
         var sb = new StringBuilder();
-        sb.AppendLine("#!/bin/bash");
+        void Line(string line = "") => sb.Append(line).Append('\n');
 
-        string runCommandForAgent = $"{language.ExecutableCommand} {solutionFileName}";
-
-        if (!string.IsNullOrWhiteSpace(language.CompileCommand))
+        Line("#!/bin/bash");
+        Line("# Generated by UniversalExecutor; started by the DockerRunner bootstrap as root (capabilities: SETUID,");
+        Line("# SETGID, KILL only; no-new-privileges). Submitted code only ever runs through $STUDENT as uid 65534");
+        Line("set -u");
+        Line("umask 077");
+        Line($"JOB={DockerRunner.JobPath}");
+        Line($"OUT={DockerRunner.AgentOutputPath}");
+        Line($"NONCE=$(cat \"$JOB/{DockerRunner.NonceFileName}\")");
+        Line($"rm -f \"$JOB/{DockerRunner.NonceFileName}\"");
+        Line($"STUDENT=({StudentPrefix})");
+        Line();
+        Line("# The only writer of the container's stdout. DockerRunner parses nothing outside these delimiters");
+        Line("emit() {");
+        Line("  printf '\\n<<<CL-RESULT-%s>>>\\n' \"$NONCE\"");
+        Line("  cat \"$1\"");
+        Line("  printf '\\n<<<CL-END-%s>>>\\n' \"$NONCE\"");
+        Line("  exit 0");
+        Line("}");
+        Line("emit_json() { printf '%s' \"$1\" > \"$OUT/final.json\"; emit \"$OUT/final.json\"; }");
+        Line("internal_error() { echo \"internal error: $1\" >&2; emit_json '{\"Status\":4}'; }");
+        Line("# kill(-1) as the student user reaches every student process and nothing else");
+        Line("kill_student() { \"${STUDENT[@]}\" /bin/bash -c 'kill -KILL -1' >/dev/null 2>&1 </dev/null; }");
+        Line();
+        Line("# === Workspace: /sandbox belongs to the student user, so it is filled as that user ===");
+        if (profile.TemplateDirectory is { } template)
         {
-            sb.AppendLine("# === Compilation Phase ===");
+            Line($"\"${{STUDENT[@]}}\" cp -r --preserve=timestamps {template}/. . </dev/null || internal_error template");
+        }
+        Line("tar -c -C \"$JOB/src\" . | \"${STUDENT[@]}\" tar -x -f - --no-same-permissions || internal_error workspace");
+        // The archive's "./" entry carries the root-only 0700 mode; the agent (root without DAC_OVERRIDE) must be able
+        // to enter /sandbox, its working directory for the tests
+        Line($"\"${{STUDENT[@]}}\" chmod 0755 {DockerRunner.WorkspacePath} || internal_error chmod");
 
-            if (language.Name.Equals("C#", StringComparison.OrdinalIgnoreCase))
-            {
-                // C# specific compilation steps
-                sb.AppendLine("dotnet new console -o . --force > /dev/null");
-                sb.AppendLine($"mv {solutionFileName} Program.cs");
-
-                sb.AppendLine("if ! dotnet build -c Release > compile_log.txt 2>&1; then");
-                sb.AppendLine("  ERR=$(cat compile_log.txt)");
-                sb.AppendLine("  # Escape double quotes and backslashes in error message");
-                sb.AppendLine("  ERR=$(cat compile_log.txt | jq -Rs .)");
-                sb.AppendLine("  echo \"{\\\"Status\\\":3, \\\"CompilationError\\\": $ERR, \\\"Score\\\":0}\" > /app/result.json");
-                sb.AppendLine("  cat /app/result.json");
-                sb.AppendLine("  exit 0");
-                sb.AppendLine("fi");
-
-                sb.AppendLine("DLL_PATH=$(find bin/Release -name '*.dll' | head -n 1)");
-                runCommandForAgent = "dotnet exec $DLL_PATH";
-            }
-            else if (language.Name.Equals("Java", StringComparison.OrdinalIgnoreCase))
-            {
-                sb.AppendLine($"if ! javac {solutionFileName} > compile_log.txt 2>&1; then");
-                sb.AppendLine("  ERR=$(cat compile_log.txt)");
-                sb.AppendLine("  # Escape double quotes and backslashes in error message");
-                sb.AppendLine("  ERR=$(cat compile_log.txt | jq -Rs .)");
-                sb.AppendLine("  echo \"{\\\"Status\\\":3, \\\"CompilationError\\\": $ERR, \\\"Score\\\":0}\" > /app/result.json");
-                sb.AppendLine("  cat /app/result.json");
-                sb.AppendLine("  exit 0");
-                sb.AppendLine("fi");
-
-                runCommandForAgent = $"java {Path.GetFileNameWithoutExtension(solutionFileName)}";
-            }
+        if (profile.CompileCommand is { } compile)
+        {
+            Line();
+            Line("# === Compilation, with its own time budget ===");
+            Line($"timeout --kill-after=2 {budget.CompileSeconds} \"${{STUDENT[@]}}\" /bin/bash -c {BashQuote(compile)} > \"$OUT/compile.log\" 2>&1 </dev/null");
+            Line("rc=$?");
+            Line("kill_student");
+            Line("if [ $rc -ne 0 ]; then");
+            Line("  if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then");
+            Line($"    printf '\\nCompilation timed out after {budget.CompileSeconds} seconds.\\n' >> \"$OUT/compile.log\"");
+            Line("  fi");
+            Line("  head -c 16384 \"$OUT/compile.log\" | jq -Rs '{Status: 3, CompilationError: .}' > \"$OUT/final.json\" || internal_error jq");
+            Line("  emit \"$OUT/final.json\"");
+            Line("fi");
         }
 
-        sb.AppendLine();
-        sb.AppendLine("# === Execution Phase ===");
-
-        sb.AppendLine($"/app/runner --run \"{runCommandForAgent}\" --input \"/app\" --out \"/app/result.json\" --timelimit {language.TimeoutSeconds * 1000} --memorylimitkb {language.MemoryLimitMB * 1024}");
-
-        sb.AppendLine("if [ -f /app/result.json ]; then");
-        sb.AppendLine("  cat /app/result.json");
-        sb.AppendLine("else");
-
-        sb.AppendLine("  echo '{\"Status\": 4, \"RuntimeError\": \"Agent failed to produce result (Critical Error)\", \"Score\": 0}'");
-        sb.AppendLine("fi");
+        Line();
+        Line("# === Tests: the agent runs as root, every test as the student user ===");
+        Line("timeout --kill-after=2 " + budget.RunnerSeconds.ToString(CultureInfo.InvariantCulture) + " /app/runner \\");
+        Line($"  --run {BashQuote(runCommand)} \\");
+        Line("  --input \"$JOB/tests\" \\");
+        Line("  --out \"$OUT/result.json\" \\");
+        Line($"  --workdir {DockerRunner.WorkspacePath} \\");
+        Line($"  --timelimit {budget.PerTestMs.ToString(CultureInfo.InvariantCulture)} \\");
+        Line($"  --memorylimitkb {memoryLimitKb.ToString(CultureInfo.InvariantCulture)} \\");
+        Line($"  --totaltimelimit {budget.TestsMs.ToString(CultureInfo.InvariantCulture)} \\");
+        Line("  > \"$OUT/runner.log\" 2>&1 </dev/null");
+        Line("rc=$?");
+        Line("kill_student");
+        Line("case $rc in");
+        Line("  0) [ -s \"$OUT/result.json\" ] && emit \"$OUT/result.json\"; internal_error 'no result' ;;");
+        Line("  # Out of time: the agent's partial result (marked as still running) or a bare time limit verdict");
+        Line("  124|137) [ -s \"$OUT/result.json\" ] && emit \"$OUT/result.json\"; emit_json '{\"Status\":5}' ;;");
+        Line("  *) head -c 2048 \"$OUT/runner.log\" >&2; internal_error \"agent exited with $rc\" ;;");
+        Line("esac");
 
         return sb.ToString();
     }
+
+    public static string BashQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 
     private void CleanupWorkspace(string workspaceDir)
     {
@@ -170,5 +183,44 @@ public class UniversalExecutor(
         {
             logger.LogWarning(ex, "Failed to cleanup workspace {WorkspaceDir}", workspaceDir);
         }
+    }
+}
+
+// How each language is compiled and run inside /sandbox. Commands are relative to /sandbox and run as the student
+public sealed record SandboxLanguage(string SourceFile, string? CompileCommand, string RunCommand, string? TemplateDirectory)
+{
+    private const string JavaOptions = "-XX:MaxRAMPercentage=75 -XX:-UsePerfData";
+
+    public static bool IsCSharp(Language language) => language.Name.Equals("C#", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsJava(Language language) => language.Name.Equals("Java", StringComparison.OrdinalIgnoreCase);
+
+    public static SandboxLanguage For(Language language)
+    {
+        if (IsCSharp(language))
+        {
+            // The image's prebuilt template (restored at /sandbox) supplies Solution.csproj and obj/; the submission
+            // replaces its Program.cs. No compiler server or node reuse: nothing may outlive the compile step
+            return new SandboxLanguage(
+                "Program.cs",
+                "dotnet build Solution.csproj -c Release --no-restore -nologo -v:q -clp:NoSummary " +
+                "-p:UseSharedCompilation=false -nodeReuse:false -m:1; rc=$?; dotnet build-server shutdown >/dev/null 2>&1; exit $rc",
+                "dotnet bin/Release/net10.0/Solution.dll",
+                "/opt/codelearning/csharp-template");
+        }
+
+        if (IsJava(language))
+        {
+            // The file name must match the public Solution class
+            return new SandboxLanguage(
+                "Solution.java",
+                $"javac {string.Join(' ', JavaOptions.Split(' ').Select(o => "-J" + o))} Solution.java",
+                $"java {JavaOptions} -cp {DockerRunner.WorkspacePath} Solution",
+                null);
+        }
+
+        // Interpreted languages: the language's executable with the source file
+        var sourceFile = $"solution{language.FileExtension}";
+        return new SandboxLanguage(sourceFile, null, $"{language.ExecutableCommand} {sourceFile}", null);
     }
 }

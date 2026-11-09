@@ -25,7 +25,7 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="StackExchange.Redis" Version="3.4.31" />
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
-    <PackageVersion Include="Docker.DotNet" Version="3.125.15" />
+    <PackageVersion Include="Docker.DotNet.Enhanced" Version="4.3.3" />
     <PackageVersion Include="MassTransit" Version="8.5.12" />
     <PackageVersion Include="MassTransit.EntityFrameworkCore" Version="8.5.12" />
     <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.12" />

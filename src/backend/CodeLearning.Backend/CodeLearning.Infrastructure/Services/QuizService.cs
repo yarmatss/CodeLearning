@@ -4,10 +4,14 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
+using CodeLearning.Infrastructure.Services.Learning;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
 
+// Grading is all-or-nothing per question: a question earns its points only when the selected answers are
+// exactly its correct answers. Any attempt completes the quiz block, whatever the score (one attempt per quiz).
+// StudentQuizAttempt.Score stores the attempt's PERCENTAGE (0-100, rounded), not points.
 public class QuizService(ApplicationDbContext context) : IQuizService
 {
     public async Task<QuizAttemptResultDto> SubmitQuizAsync(Guid quizId, SubmitQuizDto dto, Guid studentId)
@@ -15,86 +19,55 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         var quiz = await context.Quizzes
             .Include(q => q.Questions.OrderBy(qq => qq.OrderIndex))
                 .ThenInclude(qq => qq.Answers)
-            .Include(q => q.Block.Subchapter.Chapter)
+            .Include(q => q.Block.Subchapter.Chapter.Course)
             .FirstOrDefaultAsync(q => q.Id == quizId)
             ?? throw new NotFoundException($"Quiz with ID {quizId} not found");
 
-        var courseId = quiz.Block.Subchapter.Chapter.CourseId;
+        var course = quiz.Block.Subchapter.Chapter.Course;
 
         var isEnrolled = await context.StudentCourseProgresses
-            .AnyAsync(p => p.CourseId == courseId && p.StudentId == studentId);
+            .AnyAsync(p => p.CourseId == course.Id && p.StudentId == studentId);
 
         if (!isEnrolled)
         {
-            throw new BusinessRuleException("You must be enrolled in this course to submit quiz");
+            throw new ForbiddenException("You must be enrolled in this course to submit quiz");
         }
 
-        var existingAttempt = await context.StudentQuizAttempts
-            .FirstOrDefaultAsync(a => a.QuizId == quizId && a.StudentId == studentId);
+        if (course.Status != CourseStatus.Published)
+        {
+            throw new ForbiddenException("This course is not published at the moment");
+        }
 
-        if (existingAttempt != null)
+        var hasAttempt = await context.StudentQuizAttempts
+            .AnyAsync(a => a.QuizId == quizId && a.StudentId == studentId);
+
+        if (hasAttempt)
         {
             throw new BusinessRuleException("You have already attempted this quiz. Only one attempt is allowed.");
         }
 
-        ValidateSubmission(quiz, dto);
-
-        var (score, maxScore, questionResults) = GradeQuiz(quiz, dto);
-        var percentage = maxScore > 0 ? (double)score / maxScore * 100 : 0;
-
-        var answersJson = dto.Answers.Select(a => new QuizAnswerData
-        {
-            QuestionId = a.QuestionId,
-            SelectedAnswerIds = a.SelectedAnswerIds
-        }).ToList();
+        var selections = ValidateSubmission(quiz, dto);
+        var (score, maxScore, questionResults) = Grade(quiz, selections);
+        var percentage = ToPercentage(score, maxScore);
+        var now = DateTimeOffset.UtcNow;
 
         var attempt = new StudentQuizAttempt
         {
-            Id = Guid.NewGuid(),
             StudentId = studentId,
-            Student = await context.Users.FindAsync(studentId)
-                ?? throw new BusinessRuleException($"Student {studentId} not found"),
+            Student = null!,
             QuizId = quizId,
             Quiz = quiz,
             Score = (int)Math.Round(percentage),
-            Answers = answersJson,
-            AttemptedAt = DateTimeOffset.UtcNow,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            Answers = selections
+                .Select(s => new QuizAnswerData { QuestionId = s.Key, SelectedAnswerIds = s.Value })
+                .ToList(),
+            AttemptedAt = now
         };
 
         context.StudentQuizAttempts.Add(attempt);
 
-        var blockProgress = await context.StudentBlockProgresses
-            .FirstOrDefaultAsync(bp => bp.BlockId == quiz.Block.Id && bp.StudentId == studentId);
-
-        if (blockProgress == null)
-        {
-            blockProgress = new StudentBlockProgress
-            {
-                StudentId = studentId,
-                BlockId = quiz.Block.Id,
-                IsCompleted = true,
-                CompletedAt = DateTimeOffset.UtcNow,
-                Student = null!,
-                Block = null!
-            };
-            context.StudentBlockProgresses.Add(blockProgress);
-        }
-        else if (!blockProgress.IsCompleted)
-        {
-            blockProgress.IsCompleted = true;
-            blockProgress.CompletedAt = DateTimeOffset.UtcNow;
-        }
-
-        var courseProgress = await context.StudentCourseProgresses
-            .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId);
-
-        if (courseProgress != null)
-        {
-            courseProgress.LastActivityAt = DateTimeOffset.UtcNow;
-        }
-
+        // The attempt and the block completion (with the enrollment's next block) commit together
+        await ProgressWriter.MarkBlockCompletedAsync(context, studentId, course.Id, quiz.Block.Id);
         await context.SaveChangesAsync();
 
         return new QuizAttemptResultDto
@@ -109,9 +82,12 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         };
     }
 
+    // Built from the answers stored with the attempt. If the quiz was edited after the attempt (possible
+    // only while the course was unpublished), the stored percentage stays authoritative and is not re-graded
     public async Task<QuizAttemptResultDto?> GetQuizAttemptAsync(Guid quizId, Guid studentId)
     {
         var attempt = await context.StudentQuizAttempts
+            .AsNoTracking()
             .Include(a => a.Quiz.Questions.OrderBy(qq => qq.OrderIndex))
                 .ThenInclude(qq => qq.Answers)
             .FirstOrDefaultAsync(a => a.QuizId == quizId && a.StudentId == studentId);
@@ -122,45 +98,19 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         }
 
         var quiz = attempt.Quiz;
-        var maxScore = quiz.Questions.Sum(q => q.Points);
+        var selections = attempt.Answers
+            .GroupBy(a => a.QuestionId)
+            .ToDictionary(g => g.Key, g => g.First().SelectedAnswerIds.Distinct().ToList());
 
-        var questionResults = new List<QuestionResultDto>();
+        var (score, maxScore, questionResults) = Grade(quiz, selections);
+        var percentage = ToPercentage(score, maxScore);
 
-        foreach (var question in quiz.Questions)
+        var questionsUnchanged = quiz.Questions.Select(q => q.Id).ToHashSet().SetEquals(selections.Keys);
+        if (!questionsUnchanged)
         {
-            var studentAnswer = attempt.Answers.FirstOrDefault(a => a.QuestionId == question.Id);
-            var selectedAnswerIds = studentAnswer?.SelectedAnswerIds ?? new List<Guid>();
-
-            var correctAnswerIds = question.Answers
-                .Where(a => a.IsCorrect)
-                .Select(a => a.Id)
-                .OrderBy(id => id)
-                .ToList();
-
-            var selectedSorted = selectedAnswerIds.OrderBy(id => id).ToList();
-            var isCorrect = correctAnswerIds.SequenceEqual(selectedSorted);
-
-            questionResults.Add(new QuestionResultDto
-            {
-                QuestionId = question.Id,
-                QuestionContent = question.Content,
-                QuestionType = question.Type.ToString(),
-                IsCorrect = isCorrect,
-                Points = question.Points,
-                SelectedAnswerIds = selectedAnswerIds,
-                Answers = question.Answers.Select(a => new AnswerFeedbackDto
-                {
-                    AnswerId = a.Id,
-                    Text = a.Text,
-                    IsCorrect = a.IsCorrect,
-                    WasSelected = selectedAnswerIds.Contains(a.Id)
-                }).ToList(),
-                Explanation = question.Explanation
-            });
+            percentage = attempt.Score;
+            score = (int)Math.Round(attempt.Score * maxScore / 100.0);
         }
-
-        var score = questionResults.Where(qr => qr.IsCorrect).Sum(qr => qr.Points);
-        var percentage = maxScore > 0 ? (double)score / maxScore * 100 : 0;
 
         return new QuizAttemptResultDto
         {
@@ -174,7 +124,11 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         };
     }
 
-    private static void ValidateSubmission(Quiz quiz, SubmitQuizDto dto)
+    private static double ToPercentage(int score, int maxScore) =>
+        maxScore > 0 ? (double)score / maxScore * 100 : 0;
+
+    // Returns the selected answer ids per question, de-duplicated
+    private static Dictionary<Guid, List<Guid>> ValidateSubmission(Quiz quiz, SubmitQuizDto dto)
     {
         if (dto.Answers.Count != quiz.Questions.Count)
         {
@@ -183,59 +137,59 @@ public class QuizService(ApplicationDbContext context) : IQuizService
         }
 
         var questionIds = quiz.Questions.Select(q => q.Id).ToHashSet();
-        var submittedQuestionIds = dto.Answers.Select(a => a.QuestionId).ToHashSet();
+        var submittedQuestionIds = dto.Answers.Select(a => a.QuestionId).ToList();
 
-        if (!questionIds.SetEquals(submittedQuestionIds))
+        if (submittedQuestionIds.Distinct().Count() != submittedQuestionIds.Count
+            || !questionIds.SetEquals(submittedQuestionIds))
         {
             throw new BusinessRuleException("Answer question IDs do not match quiz questions");
         }
 
+        var selections = new Dictionary<Guid, List<Guid>>();
+
         foreach (var answer in dto.Answers)
         {
             var question = quiz.Questions.First(q => q.Id == answer.QuestionId);
+            var selected = answer.SelectedAnswerIds.Distinct().ToList();
 
-            if (answer.SelectedAnswerIds.Count == 0)
+            if (selected.Count == 0)
             {
                 throw new BusinessRuleException($"Question {question.Id} must have at least one answer selected");
             }
 
             var validAnswerIds = question.Answers.Select(a => a.Id).ToHashSet();
 
-            if (answer.SelectedAnswerIds.Any(id => !validAnswerIds.Contains(id)))
+            if (selected.Any(id => !validAnswerIds.Contains(id)))
             {
                 throw new BusinessRuleException($"Invalid answer IDs for question {question.Id}");
             }
 
-            if (question.Type is QuestionType.SingleChoice or QuestionType.TrueFalse
-                && answer.SelectedAnswerIds.Count > 1)
+            if (question.Type is QuestionType.SingleChoice or QuestionType.TrueFalse && selected.Count > 1)
             {
                 throw new BusinessRuleException(
                     $"Question {question.Id} accepts a single choice but multiple answers were selected");
             }
+
+            selections[question.Id] = selected;
         }
+
+        return selections;
     }
 
-    private static (int Score, int MaxScore, List<QuestionResultDto> Results) GradeQuiz(
+    private static (int Score, int MaxScore, List<QuestionResultDto> Results) Grade(
         Quiz quiz,
-        SubmitQuizDto dto)
+        IReadOnlyDictionary<Guid, List<Guid>> selections)
     {
         var results = new List<QuestionResultDto>();
         var earnedPoints = 0;
         var maxPoints = quiz.Questions.Sum(q => q.Points);
 
-        foreach (var question in quiz.Questions)
+        foreach (var question in quiz.Questions.OrderBy(q => q.OrderIndex))
         {
-            var studentAnswer = dto.Answers.First(a => a.QuestionId == question.Id);
+            var selected = selections.TryGetValue(question.Id, out var ids) ? ids : [];
 
-            var correctAnswerIds = question.Answers
-                .Where(a => a.IsCorrect)
-                .Select(a => a.Id)
-                .OrderBy(id => id)
-                .ToList();
-
-            var selectedAnswerIds = studentAnswer.SelectedAnswerIds.OrderBy(id => id).ToList();
-
-            var isCorrect = correctAnswerIds.SequenceEqual(selectedAnswerIds);
+            var correctAnswerIds = question.Answers.Where(a => a.IsCorrect).Select(a => a.Id).ToHashSet();
+            var isCorrect = selected.Count > 0 && correctAnswerIds.SetEquals(selected);
 
             if (isCorrect)
             {
@@ -249,14 +203,16 @@ public class QuizService(ApplicationDbContext context) : IQuizService
                 QuestionType = question.Type.ToString(),
                 IsCorrect = isCorrect,
                 Points = question.Points,
-                SelectedAnswerIds = studentAnswer.SelectedAnswerIds,
-                Answers = question.Answers.Select(a => new AnswerFeedbackDto
-                {
-                    AnswerId = a.Id,
-                    Text = a.Text,
-                    IsCorrect = a.IsCorrect,
-                    WasSelected = studentAnswer.SelectedAnswerIds.Contains(a.Id)
-                }).ToList(),
+                SelectedAnswerIds = selected,
+                Answers = question.Answers
+                    .OrderBy(a => a.OrderIndex)
+                    .Select(a => new AnswerFeedbackDto
+                    {
+                        AnswerId = a.Id,
+                        Text = a.Text,
+                        IsCorrect = a.IsCorrect,
+                        WasSelected = selected.Contains(a.Id)
+                    }).ToList(),
                 Explanation = question.Explanation
             });
         }

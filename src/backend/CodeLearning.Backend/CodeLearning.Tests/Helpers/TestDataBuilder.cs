@@ -107,13 +107,16 @@ public static class TestDataBuilder
 
     public static User CreateValidUser(UserRole role = UserRole.Student, string? email = null)
     {
+        // Generate the email once so UserName, Email and their normalized forms all match
+        email ??= _faker.Internet.Email();
+
         return new User
         {
             Id = Guid.NewGuid(),
-            UserName = email ?? _faker.Internet.Email(),
-            Email = email ?? _faker.Internet.Email(),
-            NormalizedEmail = (email ?? _faker.Internet.Email()).ToUpper(),
-            NormalizedUserName = (email ?? _faker.Internet.Email()).ToUpper(),
+            UserName = email,
+            Email = email,
+            NormalizedEmail = email.ToUpperInvariant(),
+            NormalizedUserName = email.ToUpperInvariant(),
             FirstName = _faker.Name.FirstName(),
             LastName = _faker.Name.LastName(),
             Role = role,

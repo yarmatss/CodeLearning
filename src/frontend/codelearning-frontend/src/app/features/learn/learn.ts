@@ -1,7 +1,29 @@
-import { ChangeDetectionStrategy, Component, inject, signal, OnInit, computed } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+  OnInit
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
-import { SafeHtml, DomSanitizer } from '@angular/platform-browser';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import {
+  EMPTY,
+  Subject,
+  catchError,
+  exhaustMap,
+  finalize,
+  switchMap,
+  take,
+  takeUntil,
+  takeWhile,
+  tap,
+  timer
+} from 'rxjs';
 import { ProgressService } from '../../core/services/progress.service';
 import { BlockService } from '../../core/services/block.service';
 import { MarkdownService } from '../../core/services/markdown.service';
@@ -11,9 +33,26 @@ import { ProblemService } from '../../core/services/problem.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { CourseProgress, BlockProgress } from '../../core/models/progress.model';
 import { Block, BlockType } from '../../core/models/course.model';
-import { Submission, SubmitCodeRequest } from '../../core/models/submission.model';
+import {
+  FINAL_SUBMISSION_STATUSES,
+  Submission,
+  SubmissionStatus,
+  SubmitCodeRequest,
+  TestResultStatus,
+  isAcceptedSubmission
+} from '../../core/models/submission.model';
 import { CodeEditorComponent } from '../../shared/components/code-editor/code-editor.component';
-import { firstValueFrom } from 'rxjs';
+import { EditorLanguage } from '../../shared/components/code-editor/monaco-loader';
+import { extractApiError, isAccessDenied } from '../../core/utils/api-error';
+
+// A submission is polled once a second for at most this many times before the page gives up
+const POLL_INTERVAL_MS = 1000;
+const MAX_POLL_ATTEMPTS = 90;
+
+// YouTube video ids are 11 URL-safe base64 characters
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+type OrderedBlock = BlockProgress & { chapterIndex: number; subchapterIndex: number };
 
 @Component({
   selector: 'app-learn',
@@ -25,6 +64,7 @@ import { firstValueFrom } from 'rxjs';
 export class Learn implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly progressService = inject(ProgressService);
   private readonly blockService = inject(BlockService);
   private readonly markdownService = inject(MarkdownService);
@@ -34,12 +74,26 @@ export class Learn implements OnInit {
   private readonly sanitizer = inject(DomSanitizer);
   private readonly dialogService = inject(DialogService);
 
+  // Every block change goes through this subject: loading switches to the newest id, and
+  // everything started for the previous block (problem details, polling) stops when it emits
+  private readonly blockId$ = new Subject<string>();
+
+  courseId = '';
+
   readonly courseProgress = signal<CourseProgress | null>(null);
   readonly currentBlock = signal<Block | null>(null);
   readonly isLoading = signal(false);
+  readonly isBlockLoading = signal(false);
   readonly isSidebarOpen = signal(true);
+  // Shown instead of the block when the course or the block cannot be loaded
   readonly errorMessage = signal<string>('');
-  
+  // Set when the API refuses the content (401/403: not enrolled, or the course is unpublished);
+  // the page then offers the course page, where the student can enroll, instead of an error
+  readonly accessDeniedMessage = signal<string>('');
+  // Shown above the block for a failed action (submit, quiz), keeping the editor and its code
+  readonly actionError = signal<string>('');
+  readonly infoMessage = signal<string>('');
+
   // Quiz state
   readonly quizAnswers = signal<Map<string, Set<string>>>(new Map());
   readonly quizResult = signal<QuizResult | null>(null);
@@ -51,302 +105,165 @@ export class Learn implements OnInit {
   readonly userCode = signal<string>('');
   readonly currentSubmission = signal<Submission | null>(null);
   readonly previousSubmissions = signal<Submission[]>([]);
+  readonly isSubmitting = signal(false);
   readonly isPolling = signal(false);
 
-  // Computed helper for available languages (only from starter codes)
-  readonly availableLanguages = computed(() => {
-    const block = this.currentBlock();
-    if (!block?.problem?.starterCodes) return [];
-    return block.problem.starterCodes;
+  readonly BlockType = BlockType;
+  readonly TestResultStatus = TestResultStatus;
+  readonly SubmissionStatus = SubmissionStatus;
+
+  // Rendered once per block instead of on every change detection pass
+  readonly theoryHtml = computed(() => this.markdownService.render(this.currentBlock()?.theoryContent?.content));
+  readonly problemDescriptionHtml = computed(() => this.markdownService.render(this.currentBlock()?.problem?.description));
+
+  // Built from the id the backend extracted and validated, never from the raw URL
+  readonly videoEmbedUrl = computed<SafeResourceUrl | null>(() => {
+    const videoId = this.currentBlock()?.videoContent?.videoId;
+    if (!videoId || !YOUTUBE_VIDEO_ID.test(videoId)) {
+      return null;
+    }
+    return this.sanitizer.bypassSecurityTrustResourceUrl(`https://www.youtube-nocookie.com/embed/${videoId}`);
   });
 
-  // Computed helper for unanswered quiz questions (only show if submit was attempted)
+  readonly availableLanguages = computed(() => this.currentBlock()?.problem?.starterCodes ?? []);
+
+  readonly editorLanguage = computed<EditorLanguage>(() => {
+    const languageId = this.selectedLanguage();
+    const starter = this.availableLanguages().find(sc => sc.languageId === languageId);
+    return toEditorLanguage(starter?.languageName);
+  });
+
+  // Unanswered quiz questions (only shown once a submit was attempted)
   readonly unansweredQuestions = computed(() => {
     const block = this.currentBlock();
-    const attempted = this.attemptedQuizSubmit();
-    
-    if (!block?.quiz || !attempted) return new Set<string>();
-    
-    const unanswered = new Set<string>();
-    block.quiz.questions.forEach(q => {
-      const answers = this.quizAnswers().get(q.id);
-      if (!answers || answers.size === 0) {
-        unanswered.add(q.id);
-      }
-    });
-    return unanswered;
+    if (!block?.quiz || !this.attemptedQuizSubmit()) return new Set<string>();
+
+    const answers = this.quizAnswers();
+    return new Set(block.quiz.questions.filter(q => !answers.get(q.id)?.size).map(q => q.id));
   });
 
-  // Computed helper for submission
-  readonly passedTestCases = computed(() => {
-    const submission = this.currentSubmission();
-    return submission?.passedTestCases || 0;
-  });
+  readonly passedTestCases = computed(() => this.currentSubmission()?.passedTestCases || 0);
+  readonly totalTestCases = computed(() => this.currentSubmission()?.totalTestCases || 0);
 
-  readonly totalTestCases = computed(() => {
-    const submission = this.currentSubmission();
-    return submission?.totalTestCases || 0;
-  });
-
-  readonly getStatusName = (status: number): string => {
-    switch (status) {
-      case 0: return 'Pending';
-      case 1: return 'Running';
-      case 2: return 'Completed';
-      case 3: return 'Compilation Error';
-      case 4: return 'Runtime Error';
-      case 5: return 'Time Limit Exceeded';
-      case 6: return 'Memory Limit Exceeded';
-      default: return 'Unknown';
-    }
-  };
-
-  // Computed signals for navigation
-  readonly allBlocks = computed(() => {
+  readonly allBlocks = computed<OrderedBlock[]>(() => {
     const progress = this.courseProgress();
     if (!progress) return [];
-    
-    const blocks: Array<BlockProgress & { chapterIndex: number; subchapterIndex: number }> = [];
-    progress.chapters.forEach((chapter) => {
-      chapter.subchapters.forEach((subchapter) => {
-        subchapter.blocks.forEach((block) => {
-          blocks.push({
-            ...block,
-            chapterIndex: chapter.orderIndex,
-            subchapterIndex: subchapter.orderIndex
-          });
-        });
-      });
-    });
-    // Sortuj po hierarchii: chapter → subchapter → block
-    return blocks.sort((a, b) => {
-      if (a.chapterIndex !== b.chapterIndex) {
-        return a.chapterIndex - b.chapterIndex;
+
+    const blocks: OrderedBlock[] = [];
+    for (const chapter of progress.chapters) {
+      for (const subchapter of chapter.subchapters) {
+        for (const block of subchapter.blocks) {
+          blocks.push({ ...block, chapterIndex: chapter.orderIndex, subchapterIndex: subchapter.orderIndex });
+        }
       }
-      if (a.subchapterIndex !== b.subchapterIndex) {
-        return a.subchapterIndex - b.subchapterIndex;
-      }
-      return a.orderIndex - b.orderIndex;
-    });
+    }
+    // Course order: chapter, then subchapter, then block
+    return blocks.sort((a, b) =>
+      a.chapterIndex - b.chapterIndex || a.subchapterIndex - b.subchapterIndex || a.orderIndex - b.orderIndex
+    );
   });
 
   readonly currentBlockIndex = computed(() => {
     const current = this.currentBlock();
-    const blocks = this.allBlocks();
-    if (!current || blocks.length === 0) return -1;
-    return blocks.findIndex(b => b.blockId === current.id);
+    if (!current) return -1;
+    return this.allBlocks().findIndex(b => b.blockId === current.id);
   });
 
   readonly hasNextBlock = computed(() => {
     const index = this.currentBlockIndex();
-    const blocks = this.allBlocks();
-    return index >= 0 && index < blocks.length - 1;
+    return index >= 0 && index < this.allBlocks().length - 1;
   });
 
-  readonly hasPreviousBlock = computed(() => {
-    const index = this.currentBlockIndex();
-    return index > 0;
+  readonly hasPreviousBlock = computed(() => this.currentBlockIndex() > 0);
+
+  /** Whether the student has met the current block's requirement and may move on. */
+  readonly isCurrentBlockSatisfied = computed(() => {
+    const block = this.currentBlock();
+    if (!block) return false;
+    if (this.isBlockCompleted(block.id)) return true;
+
+    switch (block.type) {
+      case BlockType.Quiz:
+        return !!this.quizResult();
+      case BlockType.Problem:
+        // A problem solved earlier counts even if its block was never marked complete
+        return this.previousSubmissions().some(isAcceptedSubmission)
+          || (!!this.currentSubmission() && isAcceptedSubmission(this.currentSubmission()!));
+      default:
+        return true;
+    }
   });
 
-  readonly BlockType = BlockType;
+  constructor() {
+    this.blockId$
+      .pipe(
+        tap(() => this.resetBlockState()),
+        switchMap(blockId =>
+          this.blockService.getBlock(blockId).pipe(
+            catchError((error: unknown) => {
+              this.showLoadError(error, 'Failed to load block');
+              return EMPTY;
+            }),
+            finalize(() => this.isBlockLoading.set(false))
+          )
+        ),
+        takeUntilDestroyed()
+      )
+      .subscribe(block => this.showBlock(block));
+
+    // Leaving the page by any route (exit link, navbar, back button) completes the theory or
+    // video block being read
+    this.destroyRef.onDestroy(() => this.completePassiveBlock(this.currentBlock()));
+  }
 
   ngOnInit(): void {
-    const courseId = this.route.snapshot.paramMap.get('courseId');
-    if (courseId) {
-      this.loadCourseProgress(courseId);
+    this.courseId = this.route.snapshot.paramMap.get('courseId') ?? '';
+    if (this.courseId) {
+      this.loadCourseProgress();
     }
   }
 
-  loadCourseProgress(courseId: string): void {
+  loadCourseProgress(): void {
     this.isLoading.set(true);
-    this.progressService.getCourseProgress(courseId).subscribe({
-      next: (progress) => {
-        this.courseProgress.set(progress);
-        
-        // Load current block or first block
-        if (progress.currentBlockId) {
-          this.loadBlock(progress.currentBlockId);
-        } else {
-          const firstBlock = this.allBlocks()[0];
-          if (firstBlock) {
-            this.loadBlock(firstBlock.blockId);
+    this.progressService.getCourseProgress(this.courseId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (progress) => {
+          this.courseProgress.set(progress);
+          this.isLoading.set(false);
+
+          const startBlockId = progress.currentBlockId ?? this.allBlocks()[0]?.blockId;
+          if (startBlockId) {
+            this.loadBlock(startBlockId);
           }
+        },
+        error: (error: unknown) => {
+          this.showLoadError(error, 'Failed to load course');
+          this.isLoading.set(false);
         }
-        this.isLoading.set(false);
-      },
-      error: (error) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load course');
-        this.isLoading.set(false);
-      }
-    });
+      });
   }
 
   loadBlock(blockId: string): void {
-    // Clear error message when changing blocks
-    this.errorMessage.set('');
-    
-    this.blockService.getBlock(blockId).subscribe({
-      next: (block: Block) => {
-        this.currentBlock.set(block);
-        
-        // Reset quiz state when loading new block
-        this.quizAnswers.set(new Map());
-        this.quizResult.set(null);
-        this.attemptedQuizSubmit.set(false);
-        
-        // Reset problem state when loading new block
-        this.selectedLanguage.set(null);
-        this.userCode.set('');
-        this.currentSubmission.set(null);
-        this.previousSubmissions.set([]);
-        
-        // If it's a quiz block, try to load previous attempt
-        if (block.quiz) {
-          this.quizService.getQuizAttempt(block.quiz.id).subscribe({
-            next: (result) => {
-              // Show previous result
-              this.quizResult.set(result);
-            },
-            error: () => {
-              // No previous attempt, that's fine
-            }
-          });
-        }
-        
-        // If it's a problem block, fetch full problem details with starterCodes
-        if (block.problem) {
-          this.problemService.getProblem(block.problem.id).subscribe({
-            next: (problemDetails) => {
-              // Update problem with full details including starterCodes and tags
-              block.problem!.tags = problemDetails.tags;
-              block.problem!.starterCodes = problemDetails.starterCodes.map(sc => ({
-                id: sc.id,
-                code: sc.code,
-                languageId: sc.languageId,
-                languageName: sc.languageName
-              }));
-              
-              // Auto-select first language if available
-              if (problemDetails.starterCodes && problemDetails.starterCodes.length > 0) {
-                const firstStarter = problemDetails.starterCodes[0];
-                this.selectedLanguage.set(firstStarter.languageId);
-                this.userCode.set(firstStarter.code);
-              }
-              
-              // Trigger change detection by updating the signal
-              this.currentBlock.set({ ...block });
-            },
-            error: (err) => {
-              console.error('Failed to load problem details:', err);
-            }
-          });
-
-          // Load previous submissions for this problem
-          this.submissionService.getByProblem(block.problem.id).subscribe({
-            next: (submissions) => {
-              this.previousSubmissions.set(submissions);
-            },
-            error: (err) => {
-              console.error('Failed to load previous submissions:', err);
-              this.previousSubmissions.set([]);
-            }
-          });
-        }
-      },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load block');
-      }
-    });
+    const leaving = this.currentBlock();
+    if (leaving?.id !== blockId) {
+      this.completePassiveBlock(leaving);
+    }
+    this.blockId$.next(blockId);
   }
 
   async goToNextBlock(): Promise<void> {
-    const blocks = this.allBlocks();
-    const currentIndex = this.currentBlockIndex();
-    const currentBlockData = this.currentBlock();
-    
-    if (currentIndex >= 0 && currentIndex < blocks.length - 1) {
-      // Validate current block before moving to next
-      if (currentBlockData) {
-        // Check if quiz is completed
-        if (currentBlockData.type === BlockType.Quiz && !this.quizResult()) {
-          await this.dialogService.alert(
-            'Please complete the quiz before moving to the next block.',
-            'Quiz Not Completed',
-            'warning'
-          );
-          return;
-        }
-        
-        // Check if problem is solved
-        if (currentBlockData.type === BlockType.Problem) {
-          const submission = this.currentSubmission();
-          if (!submission || submission.score !== 100) {
-            await this.dialogService.alert(
-              'Please solve the problem with 100% score before moving to the next block.',
-              'Problem Not Solved',
-              'warning'
-            );
-            return;
-          }
-        }
-      }
-      
-      const nextBlock = blocks[currentIndex + 1];
-      this.loadBlock(nextBlock.blockId);
-      
-      // Mark current block as complete only if requirements are met
-      const currentBlockId = this.currentBlock()?.id;
-      
-      if (currentBlockId && currentBlockData) {
-        let shouldMarkComplete = true;
-        
-        // Don't mark quiz blocks as complete if not solved
-        if (currentBlockData.type === BlockType.Quiz && !this.quizResult()) {
-          shouldMarkComplete = false;
-        }
-        
-        // Don't mark problem blocks as complete if not solved with 100% score
-        if (currentBlockData.type === BlockType.Problem) {
-          const submission = this.currentSubmission();
-          if (!submission || submission.score !== 100) {
-            shouldMarkComplete = false;
-          }
-        }
-        
-        if (shouldMarkComplete) {
-          this.markBlockComplete(currentBlockId);
-        }
-      }
-    }
+    if (!this.hasNextBlock()) return;
+    if (!(await this.ensureCurrentBlockSatisfied('moving to the next block'))) return;
+
+    const nextBlock = this.allBlocks()[this.currentBlockIndex() + 1];
+    this.loadBlock(nextBlock.blockId);
   }
 
   goToPreviousBlock(): void {
-    const blocks = this.allBlocks();
-    const currentIndex = this.currentBlockIndex();
-    
-    if (currentIndex > 0) {
-      const previousBlock = blocks[currentIndex - 1];
-      this.loadBlock(previousBlock.blockId);
+    if (this.hasPreviousBlock()) {
+      this.loadBlock(this.allBlocks()[this.currentBlockIndex() - 1].blockId);
     }
-  }
-
-  markBlockComplete(blockId: string): void {
-    this.blockService.completeBlock(blockId).subscribe({
-      next: () => {
-        // Reload progress to update UI
-        const courseId = this.route.snapshot.paramMap.get('courseId');
-        if (courseId) {
-          this.progressService.getCourseProgress(courseId).subscribe({
-            next: (progress) => {
-              this.courseProgress.set(progress);
-            }
-          });
-        }
-      },
-      error: (error) => {
-        console.error('Failed to mark block as complete:', error);
-      }
-    });
   }
 
   selectBlock(blockId: string): void {
@@ -358,111 +275,42 @@ export class Learn implements OnInit {
   }
 
   async completeCourse(): Promise<void> {
-    const currentBlock = this.currentBlock();
-    
-    if (!currentBlock) {
+    const block = this.currentBlock();
+    if (!block) {
       this.router.navigate(['/dashboard']);
       return;
     }
-    
-    // Check if current block meets completion requirements
-    let canComplete = true;
-    
-    // Check if block is already completed
-    if (!this.isBlockCompleted(currentBlock.id)) {
-      // Don't complete if quiz is not solved
-      if (currentBlock.type === BlockType.Quiz && !this.quizResult()) {
-        canComplete = false;
-      }
-      
-      // Don't complete if problem doesn't have 100% score
-      if (currentBlock.type === BlockType.Problem) {
-        const submission = this.currentSubmission();
-        if (!submission || submission.score !== 100) {
-          canComplete = false;
-        }
-      }
-      
-      // If requirements are met, mark as complete
-      if (canComplete) {
-        this.markBlockComplete(currentBlock.id);
-      }
-    }
-    
-    // Only navigate to dashboard if all requirements are met OR block is already completed
-    if (canComplete || this.isBlockCompleted(currentBlock.id)) {
-      this.router.navigate(['/dashboard']);
-    } else {
-      // Show error message - block requirements not met
-      if (currentBlock.type === BlockType.Quiz) {
-        await this.dialogService.alert(
-          'Please complete the quiz before finishing the course.',
-          'Quiz Not Completed',
-          'warning'
-        );
-      } else if (currentBlock.type === BlockType.Problem) {
-        await this.dialogService.alert(
-          'Please solve the problem with 100% score before finishing the course.',
-          'Problem Not Solved',
-          'warning'
-        );
-      }
-    }
-  }
 
-  renderMarkdown(content: string): SafeHtml {
-    return this.markdownService.renderMarkdownSync(content);
-  }
+    if (!(await this.ensureCurrentBlockSatisfied('finishing the course'))) return;
 
-  getSafeYouTubeUrl(url: string) {
-    const videoId = this.extractYouTubeVideoId(url);
-    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(embedUrl);
-  }
-
-  getYouTubeEmbedUrl(url: string): string {
-    const videoId = this.extractYouTubeVideoId(url);
-    return `https://www.youtube.com/embed/${videoId}`;
-  }
-
-  private extractYouTubeVideoId(url: string): string {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : '';
+    // Theory and video blocks are completed by the destroy hook as the page is left
+    this.router.navigate(['/dashboard']);
   }
 
   isBlockCompleted(blockId: string): boolean {
-    const blocks = this.allBlocks();
-    const block = blocks.find(b => b.blockId === blockId);
-    return block?.isCompleted || false;
+    return this.allBlocks().find(b => b.blockId === blockId)?.isCompleted ?? false;
   }
 
   getBlockProgress(chapterId: string, subchapterId: string): { completed: number; total: number } {
-    const progress = this.courseProgress();
-    if (!progress) return { completed: 0, total: 0 };
-    
-    const chapter = progress.chapters.find(c => c.chapterId === chapterId);
-    if (!chapter) return { completed: 0, total: 0 };
-    
-    const subchapter = chapter.subchapters.find(s => s.subchapterId === subchapterId);
+    const subchapter = this.courseProgress()
+      ?.chapters.find(c => c.chapterId === chapterId)
+      ?.subchapters.find(s => s.subchapterId === subchapterId);
     if (!subchapter) return { completed: 0, total: 0 };
-    
-    const completed = subchapter.blocks.filter(b => b.isCompleted).length;
-    const total = subchapter.blocks.length;
-    
-    return { completed, total };
+
+    return {
+      completed: subchapter.blocks.filter(b => b.isCompleted).length,
+      total: subchapter.blocks.length
+    };
   }
 
   // Quiz methods
   selectQuizAnswer(questionId: string, answerId: string, isSingleChoice: boolean): void {
-    const answers = this.quizAnswers();
-    
+    const answers = new Map(this.quizAnswers());
+
     if (isSingleChoice) {
-      // For single choice, replace any existing answer
       answers.set(questionId, new Set([answerId]));
     } else {
-      // For multiple choice, toggle the answer
-      const questionAnswers = answers.get(questionId) || new Set();
+      const questionAnswers = new Set(answers.get(questionId) ?? []);
       if (questionAnswers.has(answerId)) {
         questionAnswers.delete(answerId);
       } else {
@@ -470,34 +318,25 @@ export class Learn implements OnInit {
       }
       answers.set(questionId, questionAnswers);
     }
-    
-    this.quizAnswers.set(new Map(answers));
+
+    this.quizAnswers.set(answers);
   }
 
   isAnswerSelected(questionId: string, answerId: string): boolean {
-    const answers = this.quizAnswers();
-    return answers.get(questionId)?.has(answerId) || false;
+    return this.quizAnswers().get(questionId)?.has(answerId) || false;
   }
 
   async submitQuiz(): Promise<void> {
     const block = this.currentBlock();
-    if (!block || !block.quiz) return;
+    if (!block?.quiz || this.isSubmittingQuiz()) return;
 
-    // Clear previous error
-    this.errorMessage.set('');
-    
-    // Mark that submit was attempted
+    this.actionError.set('');
     this.attemptedQuizSubmit.set(true);
 
-    // Validate that all questions have at least one answer
-    const unansweredQuestions = block.quiz.questions.filter(q => {
-      const answers = this.quizAnswers().get(q.id);
-      return !answers || answers.size === 0;
-    });
-
-    if (unansweredQuestions.length > 0) {
+    const unanswered = this.unansweredQuestions().size;
+    if (unanswered > 0) {
       await this.dialogService.alert(
-        `Please answer all questions before submitting. ${unansweredQuestions.length} question(s) remaining.`,
+        `Please answer all questions before submitting. ${unanswered} question(s) remaining.`,
         'Incomplete Quiz',
         'warning'
       );
@@ -507,44 +346,37 @@ export class Learn implements OnInit {
     const submission: QuizSubmission = {
       answers: block.quiz.questions.map(q => ({
         questionId: q.id,
-        selectedAnswerIds: Array.from(this.quizAnswers().get(q.id) || [])
+        selectedAnswerIds: Array.from(this.quizAnswers().get(q.id) ?? [])
       }))
     };
 
+    const blockId = block.id;
     this.isSubmittingQuiz.set(true);
-    this.quizService.submitQuiz(block.quiz.id, submission).subscribe({
-      next: (result) => {
-        this.quizResult.set(result);
-        this.isSubmittingQuiz.set(false);
-        
-        // Mark block as complete (backend already did this, but reload progress)
-        const courseId = this.route.snapshot.paramMap.get('courseId');
-        if (courseId) {
-          this.progressService.getCourseProgress(courseId).subscribe({
-            next: (progress) => {
-              this.courseProgress.set(progress);
-            }
-          });
+    this.quizService.submitQuiz(block.quiz.id, submission)
+      .pipe(
+        takeUntil(this.blockId$),
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.isSubmittingQuiz.set(false))
+      )
+      .subscribe({
+        next: (result) => {
+          if (this.currentBlock()?.id !== blockId) return;
+          this.quizResult.set(result);
+          // The backend completes the quiz block on submit; refresh the sidebar to show it
+          this.reloadProgress();
+        },
+        error: (error: unknown) => {
+          this.actionError.set(extractApiError(error, 'Failed to submit quiz'));
         }
-      },
-      error: (error) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to submit quiz');
-        this.isSubmittingQuiz.set(false);
-      }
-    });
+      });
   }
 
   // Problem block methods
   selectLanguage(languageId: string, starterCode: string): void {
-    // Validate that this language is available for the problem
-    const availableLangs = this.availableLanguages();
-    const isAvailable = availableLangs.some(lang => lang.languageId === languageId);
-    
-    if (!isAvailable) {
-      console.warn('Selected language is not available for this problem');
+    if (!this.availableLanguages().some(lang => lang.languageId === languageId)) {
       return;
     }
-    
+
     this.selectedLanguage.set(languageId);
     this.userCode.set(starterCode);
     this.currentSubmission.set(null);
@@ -554,101 +386,83 @@ export class Learn implements OnInit {
     this.userCode.set(code);
   }
 
-  async submitCode(): Promise<void> {
+  submitCode(): void {
     const block = this.currentBlock();
     const languageId = this.selectedLanguage();
-    
-    if (!block || !block.problem || !languageId) return;
+    if (!block?.problem || !languageId || this.isSubmitting()) return;
 
-    // Clear previous error
-    this.errorMessage.set('');
+    this.actionError.set('');
+    this.infoMessage.set('');
 
-    // Final validation - ensure language is in starter codes
-    const availableLangs = this.availableLanguages();
-    const isLanguageSupported = availableLangs.some(lang => lang.languageId === languageId);
-    
-    if (!isLanguageSupported) {
-      await this.dialogService.alert(
-        'Selected language is not supported for this problem.',
-        'Invalid Language',
-        'error'
-      );
+    if (!this.availableLanguages().some(lang => lang.languageId === languageId)) {
+      this.actionError.set('Selected language is not supported for this problem.');
       return;
     }
 
-    const request: SubmitCodeRequest = {
-      problemId: block.problem.id,
-      languageId: languageId,
-      code: this.userCode()
-    };
+    // Captured now: the student may switch blocks while the submission runs
+    const blockId = block.id;
+    const problemId = block.problem.id;
+    const request: SubmitCodeRequest = { problemId, languageId, code: this.userCode() };
 
-    try {
-      const submission = await firstValueFrom(
-        this.submissionService.submit(request)
-      );
-      
-      this.currentSubmission.set(submission);
-      // Start polling
-      await this.pollSubmission(submission.id);
-    } catch (error: any) {
-      // Rate limiting replies with ProblemDetails, which carries the reason in `detail`
-      this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to submit code');
-    }
+    this.isSubmitting.set(true);
+    this.submissionService.submit(request)
+      .pipe(takeUntil(this.blockId$), takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (submission) => {
+          this.currentSubmission.set(submission);
+          this.pollSubmission(submission.id, blockId, problemId);
+        },
+        error: (error: unknown) => {
+          this.isSubmitting.set(false);
+          // Rate limiting replies with ProblemDetails, which carries the reason in `detail`
+          this.actionError.set(extractApiError(error, 'Failed to submit code'));
+        }
+      });
   }
 
-  private async pollSubmission(submissionId: string): Promise<void> {
-    this.isPolling.set(true);
-    const maxAttempts = 60; // 1 minute (1s interval)
-
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const sub = await firstValueFrom(
-          this.submissionService.getById(submissionId)
-        );
-
-        this.currentSubmission.set(sub);
-
-        // Check if submission is in final state (not Pending/Running)
-        const finalStatuses = [2, 3, 4, 5, 6]; // Completed, CompilationError, RuntimeError, TimeLimitExceeded, MemoryLimitExceeded
-
-        if (finalStatuses.includes(sub.status)) {
-          this.isPolling.set(false);
-          // Dodaj submission do previousSubmissions na początek listy
-          const prev = this.previousSubmissions();
-          this.previousSubmissions.set([sub, ...prev]);
-          // If score is 100%, mark block as complete
-          if (sub.status === 2 && sub.score === 100) {
-            const blockId = this.currentBlock()?.id;
-            if (blockId) {
-              this.markBlockComplete(blockId);
-            }
-          }
-          break;
+  viewSubmissionDetails(submissionId: string): void {
+    const blockId = this.currentBlock()?.id;
+    this.submissionService.getById(submissionId)
+      .pipe(takeUntil(this.blockId$), takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (submission) => {
+          if (this.currentBlock()?.id !== blockId) return;
+          this.currentSubmission.set(submission);
+          setTimeout(() => {
+            document.querySelector('.submission-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 100);
+        },
+        error: (error: unknown) => {
+          this.actionError.set(extractApiError(error, 'Failed to load submission details'));
         }
+      });
+  }
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error('Polling error:', error);
-        this.isPolling.set(false);
-        break;
-      }
+  getStatusName(status: number): string {
+    switch (status) {
+      case SubmissionStatus.Pending: return 'Pending';
+      case SubmissionStatus.Running: return 'Running';
+      case SubmissionStatus.Completed: return 'Completed';
+      case SubmissionStatus.CompilationError: return 'Compilation Error';
+      case SubmissionStatus.RuntimeError: return 'Runtime Error';
+      case SubmissionStatus.TimeLimitExceeded: return 'Time Limit Exceeded';
+      case SubmissionStatus.MemoryLimitExceeded: return 'Memory Limit Exceeded';
+      default: return 'Unknown';
     }
-
-    this.isPolling.set(false);
   }
 
   getStatusClass(status: number): string {
     const baseClass = 'rounded-lg p-4 ';
     switch (status) {
-      case 2: // Completed
+      case SubmissionStatus.Completed:
         return baseClass + 'bg-green-50 border border-green-200';
-      case 0: // Pending
-      case 1: // Running
+      case SubmissionStatus.Pending:
+      case SubmissionStatus.Running:
         return baseClass + 'bg-blue-50 border border-blue-200';
-      case 3: // CompilationError
-      case 4: // RuntimeError
-      case 5: // TimeLimitExceeded
-      case 6: // MemoryLimitExceeded
+      case SubmissionStatus.CompilationError:
+      case SubmissionStatus.RuntimeError:
+      case SubmissionStatus.TimeLimitExceeded:
+      case SubmissionStatus.MemoryLimitExceeded:
         return baseClass + 'bg-red-50 border border-red-200';
       default:
         return baseClass + 'bg-gray-50 border border-gray-200';
@@ -657,48 +471,212 @@ export class Learn implements OnInit {
 
   getStatusBadgeClass(status: number): string {
     switch (status) {
-      case 2: // Completed
+      case SubmissionStatus.Completed:
         return 'bg-green-100 text-green-800';
-      case 0: // Pending
-      case 1: // Running
+      case SubmissionStatus.Pending:
+      case SubmissionStatus.Running:
         return 'bg-blue-100 text-blue-800';
-      case 3: // CompilationError
-      case 4: // RuntimeError
+      case SubmissionStatus.CompilationError:
+      case SubmissionStatus.RuntimeError:
         return 'bg-red-100 text-red-800';
-      case 5: // TimeLimitExceeded
+      case SubmissionStatus.TimeLimitExceeded:
         return 'bg-orange-100 text-orange-800';
-      case 6: // MemoryLimitExceeded
+      case SubmissionStatus.MemoryLimitExceeded:
         return 'bg-purple-100 text-purple-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
   }
 
-  getLanguageName(languageId: string): 'python' | 'javascript' | 'csharp' | 'java' {
-    // Map GUID to language name for Monaco Editor
-    if (languageId === '11111111-1111-1111-1111-111111111111') return 'python';
-    if (languageId === '22222222-2222-2222-2222-222222222222') return 'javascript';
-    if (languageId === '33333333-3333-3333-3333-333333333333') return 'csharp';
-    if (languageId === '44444444-4444-4444-4444-444444444444') return 'java';
-    return 'python'; // default
+  private showLoadError(error: unknown, fallback: string): void {
+    if (isAccessDenied(error)) {
+      this.accessDeniedMessage.set(extractApiError(error, 'Enroll in this course to view its content'));
+      return;
+    }
+    this.errorMessage.set(extractApiError(error, fallback));
   }
 
-  viewSubmissionDetails(submissionId: string): void {
-    this.submissionService.getById(submissionId).subscribe({
-      next: (submission) => {
-        // Set as current submission to display in the UI
-        this.currentSubmission.set(submission);
-        // Scroll to submission results
-        setTimeout(() => {
-          const element = document.querySelector('.submission-results');
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  private resetBlockState(): void {
+    this.errorMessage.set('');
+    this.accessDeniedMessage.set('');
+    this.actionError.set('');
+    this.infoMessage.set('');
+    this.isBlockLoading.set(true);
+
+    this.quizAnswers.set(new Map());
+    this.quizResult.set(null);
+    this.attemptedQuizSubmit.set(false);
+    this.isSubmittingQuiz.set(false);
+
+    this.selectedLanguage.set(null);
+    this.userCode.set('');
+    this.currentSubmission.set(null);
+    this.previousSubmissions.set([]);
+    this.isSubmitting.set(false);
+    this.isPolling.set(false);
+  }
+
+  private showBlock(block: Block): void {
+    this.currentBlock.set(block);
+    const stillCurrent = () => this.currentBlock()?.id === block.id;
+
+    if (block.quiz) {
+      this.quizService.getQuizAttempt(block.quiz.id)
+        .pipe(takeUntil(this.blockId$), takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (result) => {
+            if (stillCurrent()) this.quizResult.set(result);
+          },
+          // No previous attempt: the quiz is simply shown unanswered
+          error: () => undefined
+        });
+    }
+
+    if (block.problem) {
+      const problemId = block.problem.id;
+
+      this.problemService.getProblem(problemId)
+        .pipe(takeUntil(this.blockId$), takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (details) => {
+            if (!stillCurrent()) return;
+            const starterCodes = details.starterCodes.map(sc => ({
+              id: sc.id,
+              code: sc.code,
+              languageId: sc.languageId,
+              languageName: sc.languageName
+            }));
+            this.currentBlock.set({
+              ...block,
+              problem: { ...block.problem!, tags: details.tags, starterCodes }
+            });
+
+            const first = starterCodes[0];
+            if (first) {
+              this.selectedLanguage.set(first.languageId);
+              this.userCode.set(first.code);
+            }
+          },
+          error: (error: unknown) => {
+            if (stillCurrent()) this.actionError.set(extractApiError(error, 'Failed to load problem details'));
           }
-        }, 100);
-      },
-      error: (err) => {
-        console.error('Failed to load submission details:', err);
+        });
+
+      this.submissionService.getByProblem(problemId)
+        .pipe(takeUntil(this.blockId$), takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (submissions) => {
+            if (!stillCurrent()) return;
+            this.previousSubmissions.set(submissions);
+            // Solved before (e.g. on another device, or the page was left mid-poll) but never
+            // marked complete: complete it now so "Next" and the progress bar agree
+            if (!this.isBlockCompleted(block.id) && submissions.some(isAcceptedSubmission)) {
+              this.markBlockComplete(block.id);
+            }
+          },
+          error: () => this.previousSubmissions.set([])
+        });
+    }
+  }
+
+  private pollSubmission(submissionId: string, blockId: string, problemId: string): void {
+    this.isPolling.set(true);
+    let finished = false;
+
+    timer(0, POLL_INTERVAL_MS)
+      .pipe(
+        take(MAX_POLL_ATTEMPTS),
+        // exhaustMap: a slow status request is not cancelled by the next tick
+        exhaustMap(() => this.submissionService.getById(submissionId)),
+        takeWhile(submission => !FINAL_SUBMISSION_STATUSES.includes(submission.status), true),
+        takeUntil(this.blockId$),
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          this.isPolling.set(false);
+          this.isSubmitting.set(false);
+        })
+      )
+      .subscribe({
+        next: (submission) => {
+          if (this.currentBlock()?.id !== blockId || submission.problemId !== problemId) return;
+          this.currentSubmission.set(submission);
+
+          if (FINAL_SUBMISSION_STATUSES.includes(submission.status)) {
+            finished = true;
+            this.previousSubmissions.update(prev => [submission, ...prev.filter(s => s.id !== submission.id)]);
+            if (isAcceptedSubmission(submission)) {
+              // The runner already completed the block on the server; the explicit call is a
+              // harmless duplicate, and either way the sidebar is refreshed to show the tick
+              this.markBlockComplete(blockId);
+            }
+          }
+        },
+        error: (error: unknown) => {
+          if (this.currentBlock()?.id === blockId) {
+            this.actionError.set(extractApiError(error, 'Lost track of your submission. Check Previous Submissions for its result.'));
+          }
+        },
+        complete: () => {
+          if (!finished && this.currentBlock()?.id === blockId) {
+            this.infoMessage.set('Your submission is taking longer than usual. Its result will appear under Previous Submissions; reopen this block later to see it.');
+          }
+        }
+      });
+  }
+
+  private async ensureCurrentBlockSatisfied(action: string): Promise<boolean> {
+    const block = this.currentBlock();
+    if (!block || this.isCurrentBlockSatisfied()) {
+      // A problem solved earlier whose block is not yet marked complete gets completed now
+      if (block?.type === BlockType.Problem && !this.isBlockCompleted(block.id)) {
+        this.markBlockComplete(block.id);
       }
+      return true;
+    }
+
+    if (block.type === BlockType.Quiz) {
+      await this.dialogService.alert(`Please complete the quiz before ${action}.`, 'Quiz Not Completed', 'warning');
+    } else if (block.type === BlockType.Problem) {
+      await this.dialogService.alert(
+        `Please solve the problem with a 100% score before ${action}.`,
+        'Problem Not Solved',
+        'warning'
+      );
+    }
+    return false;
+  }
+
+  /** Theory and video blocks have no task: viewing them, then leaving, completes them. */
+  private completePassiveBlock(block: Block | null): void {
+    if (!block || this.isBlockCompleted(block.id)) return;
+    if (block.type === BlockType.Theory || block.type === BlockType.Video) {
+      this.markBlockComplete(block.id);
+    }
+  }
+
+  private markBlockComplete(blockId: string): void {
+    // Not tied to this component's lifetime: completing on the way out must still reach the server
+    // The progress is reloaded even when the call fails: for a solved problem the server may have
+    // completed the block already, and the sidebar should show what the server says
+    this.blockService.completeBlock(blockId).subscribe({
+      next: () => this.reloadProgress(),
+      error: () => this.reloadProgress()
     });
   }
+
+  private reloadProgress(): void {
+    if (!this.courseId) return;
+    this.progressService.getCourseProgress(this.courseId).subscribe({
+      next: (progress) => this.courseProgress.set(progress),
+      error: () => undefined
+    });
+  }
+}
+
+function toEditorLanguage(languageName: string | undefined): EditorLanguage {
+  const name = (languageName ?? '').toLowerCase().replace(/\s+/g, '');
+  if (name.includes('c#') || name.includes('csharp')) return 'csharp';
+  if (name.includes('javascript') || name === 'js' || name.startsWith('node')) return 'javascript';
+  if (name.includes('java')) return 'java';
+  return 'python';
 }

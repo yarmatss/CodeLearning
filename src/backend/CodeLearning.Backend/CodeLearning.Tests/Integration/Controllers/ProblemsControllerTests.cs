@@ -1,3 +1,4 @@
+using CodeLearning.Application.DTOs.Common;
 using CodeLearning.Application.DTOs.Problem;
 using CodeLearning.Core.Constants;
 using CodeLearning.Core.Entities;
@@ -6,6 +7,7 @@ using CodeLearning.Infrastructure.Data;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
@@ -18,7 +20,9 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
 {
     private readonly HttpClient _client;
     private readonly IntegrationTestWebAppFactory _factory;
-    private readonly Guid _pythonLanguageId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid PythonLanguageId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid JavaScriptLanguageId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid JavaLanguageId = Guid.Parse("44444444-4444-4444-4444-444444444444");
 
     public ProblemsControllerTests(IntegrationTestWebAppFactory factory)
     {
@@ -31,30 +35,96 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
     #region Helper Methods
 
-    private async Task<string> GetTeacherToken()
+    private async Task<(string Token, Guid UserId)> RegisterAsync(string role)
     {
-        var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Teacher");
+        var registerDto = TestDataBuilder.CreateValidRegisterDto(role: role);
         var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        return response.GetAccessToken();
+        var token = response.GetAccessToken();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var userId = await db.Users.Where(u => u.Email == registerDto.Email).Select(u => u.Id).SingleAsync();
+
+        return (token, userId);
     }
 
-    private async Task<string> GetStudentToken()
+    private async Task<string> GetTeacherToken() => (await RegisterAsync("Teacher")).Token;
+
+    private async Task<string> GetStudentToken() => (await RegisterAsync("Student")).Token;
+
+    private void UseToken(string token) =>
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+    // A valid problem always carries at least one starter code
+    private static CreateProblemDto NewProblemDto(string? title = null, string difficulty = "Easy")
     {
-        var registerDto = TestDataBuilder.CreateValidRegisterDto(role: "Student");
-        var response = await _client.PostAsJsonAsync("/api/auth/register", registerDto);
-        return response.GetAccessToken();
+        var dto = TestDataBuilder.CreateValidCreateProblemDto(title, difficulty);
+        dto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(PythonLanguageId));
+        return dto;
+    }
+
+    private async Task<ProblemResponseDto> CreateProblemWithCurrentToken(CreateProblemDto? dto = null)
+    {
+        var response = await _client.PostAsJsonAsync("/api/problems", dto ?? NewProblemDto());
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        return await response.Content.ReadFromJsonAsync<ProblemResponseDto>()
+            ?? throw new Exception("Failed to create problem");
     }
 
     private async Task<ProblemResponseDto> CreateProblemAsTeacher(string? title = null)
     {
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        UseToken(await GetTeacherToken());
+        return await CreateProblemWithCurrentToken(NewProblemDto(title));
+    }
 
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto(title);
-        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+    // Adds a course by the problem's author that uses the problem, optionally enrolling a student
+    private async Task<Guid> AddCourseUsingProblemAsync(Guid problemId, CourseStatus status, Guid? enrolledStudentId = null)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        return await response.Content.ReadFromJsonAsync<ProblemResponseDto>()
-            ?? throw new Exception("Failed to create problem");
+        var problem = await db.Problems.Include(p => p.Author).SingleAsync(p => p.Id == problemId);
+        var course = TestDataBuilder.CreateValidCourse(problem.Author, status);
+        var chapter = TestDataBuilder.CreateValidChapter(course);
+        var subchapter = TestDataBuilder.CreateValidSubchapter(chapter);
+
+        db.Courses.Add(course);
+        db.Chapters.Add(chapter);
+        db.Subchapters.Add(subchapter);
+        db.CourseBlocks.Add(new CourseBlock
+        {
+            Title = problem.Title,
+            Type = BlockType.Problem,
+            OrderIndex = 1,
+            Subchapter = subchapter,
+            ProblemId = problemId
+        });
+
+        if (enrolledStudentId is { } studentId)
+        {
+            db.StudentCourseProgresses.Add(new StudentCourseProgress
+            {
+                StudentId = studentId,
+                Student = await db.Users.SingleAsync(u => u.Id == studentId),
+                CourseId = course.Id,
+                Course = course,
+                EnrolledAt = DateTimeOffset.UtcNow,
+                LastActivityAt = DateTimeOffset.UtcNow
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return course.Id;
+    }
+
+    private async Task<PagedResult<ProblemListDto>> GetPageAsync(string url)
+    {
+        var response = await _client.GetAsync(url);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        return await response.Content.ReadFromJsonAsync<PagedResult<ProblemListDto>>()
+            ?? throw new Exception("Empty problem page");
     }
 
     #endregion
@@ -65,10 +135,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_AsTeacher_WithValidData_ShouldReturn201()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Two Sum");
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto("Two Sum");
 
         // Act
         var response = await _client.PostAsJsonAsync("/api/problems", createDto);
@@ -82,17 +150,18 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         content.Difficulty.Should().Be("Easy");
         content.TestCases.Should().HaveCount(2);
         content.TestCases.Should().Contain(tc => tc.IsPublic);
+        content.TestCases.Select(tc => tc.OrderIndex).Should().Equal(1, 2);
+        content.IsUsedByPublishedCourse.Should().BeFalse();
     }
 
     [Fact]
     public async Task CreateProblem_WithStarterCodes_ShouldIncludeThem()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        UseToken(await GetTeacherToken());
 
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem with Starter");
-        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(_pythonLanguageId));
+        var createDto = NewProblemDto("Problem with Starter");
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId));
 
         // Act
         var response = await _client.PostAsJsonAsync("/api/problems", createDto);
@@ -101,21 +170,145 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content!.StarterCodes.Should().HaveCount(1);
-        content.StarterCodes.First().LanguageId.Should().Be(_pythonLanguageId);
+        content!.StarterCodes.Select(sc => sc.LanguageId)
+            .Should().BeEquivalentTo([PythonLanguageId, JavaScriptLanguageId]);
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithoutStarterCodes_ShouldReturn400()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithUnknownLanguage_ShouldReturn400AndNotCreate()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var unknownLanguageId = Guid.NewGuid();
+        var createDto = NewProblemDto("Unknown language problem");
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(unknownLanguageId));
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert - the unknown language is reported, not silently dropped
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        error!.Detail.Should().Contain(unknownLanguageId.ToString());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        (await db.Problems.AnyAsync()).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithDuplicateLanguages_ShouldReturn400()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(PythonLanguageId));
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithDisabledLanguage_ShouldReturn400()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        await SetLanguageEnabledAsync(JavaScriptLanguageId, false);
+
+        try
+        {
+            var createDto = NewProblemDto();
+            createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId));
+
+            // Act
+            var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            error!.Detail.Should().Contain("JavaScript");
+        }
+        finally
+        {
+            await SetLanguageEnabledAsync(JavaScriptLanguageId, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithEmptyExpectedOutput_ShouldReturn201()
+    {
+        // Arrange - a program that prints nothing is a valid test
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.TestCases.Add(new CreateTestCaseDto { Input = "0", ExpectedOutput = "", IsPublic = false });
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateProblem_WithNulCharacterInDescription_ShouldReturn400()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.Description += "\0";
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert - rejected by validation instead of failing in PostgreSQL with a 500
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateProblem_ExceedingSandboxTimeBudget_ShouldReturn400()
+    {
+        // Arrange - Java: 300 s cap - 30 s compile - 26 s overhead leaves 244 s, so 25 tests of 10 s do not fit
+        UseToken(await GetTeacherToken());
+        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        createDto.TestCases = Enumerable.Range(0, 25)
+            .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+            .ToList();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaLanguageId));
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        error!.Detail.Should().Contain("at most 24 test cases");
     }
 
     [Fact]
     public async Task CreateProblem_AsStudent_ShouldReturn403()
     {
         // Arrange
-        var token = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetStudentToken());
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+        var response = await _client.PostAsJsonAsync("/api/problems", NewProblemDto());
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -125,10 +318,10 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithoutAuth_ShouldReturn401()
     {
         // Arrange
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        using var anonymousClient = _factory.CreateAnonymousClient();
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/problems", createDto);
+        var response = await anonymousClient.PostAsJsonAsync("/api/problems", NewProblemDto());
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -138,10 +331,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithEmptyTitle_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
         createDto.Title = "";
 
         // Act
@@ -155,10 +346,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithShortDescription_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
         createDto.Description = "Too short";
 
         // Act
@@ -172,10 +361,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithInvalidDifficulty_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
         createDto.Difficulty = "Invalid";
 
         // Act
@@ -189,10 +376,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithNoTestCases_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
         createDto.TestCases.Clear();
 
         // Act
@@ -206,10 +391,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task CreateProblem_WithNoPublicTestCases_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
         foreach (var testCase in createDto.TestCases)
         {
             testCase.IsPublic = false;
@@ -222,14 +405,23 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    private async Task SetLanguageEnabledAsync(Guid languageId, bool enabled)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await db.Languages
+            .Where(l => l.Id == languageId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.IsEnabled, enabled));
+    }
+
     #endregion
 
     #region Get Problem Tests
 
     [Fact]
-    public async Task GetProblemById_ExistingProblem_ShouldReturn200()
+    public async Task GetProblemById_AsAuthor_ShouldReturn200WithHiddenTestCases()
     {
-        // Arrange
+        // Arrange - CreateProblemAsTeacher leaves the author's token on the client
         var problem = await CreateProblemAsTeacher("Get By ID Test");
 
         // Act
@@ -239,56 +431,49 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content.Should().NotBeNull();
         content!.Id.Should().Be(problem.Id);
         content.Title.Should().Be("Get By ID Test");
-    }
-
-    [Fact]
-    public async Task GetProblemById_AsAuthor_ShouldIncludeHiddenTestCases()
-    {
-        // Arrange - CreateProblemAsTeacher leaves the author's token on the client
-        var problem = await CreateProblemAsTeacher();
-
-        // Act
-        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content!.TestCases.Should().HaveCount(2);
+        content.TestCases.Should().HaveCount(2);
         content.TestCases.Should().Contain(tc => !tc.IsPublic);
     }
 
     [Fact]
-    public async Task GetProblemById_AsAnotherTeacher_ShouldHideHiddenTestCases()
+    public async Task GetProblemById_AsAnotherTeacher_ShouldReturn403()
     {
         // Arrange
         var problem = await CreateProblemAsTeacher();
-
-        var anotherToken = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherToken);
+        UseToken(await GetTeacherToken());
 
         // Act
         var response = await _client.GetAsync($"/api/problems/{problem.Id}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content!.TestCases.Should().HaveCount(1);
-        content.TestCases.Should().OnlyContain(tc => tc.IsPublic);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
-    public async Task GetProblemById_AsStudent_ShouldHideHiddenTestCases()
+    public async Task GetProblemById_AsNotEnrolledStudent_ShouldReturn403()
+    {
+        // Arrange - the problem is in a published course, but the student is not enrolled
+        var problem = await CreateProblemAsTeacher();
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Published);
+        UseToken(await GetStudentToken());
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetProblemById_AsEnrolledStudent_ShouldReturnOnlyPublicTestCases()
     {
         // Arrange
         var problem = await CreateProblemAsTeacher();
-
-        var studentToken = await GetStudentToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", studentToken);
+        var (studentToken, studentId) = await RegisterAsync("Student");
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Published, studentId);
+        UseToken(studentToken);
 
         // Act
         var response = await _client.GetAsync($"/api/problems/{problem.Id}");
@@ -297,122 +482,200 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content!.TestCases.Should().OnlyContain(tc => tc.IsPublic);
+        content!.TestCases.Should().ContainSingle().Which.IsPublic.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetProblemById_EnrolledInDraftCourse_ShouldReturn403()
+    {
+        // Arrange - an unpublished course keeps its enrollments but hides its content
+        var problem = await CreateProblemAsTeacher();
+        var (studentToken, studentId) = await RegisterAsync("Student");
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Draft, studentId);
+        UseToken(studentToken);
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task GetProblemById_NonExistingProblem_ShouldReturn404()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var nonExistingId = Guid.NewGuid();
+        UseToken(await GetTeacherToken());
 
         // Act
-        var response = await _client.GetAsync($"/api/problems/{nonExistingId}");
+        var response = await _client.GetAsync($"/api/problems/{Guid.NewGuid()}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
-    public async Task GetProblems_ShouldReturnList()
+    public async Task GetProblemById_ShouldOrderTestCasesByOrderIndex()
     {
         // Arrange
-        await CreateProblemAsTeacher("Problem 1");
-        await CreateProblemAsTeacher("Problem 2");
+        var problem = await CreateProblemAsTeacher();
+        var reversed = problem.TestCases.Select(tc => tc.Id).Reverse().ToList();
+        await _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder",
+            new ReorderTestCasesDto { TestCaseIds = reversed });
 
         // Act
-        var response = await _client.GetAsync("/api/problems");
+        var content = await _client.GetFromJsonAsync<ProblemResponseDto>($"/api/problems/{problem.Id}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        content!.TestCases.Select(tc => tc.Id).Should().Equal(reversed);
+        content.TestCases.Select(tc => tc.OrderIndex).Should().BeInAscendingOrder();
+    }
 
-        var content = await response.Content.ReadFromJsonAsync<List<ProblemListDto>>();
-        content.Should().NotBeNull();
-        content!.Should().HaveCountGreaterThanOrEqualTo(2);
+    [Fact]
+    public async Task GetProblems_ShouldReturnOwnProblemsAsPage()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto("Problem 1");
+        createDto.Description = new string('d', 500);
+        await CreateProblemWithCurrentToken(createDto);
+        await CreateProblemWithCurrentToken(NewProblemDto("Problem 2"));
+
+        // Act
+        var page = await GetPageAsync("/api/problems");
+
+        // Assert
+        page.TotalCount.Should().Be(2);
+        page.Page.Should().Be(1);
+        page.PageSize.Should().Be(ProblemListQuery.DefaultPageSize);
+        page.TotalPages.Should().Be(1);
+        page.Items.Should().HaveCount(2);
+
+        var longOne = page.Items.Single(p => p.Title == "Problem 1");
+        longOne.TestCasesCount.Should().Be(2);
+        longOne.LanguagesCount.Should().Be(1);
+        longOne.Description.Should().Be(new string('d', ProblemListDto.DescriptionPreviewLength) + "...");
+    }
+
+    [Fact]
+    public async Task GetProblems_ShouldHideProblemsTheCallerCannotSee()
+    {
+        // Arrange - another teacher's problem, one in a published course the student is enrolled in,
+        // and one in a published course the student is not enrolled in
+        var otherTeacherProblem = await CreateProblemAsTeacher("Other teacher problem");
+        var enrolledProblem = await CreateProblemAsTeacher("Enrolled problem");
+        var notEnrolledProblem = await CreateProblemAsTeacher("Not enrolled problem");
+
+        var (studentToken, studentId) = await RegisterAsync("Student");
+        await AddCourseUsingProblemAsync(enrolledProblem.Id, CourseStatus.Published, studentId);
+        await AddCourseUsingProblemAsync(notEnrolledProblem.Id, CourseStatus.Published);
+
+        UseToken(studentToken);
+
+        // Act
+        var page = await GetPageAsync("/api/problems");
+
+        // Assert
+        page.Items.Select(p => p.Id).Should().Equal(enrolledProblem.Id);
+        page.Items.Single().IsUsedByPublishedCourse.Should().BeTrue();
+        page.Items.Should().NotContain(p => p.Id == otherTeacherProblem.Id || p.Id == notEnrolledProblem.Id);
+    }
+
+    [Fact]
+    public async Task GetProblems_WithPaging_ShouldReturnRequestedPage()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        for (var i = 0; i < 3; i++)
+        {
+            await CreateProblemWithCurrentToken(NewProblemDto($"Paged problem {i}"));
+        }
+
+        // Act
+        var first = await GetPageAsync("/api/problems?page=1&pageSize=2");
+        var second = await GetPageAsync("/api/problems?page=2&pageSize=2");
+
+        // Assert
+        first.Items.Should().HaveCount(2);
+        second.Items.Should().HaveCount(1);
+        first.TotalCount.Should().Be(3);
+        first.TotalPages.Should().Be(2);
+        first.Items.Select(p => p.Id).Should().NotIntersectWith(second.Items.Select(p => p.Id));
+    }
+
+    [Theory]
+    [InlineData("page=0")]
+    [InlineData("pageSize=0")]
+    [InlineData("pageSize=101")]
+    [InlineData("difficulty=Impossible")]
+    public async Task GetProblems_WithInvalidQuery_ShouldReturn400(string query)
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+
+        // Act
+        var response = await _client.GetAsync($"/api/problems?{query}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
     public async Task GetProblems_WithDifficultyFilter_ShouldReturnFiltered()
     {
         // Arrange
-        await CreateProblemAsTeacher("Easy Problem");
-
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var hardProblem = TestDataBuilder.CreateValidCreateProblemDto("Hard Problem", "Hard");
-        await _client.PostAsJsonAsync("/api/problems", hardProblem);
+        UseToken(await GetTeacherToken());
+        await CreateProblemWithCurrentToken(NewProblemDto("Easy Problem"));
+        await CreateProblemWithCurrentToken(NewProblemDto("Hard Problem", "Hard"));
 
         // Act
-        var response = await _client.GetAsync("/api/problems?difficulty=Easy");
+        var page = await GetPageAsync("/api/problems?difficulty=Easy");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var content = await response.Content.ReadFromJsonAsync<List<ProblemListDto>>();
-        content.Should().NotBeNull();
-        content!.Should().OnlyContain(p => p.Difficulty == "Easy");
+        page.Items.Should().ContainSingle().Which.Title.Should().Be("Easy Problem");
     }
 
     [Fact]
     public async Task GetProblems_WithSearchFilter_ShouldReturnMatching()
     {
         // Arrange
-        await CreateProblemAsTeacher("Array Sum Problem");
-        await CreateProblemAsTeacher("String Reverse Problem");
+        UseToken(await GetTeacherToken());
+        await CreateProblemWithCurrentToken(NewProblemDto("Array Sum Problem"));
+        await CreateProblemWithCurrentToken(NewProblemDto("String Reverse Problem"));
 
         // Act
-        var response = await _client.GetAsync("/api/problems?search=Array");
+        var page = await GetPageAsync("/api/problems?search=Array");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var content = await response.Content.ReadFromJsonAsync<List<ProblemListDto>>();
-        content.Should().NotBeNull();
-        content!.Should().Contain(p => p.Title.Contains("Array"));
+        page.Items.Should().ContainSingle().Which.Title.Should().Be("Array Sum Problem");
     }
 
     [Fact]
     public async Task GetMyProblems_AsTeacher_ShouldReturnOnlyMyProblems()
     {
         // Arrange
-        var problem = await CreateProblemAsTeacher("My Problem");
+        await CreateProblemAsTeacher("Another Problem");
 
-        // Create another problem by different teacher
-        var anotherToken = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherToken);
-        var anotherDto = TestDataBuilder.CreateValidCreateProblemDto("Another Problem");
-        await _client.PostAsJsonAsync("/api/problems", anotherDto);
+        UseToken(await GetTeacherToken());
+        await CreateProblemWithCurrentToken(NewProblemDto("My Problem"));
 
-        // Switch back to first teacher
-        var firstToken = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", firstToken);
-
-        // Act - create one more to ensure we have at least one
-        await _client.PostAsJsonAsync("/api/problems", TestDataBuilder.CreateValidCreateProblemDto("My Second Problem"));
-
-        var response = await _client.GetAsync("/api/problems/my");
+        // Act
+        var page = await GetPageAsync("/api/problems/my");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var content = await response.Content.ReadFromJsonAsync<List<ProblemListDto>>();
-        content.Should().NotBeNull();
-        content!.Should().Contain(p => p.Title == "My Second Problem");
+        page.Items.Should().ContainSingle().Which.Title.Should().Be("My Problem");
+        page.TotalCount.Should().Be(1);
     }
 
     #endregion
 
-    #region Update Problem Tests
+    #region Update and Delete Problem Tests
 
     [Fact]
     public async Task UpdateProblem_AsOwner_ShouldReturn200()
     {
         // Arrange
         var problem = await CreateProblemAsTeacher("Original Title");
-
         var updateDto = TestDataBuilder.CreateValidUpdateProblemDto("Updated Title", "Hard");
 
         // Act
@@ -422,7 +685,6 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<ProblemResponseDto>();
-        content.Should().NotBeNull();
         content!.Title.Should().Be("Updated Title");
         content.Difficulty.Should().Be("Hard");
     }
@@ -432,23 +694,15 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         // Arrange
         var problem = await CreateProblemAsTeacher("Original Problem");
-
-        // Switch to different teacher
-        var anotherToken = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherToken);
-
-        var updateDto = TestDataBuilder.CreateValidUpdateProblemDto("Hacked Title");
+        UseToken(await GetTeacherToken());
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}", updateDto);
+        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}",
+            TestDataBuilder.CreateValidUpdateProblemDto("Hacked Title"));
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
-
-    #endregion
-
-    #region Delete Problem Tests
 
     [Fact]
     public async Task DeleteProblem_AsOwner_WithNoSubmissions_ShouldReturn200()
@@ -462,7 +716,6 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Verify deleted
         var getResponse = await _client.GetAsync($"/api/problems/{problem.Id}");
         getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -472,16 +725,130 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         // Arrange
         var problem = await CreateProblemAsTeacher("Problem to Delete");
-
-        // Switch to different teacher
-        var anotherToken = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", anotherToken);
+        UseToken(await GetTeacherToken());
 
         // Act
         var response = await _client.DeleteAsync($"/api/problems/{problem.Id}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task DeleteProblem_UsedByDraftCourse_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Draft);
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/problems/{problem.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    #endregion
+
+    #region Published Lock Tests
+
+    public static TheoryData<string> LockedMutations =>
+    [
+        "update-problem",
+        "delete-problem",
+        "add-testcase",
+        "bulk-add-testcases",
+        "update-testcase",
+        "delete-testcase",
+        "reorder-testcases",
+        "add-startercode",
+        "delete-startercode"
+    ];
+
+    [Theory]
+    [MemberData(nameof(LockedMutations))]
+    public async Task Mutation_OnProblemUsedByPublishedCourse_ShouldReturn409(string mutation)
+    {
+        // Arrange - give the problem a second starter code so deleting one would otherwise be allowed
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId));
+        var problem = await CreateProblemWithCurrentToken(createDto);
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Published);
+
+        // Act
+        var response = await SendMutationAsync(mutation, problem);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        error!.Detail.Should().Contain("published course");
+
+        var stored = await _client.GetFromJsonAsync<ProblemResponseDto>($"/api/problems/{problem.Id}");
+        stored!.IsUsedByPublishedCourse.Should().BeTrue();
+        stored.Title.Should().Be(problem.Title);
+        stored.TestCases.Select(tc => tc.Id).Should().Equal(problem.TestCases.Select(tc => tc.Id));
+        stored.StarterCodes.Should().HaveCount(2);
+    }
+
+    [Theory]
+    [MemberData(nameof(LockedMutations))]
+    public async Task Mutation_AsNonOwner_ShouldReturn403(string mutation)
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId));
+        var problem = await CreateProblemWithCurrentToken(createDto);
+
+        UseToken(await GetTeacherToken());
+
+        // Act
+        var response = await SendMutationAsync(mutation, problem);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    private Task<HttpResponseMessage> SendMutationAsync(string mutation, ProblemResponseDto problem)
+    {
+        var testCase = problem.TestCases.First(tc => !tc.IsPublic);
+        var starterCode = problem.StarterCodes.First();
+        var newTestCase = new CreateTestCaseDto { Input = "7", ExpectedOutput = "7", IsPublic = true };
+
+        return mutation switch
+        {
+            "update-problem" => _client.PutAsJsonAsync($"/api/problems/{problem.Id}",
+                TestDataBuilder.CreateValidUpdateProblemDto("Changed title")),
+            "delete-problem" => _client.DeleteAsync($"/api/problems/{problem.Id}"),
+            "add-testcase" => _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases", newTestCase),
+            "bulk-add-testcases" => _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk",
+                new BulkAddTestCasesDto { TestCases = [newTestCase] }),
+            "update-testcase" => _client.PutAsJsonAsync($"/api/problems/testcases/{testCase.Id}",
+                new UpdateTestCaseDto { Input = "changed", ExpectedOutput = "changed", IsPublic = false }),
+            "delete-testcase" => _client.DeleteAsync($"/api/problems/testcases/{testCase.Id}"),
+            "reorder-testcases" => _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder",
+                new ReorderTestCasesDto { TestCaseIds = problem.TestCases.Select(tc => tc.Id).Reverse().ToList() }),
+            "add-startercode" => _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes",
+                TestDataBuilder.CreateValidCreateStarterCodeDto(JavaLanguageId)),
+            "delete-startercode" => _client.DeleteAsync($"/api/problems/startercodes/{starterCode.Id}"),
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation), mutation, null)
+        };
+    }
+
+    [Fact]
+    public async Task Mutation_OnProblemUsedOnlyByDraftCourse_ShouldSucceed()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+        await AddCourseUsingProblemAsync(problem.Id, CourseStatus.Draft);
+
+        // Act
+        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}",
+            TestDataBuilder.CreateValidUpdateProblemDto("Still editable"));
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     #endregion
@@ -493,7 +860,6 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         // Arrange
         var problem = await CreateProblemAsTeacher("Problem for TestCase");
-
         var testCaseDto = TestDataBuilder.CreateValidCreateTestCaseDto(isPublic: true);
 
         // Act
@@ -503,9 +869,9 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<TestCaseResponseDto>();
-        content.Should().NotBeNull();
         content!.Input.Should().Be(testCaseDto.Input);
         content.ExpectedOutput.Should().Be(testCaseDto.ExpectedOutput);
+        content.OrderIndex.Should().Be(3);
     }
 
     [Fact]
@@ -551,15 +917,35 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
+    public async Task BulkAddTestCases_ExceedingSandboxTimeBudget_ShouldReturn400()
+    {
+        // Arrange - a Java problem fits at most 24 tests in the 300 s sandbox cap
+        UseToken(await GetTeacherToken());
+        var createDto = TestDataBuilder.CreateValidCreateProblemDto();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaLanguageId));
+        var problem = await CreateProblemWithCurrentToken(createDto);
+
+        var bulkDto = new BulkAddTestCasesDto
+        {
+            TestCases = Enumerable.Range(0, 26)
+                .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+                .ToList()
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk", bulkDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        error!.Detail.Should().Contain("Java").And.Contain("at most 24 test cases");
+    }
+
+    [Fact]
     public async Task BulkAddTestCases_WithMultipleTestCases_ShouldReturn200()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Bulk Add");
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
+        var problem = await CreateProblemAsTeacher("Problem for Bulk Add");
 
         var bulkDto = new BulkAddTestCasesDto
         {
@@ -572,28 +958,22 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync($"/api/problems/{problem!.Id}/testcases/bulk", bulkDto);
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk", bulkDto);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<BulkAddTestCasesResult>();
-        content.Should().NotBeNull();
         content!.Added.Should().Be(3);
         content.TestCases.Should().HaveCount(3);
-        content.TestCases.Should().Contain(tc => tc.Input == "10 20");
+        content.TestCases.Select(tc => tc.OrderIndex).Should().Equal(3, 4, 5);
     }
 
     [Fact]
     public async Task BulkAddTestCases_WithNoPublicTests_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Bulk Validation");
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
+        var problem = await CreateProblemAsTeacher("Problem for Bulk Validation");
 
         var bulkDto = new BulkAddTestCasesDto
         {
@@ -605,7 +985,21 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync($"/api/problems/{problem!.Id}/testcases/bulk", bulkDto);
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk", bulkDto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task BulkAddTestCases_WithNullElement_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+        var body = JsonContent.Create(new { testCases = new object?[] { new { input = "1", expectedOutput = "1", isPublic = true }, null } });
+
+        // Act
+        var response = await _client.PostAsync($"/api/problems/{problem.Id}/testcases/bulk", body);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -615,21 +1009,10 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task UpdateTestCase_AsOwner_ShouldReturn200()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var problem = await CreateProblemAsTeacher("Problem for Update");
+        var testCase = problem.TestCases.First();
 
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Update");
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
-
-        var testCase = problem!.TestCases.First();
-
-        var updateDto = new UpdateTestCaseDto
-        {
-            Input = "99 1",
-            ExpectedOutput = "100",
-            IsPublic = true
-        };
+        var updateDto = new UpdateTestCaseDto { Input = "99 1", ExpectedOutput = "100", IsPublic = true };
 
         // Act
         var response = await _client.PutAsJsonAsync($"/api/problems/testcases/{testCase.Id}", updateDto);
@@ -638,7 +1021,6 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<TestCaseResponseDto>();
-        content.Should().NotBeNull();
         content!.Input.Should().Be("99 1");
         content.ExpectedOutput.Should().Be("100");
     }
@@ -647,18 +1029,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task UpdateTestCase_MakingLastPublicPrivate_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Last Public");
-        createDto.TestCases.Clear();
-        createDto.TestCases.Add(new CreateTestCaseDto { Input = "1", ExpectedOutput = "1", IsPublic = true });
-        createDto.TestCases.Add(new CreateTestCaseDto { Input = "2", ExpectedOutput = "2", IsPublic = false });
-
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
-
-        var publicTestCase = problem!.TestCases.First(tc => tc.IsPublic);
+        var problem = await CreateProblemAsTeacher("Problem for Last Public");
+        var publicTestCase = problem.TestCases.Single(tc => tc.IsPublic);
 
         var updateDto = new UpdateTestCaseDto
         {
@@ -678,66 +1050,70 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     public async Task ReorderTestCases_WithValidOrder_ShouldReturn200()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Reorder");
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
-
-        var testCaseIds = problem!.TestCases.Select(tc => tc.Id).ToList();
-        testCaseIds.Reverse(); // Reverse order
-
-        var reorderDto = new ReorderTestCasesDto
-        {
-            TestCaseIds = testCaseIds
-        };
+        var problem = await CreateProblemAsTeacher("Problem for Reorder");
+        var testCaseIds = problem.TestCases.Select(tc => tc.Id).Reverse().ToList();
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder", reorderDto);
+        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder",
+            new ReorderTestCasesDto { TestCaseIds = testCaseIds });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Verify order changed
         var updatedProblem = await _client.GetFromJsonAsync<ProblemResponseDto>($"/api/problems/{problem.Id}");
-        updatedProblem!.TestCases.First().Id.Should().Be(testCaseIds[0]);
+        updatedProblem!.TestCases.Select(tc => tc.Id).Should().Equal(testCaseIds);
     }
 
     [Fact]
     public async Task ReorderTestCases_WithIncompleteList_ShouldReturn400()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createDto = TestDataBuilder.CreateValidCreateProblemDto("Problem for Incomplete Reorder");
-        var createResponse = await _client.PostAsJsonAsync("/api/problems", createDto);
-        var problem = await createResponse.Content.ReadFromJsonAsync<ProblemResponseDto>();
-
-        var reorderDto = new ReorderTestCasesDto
-        {
-            TestCaseIds = [problem!.TestCases.First().Id] // Missing other test cases
-        };
+        var problem = await CreateProblemAsTeacher("Problem for Incomplete Reorder");
 
         // Act
-        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder", reorderDto);
+        var response = await _client.PutAsJsonAsync($"/api/problems/{problem.Id}/testcases/reorder",
+            new ReorderTestCasesDto { TestCaseIds = [problem.TestCases.First().Id] });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
+    public async Task DeleteTestCase_ShouldReindexRemainingTestCases()
+    {
+        // Arrange - test cases 1..4, delete the second
+        var problem = await CreateProblemAsTeacher();
+        await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/testcases/bulk", new BulkAddTestCasesDto
+        {
+            TestCases =
+            [
+                new CreateTestCaseDto { Input = "3", ExpectedOutput = "3", IsPublic = true },
+                new CreateTestCaseDto { Input = "4", ExpectedOutput = "4", IsPublic = true }
+            ]
+        });
+        var before = await _client.GetFromJsonAsync<ProblemResponseDto>($"/api/problems/{problem.Id}");
+        var toDelete = before!.TestCases.Single(tc => tc.OrderIndex == 2);
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/problems/testcases/{toDelete.Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var after = await _client.GetFromJsonAsync<ProblemResponseDto>($"/api/problems/{problem.Id}");
+        after!.TestCases.Select(tc => tc.OrderIndex).Should().Equal(1, 2, 3);
+        after.TestCases.Select(tc => tc.Id).Should()
+            .Equal(before.TestCases.Where(tc => tc.Id != toDelete.Id).Select(tc => tc.Id));
+    }
+
+    [Fact]
     public async Task DeleteTestCase_NonExisting_ShouldReturn404()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var nonExistingId = Guid.NewGuid();
+        UseToken(await GetTeacherToken());
 
         // Act
-        var response = await _client.DeleteAsync($"/api/problems/testcases/{nonExistingId}");
+        var response = await _client.DeleteAsync($"/api/problems/testcases/{Guid.NewGuid()}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -762,8 +1138,8 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
                 Problem = storedProblem,
                 StudentId = storedProblem.AuthorId,
                 Student = await dbContext.Users.SingleAsync(u => u.Id == storedProblem.AuthorId),
-                LanguageId = _pythonLanguageId,
-                Language = await dbContext.Languages.SingleAsync(l => l.Id == _pythonLanguageId),
+                LanguageId = PythonLanguageId,
+                Language = await dbContext.Languages.SingleAsync(l => l.Id == PythonLanguageId),
                 Code = "print(1)",
                 Status = SubmissionStatus.Completed,
                 Score = 50
@@ -813,8 +1189,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     {
         // Arrange
         var problem = await CreateProblemAsTeacher("Problem for Starter Code");
-
-        var starterCodeDto = TestDataBuilder.CreateValidCreateStarterCodeDto(_pythonLanguageId);
+        var starterCodeDto = TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId);
 
         // Act
         var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes", starterCodeDto);
@@ -823,22 +1198,70 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var content = await response.Content.ReadFromJsonAsync<StarterCodeResponseDto>();
-        content.Should().NotBeNull();
         content!.Code.Should().Be(starterCodeDto.Code);
-        content.LanguageId.Should().Be(_pythonLanguageId);
+        content.LanguageId.Should().Be(JavaScriptLanguageId);
+        content.LanguageName.Should().Be("JavaScript");
     }
 
     [Fact]
-    public async Task AddStarterCode_DuplicateLanguage_ShouldReturn400()
+    public async Task AddStarterCode_DuplicateLanguage_ShouldReturn409()
     {
-        // Arrange
+        // Arrange - the problem already has a Python starter code
         var problem = await CreateProblemAsTeacher("Problem for Duplicate Starter");
 
-        var starterCodeDto = TestDataBuilder.CreateValidCreateStarterCodeDto(_pythonLanguageId);
-        await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes", starterCodeDto);
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes",
+            TestDataBuilder.CreateValidCreateStarterCodeDto(PythonLanguageId));
 
-        // Act - try to add again for same language
-        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes", starterCodeDto);
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task AddStarterCode_ConcurrentDuplicates_ShouldNeverReturn500()
+    {
+        // Arrange - racing requests may both pass the existence check; the unique index decides
+        var problem = await CreateProblemAsTeacher();
+        var dto = TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId);
+
+        // Act
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5)
+            .Select(_ => _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes", dto)));
+
+        // Assert
+        responses.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(1);
+        responses.Where(r => r.StatusCode != HttpStatusCode.OK)
+            .Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task AddStarterCode_UnknownLanguage_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes",
+            TestDataBuilder.CreateValidCreateStarterCodeDto(Guid.NewGuid()));
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task AddStarterCode_ExceedingSandboxTimeBudget_ShouldReturn400()
+    {
+        // Arrange - 30 Python tests fit, but Java fits at most 24 tests in the sandbox budget
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.TestCases = Enumerable.Range(0, 30)
+            .Select(i => new CreateTestCaseDto { Input = $"{i}", ExpectedOutput = $"{i}", IsPublic = true })
+            .ToList();
+        var problem = await CreateProblemWithCurrentToken(createDto);
+
+        // Act
+        var response = await _client.PostAsJsonAsync($"/api/problems/{problem.Id}/startercodes",
+            TestDataBuilder.CreateValidCreateStarterCodeDto(JavaLanguageId));
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -852,7 +1275,7 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
         var starterCodeDto = new CreateStarterCodeDto
         {
-            LanguageId = _pythonLanguageId,
+            LanguageId = JavaScriptLanguageId,
             Code = new string('x', 100_001)
         };
 
@@ -864,16 +1287,42 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
+    public async Task DeleteStarterCode_LastOne_ShouldReturn400()
+    {
+        // Arrange
+        var problem = await CreateProblemAsTeacher();
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/problems/startercodes/{problem.StarterCodes.Single().Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task DeleteStarterCode_WithAnotherRemaining_ShouldReturn200()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        var createDto = NewProblemDto();
+        createDto.StarterCodes.Add(TestDataBuilder.CreateValidCreateStarterCodeDto(JavaScriptLanguageId));
+        var problem = await CreateProblemWithCurrentToken(createDto);
+
+        // Act
+        var response = await _client.DeleteAsync($"/api/problems/startercodes/{problem.StarterCodes.First().Id}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task DeleteStarterCode_NonExisting_ShouldReturn404()
     {
         // Arrange
-        var token = await GetTeacherToken();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var nonExistingId = Guid.NewGuid();
+        UseToken(await GetTeacherToken());
 
         // Act
-        var response = await _client.DeleteAsync($"/api/startercodes/{nonExistingId}");
+        var response = await _client.DeleteAsync($"/api/problems/startercodes/{Guid.NewGuid()}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);

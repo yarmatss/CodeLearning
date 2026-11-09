@@ -8,6 +8,10 @@ public class StarterCodeConfiguration : IEntityTypeConfiguration<StarterCode>
 {
     public void Configure(EntityTypeBuilder<StarterCode> builder)
     {
+        // At most one starter code per language for a problem
+        builder.HasIndex(s => new { s.ProblemId, s.LanguageId })
+            .IsUnique();
+
         // Problem -> StarterCodes (cascade)
         builder.HasOne(s => s.Problem)
             .WithMany(p => p.StarterCodes)

@@ -33,8 +33,6 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     public DbSet<StudentCourseProgress> StudentCourseProgresses => Set<StudentCourseProgress>();
     public DbSet<StudentBlockProgress> StudentBlockProgresses => Set<StudentBlockProgress>();
     public DbSet<StudentQuizAttempt> StudentQuizAttempts => Set<StudentQuizAttempt>();
-    public DbSet<Comment> Comments => Set<Comment>();
-    public DbSet<Certificate> Certificates => Set<Certificate>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

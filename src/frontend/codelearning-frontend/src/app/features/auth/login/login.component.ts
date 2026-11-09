@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { LoginRequest } from '../../../core/models/auth.model';
+import { extractApiError } from '../../../core/utils/api-error';
 
 @Component({
   selector: 'app-login',
@@ -15,6 +16,7 @@ export class LoginComponent {
   private readonly fb = inject(FormBuilder);
   protected readonly authService = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
   protected readonly loginForm: FormGroup;
   protected readonly errorMessage = signal<string>('');
@@ -23,7 +25,7 @@ export class LoginComponent {
   constructor() {
     this.loginForm = this.fb.group({
       email: ['', [Validators.required, Validators.email]],
-      password: ['', [Validators.required, Validators.minLength(6)]]
+      password: ['', [Validators.required]]
     });
   }
 
@@ -39,12 +41,18 @@ export class LoginComponent {
     this.authService.login(this.loginForm.value as LoginRequest).subscribe({
       next: () => {
         this.isLoading.set(false);
-        this.router.navigate(['/dashboard']);
+        this.router.navigateByUrl(this.safeReturnUrl() ?? '/dashboard');
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Login failed. Please try again.');
+        this.errorMessage.set(extractApiError(error, 'Login failed. Please try again.'));
       }
     });
+  }
+
+  // Only same-app paths are followed, so a crafted link cannot send the user to another site
+  private safeReturnUrl(): string | null {
+    const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
+    return returnUrl && /^\/(?![/\\])/.test(returnUrl) ? returnUrl : null;
   }
 }

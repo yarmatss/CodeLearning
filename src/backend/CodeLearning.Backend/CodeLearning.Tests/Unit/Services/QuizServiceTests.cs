@@ -214,13 +214,14 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
         Assert.Contains("already attempted", exception.Message);
 
-        var blockProgress = await _fixture.DbContext.StudentBlockProgresses
+        await using var verifyContext = _fixture.CreateDbContext();
+        var blockProgress = await verifyContext.StudentBlockProgresses
             .SingleAsync(bp => bp.StudentId == _testStudent.Id && bp.BlockId == _testQuiz.Block.Id);
         Assert.True(blockProgress.IsCompleted);
     }
 
     [Fact]
-    public async Task SubmitQuizAsync_NotEnrolled_ThrowsBusinessRuleException()
+    public async Task SubmitQuizAsync_NotEnrolled_ThrowsForbiddenException()
     {
         // Arrange
         var unenrolledStudent = new User
@@ -253,7 +254,7 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+        var exception = await Assert.ThrowsAsync<ForbiddenException>(
             () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, unenrolledStudent.Id));
 
         Assert.Contains("must be enrolled", exception.Message);
@@ -364,7 +365,8 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         await _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id);
 
         // Assert
-        var blockProgress = await _fixture.DbContext.StudentBlockProgresses
+        await using var verifyContext = _fixture.CreateDbContext();
+        var blockProgress = await verifyContext.StudentBlockProgresses
             .FirstOrDefaultAsync(bp => bp.StudentId == _testStudent.Id && bp.Block.QuizId == _testQuiz.Id);
 
         Assert.NotNull(blockProgress);
@@ -454,6 +456,171 @@ public class QuizServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
                 Assert.NotNull(answer.Text);
             });
         }
+    }
+
+    [Fact]
+    public async Task SubmitQuizAsync_MismatchedQuestionIds_ThrowsBusinessRuleException()
+    {
+        var dto = Answers((_question1.Id, _q1Answer1.Id), (Guid.NewGuid(), _q2Answer1.Id));
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
+
+        Assert.Contains("do not match", exception.Message);
+    }
+
+    [Fact]
+    public async Task SubmitQuizAsync_SameQuestionAnsweredTwice_ThrowsBusinessRuleException()
+    {
+        var dto = Answers((_question1.Id, _q1Answer1.Id), (_question1.Id, _q1Answer2.Id));
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => _quizService.SubmitQuizAsync(_testQuiz.Id, dto, _testStudent.Id));
+
+        Assert.Contains("do not match", exception.Message);
+    }
+
+    [Fact]
+    public async Task SubmitQuizAsync_MultipleChoice_ScoresOnlyTheExactSetOfCorrectAnswers()
+    {
+        // Arrange: question 2 becomes multiple choice with two correct answers out of three
+        var extraCorrect = new QuizAnswer
+        {
+            Id = Guid.NewGuid(), Text = "3+3", IsCorrect = true, OrderIndex = 3,
+            QuestionId = _question2.Id, Question = _question2
+        };
+        _question2.Type = QuestionType.MultipleChoice;
+        _question2.Points = 3;
+        _fixture.DbContext.QuizAnswers.Add(extraCorrect);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        // Act: a subset of the correct answers earns nothing
+        var subset = await _quizService.SubmitQuizAsync(_testQuiz.Id,
+            new SubmitQuizDto
+            {
+                Answers =
+                [
+                    new() { QuestionId = _question1.Id, SelectedAnswerIds = [_q1Answer1.Id] },
+                    new() { QuestionId = _question2.Id, SelectedAnswerIds = [_q2Answer1.Id, _q2Answer1.Id] }
+                ]
+            },
+            _testStudent.Id);
+
+        // Assert
+        Assert.Equal(1, subset.Score);
+        Assert.Equal(4, subset.MaxScore);
+        Assert.Equal(25.0, subset.Percentage);
+        Assert.False(subset.QuestionResults.Single(r => r.QuestionId == _question2.Id).IsCorrect);
+
+        // A second student selecting exactly the correct set gets the points
+        var other = await CreateEnrolledStudentAsync();
+        var exact = await _quizService.SubmitQuizAsync(_testQuiz.Id,
+            Answers((_question1.Id, _q1Answer2.Id), (_question2.Id, _q2Answer1.Id), (_question2.Id, extraCorrect.Id), merge: true),
+            other.Id);
+
+        Assert.Equal(3, exact.Score);
+        Assert.Equal(75.0, exact.Percentage);
+
+        await using var verifyContext = _fixture.CreateDbContext();
+        var stored = await verifyContext.StudentQuizAttempts.SingleAsync(a => a.StudentId == other.Id);
+        Assert.Equal(75, stored.Score); // the stored score is the percentage
+    }
+
+    [Fact]
+    public async Task SubmitQuizAsync_ResultIncludesExplanation()
+    {
+        var result = await _quizService.SubmitQuizAsync(_testQuiz.Id,
+            Answers((_question1.Id, _q1Answer1.Id), (_question2.Id, _q2Answer1.Id)), _testStudent.Id);
+
+        Assert.Equal("Basic math", result.QuestionResults[0].Explanation);
+    }
+
+    [Fact]
+    public async Task SubmitQuizAsync_SetsCurrentBlockToNextIncompleteBlock()
+    {
+        // Arrange: a theory block after the quiz
+        var subchapterId = _testQuiz.Block.SubchapterId;
+        var nextBlock = new CourseBlock
+        {
+            Id = Guid.NewGuid(), Title = "After quiz", Type = BlockType.Theory, OrderIndex = 2,
+            SubchapterId = subchapterId, Subchapter = _testQuiz.Block.Subchapter
+        };
+        _fixture.DbContext.CourseBlocks.Add(nextBlock);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        // Act
+        await _quizService.SubmitQuizAsync(_testQuiz.Id,
+            Answers((_question1.Id, _q1Answer2.Id), (_question2.Id, _q2Answer2.Id)), _testStudent.Id);
+
+        // Assert: any attempt completes the quiz block, so the bookmark moves past it
+        await using var verifyContext = _fixture.CreateDbContext();
+        var enrollment = await verifyContext.StudentCourseProgresses
+            .SingleAsync(p => p.StudentId == _testStudent.Id && p.CourseId == _testCourse.Id);
+        Assert.Equal(nextBlock.Id, enrollment.CurrentBlockId);
+    }
+
+    [Fact]
+    public async Task GetQuizAttemptAsync_AfterQuizEdited_KeepsStoredPercentage()
+    {
+        // Arrange: 50% attempt, then the quiz is edited (as possible while the course is unpublished)
+        await _quizService.SubmitQuizAsync(_testQuiz.Id,
+            Answers((_question1.Id, _q1Answer1.Id), (_question2.Id, _q2Answer2.Id)), _testStudent.Id);
+
+        var replacement = new QuizQuestion
+        {
+            Id = Guid.NewGuid(), Content = "New", Type = QuestionType.SingleChoice, OrderIndex = 3, Points = 1,
+            QuizId = _testQuiz.Id, Quiz = _testQuiz,
+            Answers = { new QuizAnswer { Id = Guid.NewGuid(), Text = "x", IsCorrect = true, OrderIndex = 1, Question = null! } }
+        };
+        _fixture.DbContext.QuizQuestions.Remove(_question2);
+        _fixture.DbContext.QuizQuestions.Add(replacement);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _quizService.GetQuizAttemptAsync(_testQuiz.Id, _testStudent.Id);
+
+        // Assert: not silently re-graded against the edited questions
+        Assert.NotNull(result);
+        Assert.Equal(50.0, result.Percentage);
+        Assert.Equal(1, result.Score);
+        Assert.Equal(2, result.MaxScore);
+    }
+
+    private static SubmitQuizDto Answers(params (Guid QuestionId, Guid AnswerId)[] answers) =>
+        Answers(answers, merge: false);
+
+    private static SubmitQuizDto Answers((Guid QuestionId, Guid AnswerId) a, (Guid QuestionId, Guid AnswerId) b,
+        (Guid QuestionId, Guid AnswerId) c, bool merge) =>
+        Answers([a, b, c], merge);
+
+    // merge groups answers of the same question into one submission entry (multiple choice)
+    private static SubmitQuizDto Answers((Guid QuestionId, Guid AnswerId)[] answers, bool merge) => new()
+    {
+        Answers = merge
+            ? answers.GroupBy(a => a.QuestionId)
+                .Select(g => new QuizAnswerSubmissionDto { QuestionId = g.Key, SelectedAnswerIds = g.Select(x => x.AnswerId).ToList() })
+                .ToList()
+            : answers
+                .Select(a => new QuizAnswerSubmissionDto { QuestionId = a.QuestionId, SelectedAnswerIds = [a.AnswerId] })
+                .ToList()
+    };
+
+    private async Task<User> CreateEnrolledStudentAsync()
+    {
+        var student = new User
+        {
+            Id = Guid.NewGuid(), FirstName = "Other", LastName = "Student",
+            Email = "other@test.com", UserName = "other@test.com", Role = UserRole.Student
+        };
+        await _userManager.CreateAsync(student);
+
+        _fixture.DbContext.StudentCourseProgresses.Add(new StudentCourseProgress
+        {
+            StudentId = student.Id, Student = student, CourseId = _testCourse.Id, Course = _testCourse,
+            EnrolledAt = DateTimeOffset.UtcNow, LastActivityAt = DateTimeOffset.UtcNow
+        });
+        await _fixture.DbContext.SaveChangesAsync();
+        return student;
     }
 
     private async Task SeedTestDataAsync()

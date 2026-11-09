@@ -1,14 +1,11 @@
 using CodeLearning.Api.Extensions;
+using CodeLearning.Api.Middleware;
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Application.Services;
-using CodeLearning.Application.Settings;
-using CodeLearning.Core.Entities;
-using CodeLearning.Core.Enums;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.Options;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
@@ -18,12 +15,10 @@ namespace CodeLearning.Api.Controllers;
 [Route("api/[controller]")]
 public class AuthController(
     IAuthService authService,
-    ITokenService tokenService,
-    IOptions<JwtSettings> jwtOptions,
     IValidator<RegisterDto> registerValidator,
     IValidator<LoginDto> loginValidator) : ControllerBase
 {
-    private const string AccessTokenCookie = "access_token";
+    private const string AccessTokenCookie = JwtBearerEventHandlers.AccessTokenCookie;
     private const string RefreshTokenCookie = "refresh_token";
 
     [HttpPost("register")]
@@ -34,42 +29,38 @@ public class AuthController(
     {
         await registerValidator.ValidateAndThrowAsync(registerDto);
 
-        var response = await authService.RegisterAsync(registerDto);
-        var user = MapToUser(response);
+        var session = await authService.RegisterAsync(registerDto);
+        SetTokenCookies(session);
 
-        var (accessToken, refreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
-        SetTokenCookies(accessToken, refreshToken);
-
-        return Ok(MapToLoginResponse(response, accessTokenExpiresAt));
+        return Ok(MapToLoginResponse(session));
     }
 
     [HttpPost("login")]
     [AllowAnonymous]
-    [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
+    [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
     [ProducesResponseType(typeof(LoginResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Login(LoginDto loginDto)
     {
         await loginValidator.ValidateAndThrowAsync(loginDto);
 
-        var response = await authService.LoginAsync(loginDto);
-        var user = MapToUser(response);
+        var session = await authService.LoginAsync(loginDto);
+        SetTokenCookies(session);
 
-        var (accessToken, refreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
-        SetTokenCookies(accessToken, refreshToken);
-
-        return Ok(MapToLoginResponse(response, accessTokenExpiresAt));
+        return Ok(MapToLoginResponse(session));
     }
 
-    // Anonymous so a client whose access token already expired can still end its session
+    // Anonymous so a client whose access token already expired can still end its session.
+    // Ends only this session: the refresh cookie (or the access token's sid) names it
     [HttpPost("logout")]
     [AllowAnonymous]
     public async Task<IActionResult> Logout()
     {
-        var userId = User.GetUserIdOrNull();
-        var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
-        var accessTokenExpiration = TimeSpan.FromMinutes(jwtOptions.Value.AccessTokenExpirationMinutes);
-
-        await authService.LogoutAsync(Request.Cookies[RefreshTokenCookie], userId, jti, accessTokenExpiration);
+        await authService.LogoutAsync(
+            Request.Cookies[RefreshTokenCookie],
+            User.GetUserIdOrNull(),
+            GetSessionId(User),
+            User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value,
+            GetAccessTokenExpiry(User));
 
         ClearTokenCookies();
 
@@ -77,8 +68,8 @@ public class AuthController(
     }
 
     [HttpPost("refresh")]
-    // Not in the auth rate limit: every signed-in client calls this every few minutes, and a 64-byte
-    // random refresh token cannot be guessed, so throttling it would only lock out real users
+    // Not rate limited: every signed-in client calls this every few minutes, and a 64-byte random
+    // refresh token cannot be guessed, so throttling it would only lock out real users
     [AllowAnonymous]
     public async Task<IActionResult> RefreshToken()
     {
@@ -89,17 +80,14 @@ public class AuthController(
             return Unauthorized(new { message = "Refresh token not found" });
         }
 
-        // The refresh token alone identifies the user; the (possibly expired) access token is not trusted
-        var response = await authService.RefreshTokenAsync(refreshToken);
-        var user = MapToUser(response);
-
-        var (accessToken, newRefreshToken, accessTokenExpiresAt) = await GenerateAndStoreTokensAsync(user);
-        SetTokenCookies(accessToken, newRefreshToken);
+        // The refresh token alone identifies the user and session; the (possibly expired) access token is not trusted
+        var session = await authService.RefreshTokenAsync(refreshToken);
+        SetTokenCookies(session);
 
         return Ok(new
         {
             message = "Token refreshed successfully",
-            accessTokenExpiresAt
+            accessTokenExpiresAt = session.AccessTokenExpiresAt
         });
     }
 
@@ -114,55 +102,45 @@ public class AuthController(
             Email = User.FindFirst(ClaimTypes.Email)?.Value ?? string.Empty,
             FirstName = User.FindFirst(ClaimTypes.GivenName)?.Value ?? string.Empty,
             LastName = User.FindFirst(ClaimTypes.Surname)?.Value ?? string.Empty,
-            Role = User.FindFirst(ClaimTypes.Role)?.Value ?? string.Empty
+            Role = User.FindFirst(ClaimTypes.Role)?.Value ?? string.Empty,
+            AccessTokenExpiresAt = GetAccessTokenExpiry(User)
         });
     }
 
-    private static User MapToUser(AuthResponseDto response) => new()
+    private static LoginResponseDto MapToLoginResponse(AuthSessionResult session) => new()
     {
-        Id = Guid.Parse(response.UserId),
-        Email = response.Email,
-        FirstName = response.FirstName,
-        LastName = response.LastName,
-        Role = Enum.Parse<UserRole>(response.Role)
+        UserId = session.User.UserId,
+        Email = session.User.Email,
+        FirstName = session.User.FirstName,
+        LastName = session.User.LastName,
+        Role = session.User.Role,
+        Message = session.User.Message,
+        AccessTokenExpiresAt = session.AccessTokenExpiresAt
     };
 
-    private static LoginResponseDto MapToLoginResponse(AuthResponseDto response, DateTimeOffset accessTokenExpiresAt) => new()
+    // The inbound claim map may rename sid, so both spellings are accepted
+    private static Guid? GetSessionId(ClaimsPrincipal user) =>
+        Guid.TryParse((user.FindFirst(JwtRegisteredClaimNames.Sid) ?? user.FindFirst(ClaimTypes.Sid))?.Value, out var id)
+            ? id
+            : null;
+
+    private static DateTimeOffset? GetAccessTokenExpiry(ClaimsPrincipal user) =>
+        long.TryParse(user.FindFirst(JwtRegisteredClaimNames.Exp)?.Value, out var exp)
+            ? DateTimeOffset.FromUnixTimeSeconds(exp)
+            : null;
+
+    // Each cookie lives exactly as long as its token, so the browser drops an expired access token
+    // instead of sending it for days after the server stopped accepting it
+    private void SetTokenCookies(AuthSessionResult session)
     {
-        UserId = response.UserId,
-        Email = response.Email,
-        FirstName = response.FirstName,
-        LastName = response.LastName,
-        Role = response.Role,
-        Message = response.Message,
-        AccessTokenExpiresAt = accessTokenExpiresAt
-    };
+        var accessCookieOptions = CreateCookieOptions();
+        accessCookieOptions.Expires = session.AccessTokenExpiresAt;
 
-    private async Task<(string AccessToken, string RefreshToken, DateTimeOffset AccessTokenExpiresAt)> GenerateAndStoreTokensAsync(User user)
-    {
-        var accessToken = tokenService.GenerateAccessToken(user);
-        var refreshToken = tokenService.GenerateRefreshToken();
+        var refreshCookieOptions = CreateCookieOptions();
+        refreshCookieOptions.Expires = session.RefreshTokenExpiresAt;
 
-        var refreshTokenExpirationDays = jwtOptions.Value.RefreshTokenExpirationDays;
-
-        await tokenService.StoreRefreshTokenAsync(
-            refreshToken,
-            user.Id,
-            TimeSpan.FromDays(refreshTokenExpirationDays));
-
-        // Read the expiry back from the token so it matches the exp claim exactly
-        var accessTokenExpiresAt = new DateTimeOffset(new JwtSecurityTokenHandler().ReadJwtToken(accessToken).ValidTo, TimeSpan.Zero);
-
-        return (accessToken, refreshToken, accessTokenExpiresAt);
-    }
-
-    private void SetTokenCookies(string accessToken, string refreshToken)
-    {
-        var cookieOptions = CreateCookieOptions();
-        cookieOptions.Expires = DateTimeOffset.UtcNow.AddDays(jwtOptions.Value.RefreshTokenExpirationDays);
-
-        Response.Cookies.Append(AccessTokenCookie, accessToken, cookieOptions);
-        Response.Cookies.Append(RefreshTokenCookie, refreshToken, cookieOptions);
+        Response.Cookies.Append(AccessTokenCookie, session.AccessToken, accessCookieOptions);
+        Response.Cookies.Append(RefreshTokenCookie, session.RefreshToken, refreshCookieOptions);
     }
 
     // Deleting with the same attributes the cookies were set with, so browsers match and drop them

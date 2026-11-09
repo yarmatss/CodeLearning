@@ -19,7 +19,9 @@ public class QuizzesController(
     [ProducesResponseType(typeof(QuizAttemptResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> SubmitQuiz(Guid quizId, [FromBody] SubmitQuizDto dto)
     {
         await submitQuizValidator.ValidateAndThrowAsync(dto);

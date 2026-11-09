@@ -8,17 +8,17 @@ public class BulkAddTestCasesDtoValidator : AbstractValidator<BulkAddTestCasesDt
 {
     public BulkAddTestCasesDtoValidator()
     {
+        RuleLevelCascadeMode = CascadeMode.Stop;
+
         RuleFor(x => x.TestCases)
             .NotEmpty().WithMessage("At least one test case is required")
-            .Must(HaveAtLeastOnePublicTestCase).WithMessage("At least one test case must be public")
-            .Must(testCases => testCases.Count <= TestCaseLimits.MaxTestCasesPerProblem)
+            .Must(tcs => ProblemValidationRules.HaveAtLeastOnePublicTestCase(tcs, tc => tc.IsPublic))
+            .WithMessage("At least one test case must be public")
+            .Must(ProblemValidationRules.WithinTestCaseLimit)
             .WithMessage($"A problem can have at most {TestCaseLimits.MaxTestCasesPerProblem} test cases");
 
-        RuleForEach(x => x.TestCases).SetValidator(new CreateTestCaseDtoValidator());
-    }
-
-    private static bool HaveAtLeastOnePublicTestCase(List<CreateTestCaseDto> testCases)
-    {
-        return testCases.Any(tc => tc.IsPublic);
+        RuleForEach(x => x.TestCases)
+            .NotNull().WithMessage("Test case must not be null")
+            .SetValidator(new CreateTestCaseDtoValidator());
     }
 }

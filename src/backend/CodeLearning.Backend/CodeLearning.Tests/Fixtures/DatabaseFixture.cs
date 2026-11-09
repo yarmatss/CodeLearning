@@ -1,5 +1,6 @@
 using CodeLearning.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Testcontainers.PostgreSql;
 
 namespace CodeLearning.Tests.Fixtures;
@@ -39,10 +40,11 @@ public class DatabaseFixture : IAsyncLifetime
         await _postgresContainer.DisposeAsync();
     }
 
-    public ApplicationDbContext CreateDbContext()
+    public ApplicationDbContext CreateDbContext(params IInterceptor[] interceptors)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseNpgsql(_postgresContainer.GetConnectionString())
+            .AddInterceptors(interceptors)
             .Options;
 
         return new ApplicationDbContext(options);

@@ -4,6 +4,7 @@ using CodeLearning.Application.Services;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Core.Messages;
+using CodeLearning.Core.Text;
 using CodeLearning.Infrastructure.Data;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
@@ -14,33 +15,41 @@ public class SubmissionService(ApplicationDbContext context, IPublishEndpoint pu
 {
     public async Task<SubmissionResponseDto> SubmitCodeAsync(SubmitCodeDto dto, Guid studentId)
     {
+        // PostgreSQL text columns reject NUL characters and UTF-8 cannot encode lone surrogates;
+        // neither matters to the program anyway
+        var code = TextSanitizer.ForDatabase(dto.Code) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            throw new BusinessRuleException("Code is required");
+        }
+
         var problem = await context.Problems
-            .Include(p => p.TestCases)
-            .Include(p => p.StarterCodes)
-            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == dto.ProblemId)
             ?? throw new NotFoundException($"Problem {dto.ProblemId} not found");
 
         if (!await CanSubmitAsync(problem, studentId))
         {
-            throw new BusinessRuleException("You must be enrolled in a course that contains this problem to submit solutions");
+            throw new ForbiddenException("You must be enrolled in a published course that contains this problem to submit solutions");
         }
 
-        if (problem.TestCases.Count == 0)
+        if (!await context.TestCases.AnyAsync(tc => tc.ProblemId == problem.Id))
         {
             throw new BusinessRuleException("Problem has no test cases");
         }
 
-        // Validate that the language is supported for this problem
-        var hasStarterCodeForLanguage = problem.StarterCodes.Any(sc => sc.LanguageId == dto.LanguageId);
-        if (!hasStarterCodeForLanguage)
-        {
-            throw new BusinessRuleException($"Language is not supported for this problem. Available languages: {string.Join(", ", problem.StarterCodes.Select(sc => sc.LanguageId))}");
-        }
+        // Only languages with a starter code are supported for this problem
+        var availableLanguages = await context.StarterCodes
+            .Where(sc => sc.ProblemId == problem.Id)
+            .Select(sc => sc.Language)
+            .ToListAsync();
 
-        var language = await context.Languages
-            .FirstOrDefaultAsync(l => l.Id == dto.LanguageId)
-            ?? throw new BusinessRuleException($"Language {dto.LanguageId} not found");
+        var language = availableLanguages.FirstOrDefault(l => l.Id == dto.LanguageId);
+        if (language is null)
+        {
+            var names = availableLanguages.Where(l => l.IsEnabled).Select(l => l.Name).Order();
+            throw new BusinessRuleException(
+                $"Language is not supported for this problem. Available languages: {string.Join(", ", names)}");
+        }
 
         if (!language.IsEnabled)
         {
@@ -57,7 +66,7 @@ public class SubmissionService(ApplicationDbContext context, IPublishEndpoint pu
                 ?? throw new BusinessRuleException($"Student {studentId} not found"),
             LanguageId = dto.LanguageId,
             Language = language,
-            Code = dto.Code,
+            Code = code,
             Status = SubmissionStatus.Pending,
             Score = 0,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -113,7 +122,7 @@ public class SubmissionService(ApplicationDbContext context, IPublishEndpoint pu
     }
 
     // Every submission occupies a sandbox container, so only the problem's author (testing it)
-    // or students enrolled in a course that uses the problem may submit
+    // or students enrolled in a published course that uses the problem may submit
     private async Task<bool> CanSubmitAsync(Problem problem, Guid userId)
     {
         if (problem.AuthorId == userId)
@@ -123,6 +132,7 @@ public class SubmissionService(ApplicationDbContext context, IPublishEndpoint pu
 
         return await context.CourseBlocks.AnyAsync(b =>
             b.ProblemId == problem.Id &&
+            b.Subchapter.Chapter.Course.Status == CourseStatus.Published &&
             context.StudentCourseProgresses.Any(p =>
                 p.StudentId == userId && p.CourseId == b.Subchapter.Chapter.CourseId));
     }

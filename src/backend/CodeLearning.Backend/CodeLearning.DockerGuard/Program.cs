@@ -30,13 +30,24 @@ app.Run(async context =>
             await GuardHttp.DenyAsync(context, decision.Reason!);
             return;
 
-        case RouteKind.SandboxContainer:
+        case RouteKind.SandboxContainer or RouteKind.AttachSandboxContainer:
             if (!await docker.IsSandboxContainerAsync(decision.ContainerId!, context.RequestAborted))
             {
                 app.Logger.LogWarning("Refused {Method} {Path}: not a sandbox container", request.Method, request.Path);
                 await GuardHttp.DenyAsync(context, "Only sandbox containers can be managed");
                 return;
             }
+
+            if (decision.Kind == RouteKind.AttachSandboxContainer)
+            {
+                await AttachProxy.ProxyAsync(context, options.DockerSocket, app.Logger);
+                return;
+            }
+            break;
+
+        case RouteKind.ListSandboxContainers:
+            // The caller's filters are replaced, so the listing never shows other containers
+            request.QueryString = RequestPolicy.SandboxListQuery(request.Query);
             break;
 
         case RouteKind.CreateContainer:
