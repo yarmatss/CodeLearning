@@ -178,7 +178,7 @@ public class QuizService(ApplicationDbContext context) : IQuizService
 
     private static (int Score, int MaxScore, List<QuestionResultDto> Results) Grade(
         Quiz quiz,
-        IReadOnlyDictionary<Guid, List<Guid>> selections)
+        Dictionary<Guid, List<Guid>> selections)
     {
         var results = new List<QuestionResultDto>();
         var earnedPoints = 0;

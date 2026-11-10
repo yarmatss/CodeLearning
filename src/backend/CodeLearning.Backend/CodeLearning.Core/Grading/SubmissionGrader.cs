@@ -57,12 +57,7 @@ public static class SubmissionGrader
         // The submission-level error is shown to the student. The sandbox's own RuntimeError is never passed
         // through, and a test's error output is used only for public tests: a hidden test's could reveal its input
         var runtimeError = status == SubmissionStatus.RuntimeError
-            ? gradedResults
-                  .Where((_, index) => testCases[index].IsPublic)
-                  .FirstOrDefault(tr => tr.Status == TestResultStatus.RuntimeError
-                                        && !string.IsNullOrWhiteSpace(tr.ErrorMessage)
-                                        && tr.ErrorMessage != NoResultMessage)?.ErrorMessage
-              ?? (gradedResults.Any(tr => tr.ErrorMessage == NoResultMessage) ? IncompleteExecutionMessage : null)
+            ? GetSubmissionRuntimeError(gradedResults, testCases)
             : null;
 
         return new ExecutionResult
@@ -82,6 +77,22 @@ public static class SubmissionGrader
     public static bool OutputsMatch(string? actualOutput, string expectedOutput)
     {
         return Normalize(actualOutput ?? string.Empty) == Normalize(expectedOutput);
+    }
+
+    private static string? GetSubmissionRuntimeError(List<TestCaseResult> gradedResults, IReadOnlyList<TestCase> testCases)
+    {
+        var publicError = gradedResults
+            .Where((_, index) => testCases[index].IsPublic)
+            .FirstOrDefault(tr => tr.Status == TestResultStatus.RuntimeError
+                                  && !string.IsNullOrWhiteSpace(tr.ErrorMessage)
+                                  && tr.ErrorMessage != NoResultMessage)?.ErrorMessage;
+
+        if (publicError is not null)
+        {
+            return publicError;
+        }
+
+        return gradedResults.Any(tr => tr.ErrorMessage == NoResultMessage) ? IncompleteExecutionMessage : null;
     }
 
     private static SubmissionStatus GetOverallStatus(List<TestCaseResult> gradedResults)

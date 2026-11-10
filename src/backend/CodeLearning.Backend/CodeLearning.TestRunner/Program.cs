@@ -31,7 +31,7 @@ static partial class Program
         var options = ParseArgs(args);
         if (options == null)
         {
-            Console.Error.WriteLine("Usage: runner --run <command> --input <dir> --out <file> [--timelimit <ms>] "
+            await Console.Error.WriteLineAsync("Usage: runner --run <command> --input <dir> --out <file> [--timelimit <ms>] "
                                     + "[--memorylimitkb <kb>] [--totaltimelimit <ms>] [--workdir <dir>]");
             return 1;
         }
@@ -399,6 +399,7 @@ static partial class Program
         }
         catch (ObjectDisposedException)
         {
+            // The process was killed and its stdin pipe disposed while the input was still being written
         }
         finally
         {
@@ -408,6 +409,7 @@ static partial class Program
             }
             catch (IOException)
             {
+                // EPIPE again on close: the reader is already gone, so there is nothing left to flush
             }
         }
     }
@@ -460,9 +462,11 @@ static partial class Program
         }
         catch (IOException)
         {
+            // Best effort: a leftover stats file in the agent's private tmpfs is discarded with the container
         }
         catch (UnauthorizedAccessException)
         {
+            // Same as above; the file is never read again
         }
     }
 }

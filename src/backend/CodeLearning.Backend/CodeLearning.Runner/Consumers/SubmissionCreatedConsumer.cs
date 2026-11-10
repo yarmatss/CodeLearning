@@ -219,7 +219,7 @@ public class SubmissionCreatedConsumer(
             var completed = await ProgressWriter.CompleteSolvedProblemBlocksAsync(
                 dbContext, submission.StudentId, submission.ProblemId, cancellationToken);
 
-            if (completed > 0)
+            if (completed > 0 && logger.IsEnabled(LogLevel.Information))
             {
                 logger.LogInformation(
                     "Submission {SubmissionId} completed {BlockCount} problem block(s)", submissionId, completed);

@@ -41,10 +41,17 @@ public sealed record SandboxTimeBudget(int CompileSeconds, int PerTestMs, int Te
         return Math.Max(available / PerTestSeconds(language), 0);
     }
 
-    public static int CompileSecondsFor(Language language) =>
-        string.IsNullOrWhiteSpace(language.CompileCommand)
-            ? 0
-            : language.Name.Equals("C#", StringComparison.OrdinalIgnoreCase) ? CSharpCompileSeconds : DefaultCompileSeconds;
+    public static int CompileSecondsFor(Language language)
+    {
+        if (string.IsNullOrWhiteSpace(language.CompileCommand))
+        {
+            return 0;
+        }
+
+        return language.Name.Equals("C#", StringComparison.OrdinalIgnoreCase)
+            ? CSharpCompileSeconds
+            : DefaultCompileSeconds;
+    }
 
     private static int PerTestSeconds(Language language) => Math.Max(1, language.TimeoutSeconds);
 

@@ -2,7 +2,8 @@
 # To update: docker pull <image:tag>, then copy the digest from `docker image inspect --format '{{json .RepoDigests}}'`
 
 # ---- Agent (CodeLearning.TestRunner), compiled ahead of time for the platform being built ----
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e AS agent-build
+# mcr.microsoft.com/dotnet/sdk:10.0, pinned by digest
+FROM mcr.microsoft.com/dotnet/sdk@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e AS agent-build
 ARG TARGETARCH
 
 RUN apt-get update \
@@ -28,7 +29,8 @@ RUN dotnet publish "CodeLearning.TestRunner/CodeLearning.TestRunner.csproj" \
     -o /out
 
 # ---- Executor ----
-FROM eclipse-temurin:21-jdk-jammy@sha256:4b1a74fbffbe6b4e7b6f0171a472478282fb463790a51edf10e465d578f22b69
+# eclipse-temurin:21-jdk-jammy, pinned by digest
+FROM eclipse-temurin@sha256:4b1a74fbffbe6b4e7b6f0171a472478282fb463790a51edf10e465d578f22b69
 
 # time: per-test statistics (/usr/bin/time -v). util-linux: setpriv, which drops the submission to uid 65534.
 # jq: builds the compile-error JSON

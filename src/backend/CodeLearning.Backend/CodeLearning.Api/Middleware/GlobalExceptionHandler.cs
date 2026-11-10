@@ -22,7 +22,10 @@ internal sealed class GlobalExceptionHandler(
         // The client went away: nobody will read a response, and it is not a server fault
         if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
         {
-            logger.LogDebug("Request was aborted by the client | TraceId: {TraceId}", traceId);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                logger.LogDebug("Request was aborted by the client | TraceId: {TraceId}", traceId);
+            }
 
             if (!httpContext.Response.HasStarted)
             {

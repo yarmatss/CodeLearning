@@ -44,18 +44,15 @@ internal sealed class LoginRateLimitKeyMiddleware(RequestDelegate next)
                 return null;
             }
 
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                // Model binding matches property names case-insensitively, so this must too
-                if (property.Name.Equals("email", StringComparison.OrdinalIgnoreCase))
-                {
-                    return property.Value.ValueKind == JsonValueKind.String
-                        ? normalizer.NormalizeEmail(property.Value.GetString()!.Trim())
-                        : null;
-                }
-            }
+            // Model binding matches property names case-insensitively, so this must too
+            var email = document.RootElement.EnumerateObject()
+                .Where(property => property.Name.Equals("email", StringComparison.OrdinalIgnoreCase))
+                .Select(property => (JsonElement?)property.Value)
+                .FirstOrDefault();
 
-            return null;
+            return email is { ValueKind: JsonValueKind.String } value
+                ? normalizer.NormalizeEmail(value.GetString()!.Trim())
+                : null;
         }
         catch (JsonException)
         {

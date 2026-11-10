@@ -79,11 +79,11 @@ internal static class JwtBearerEventHandlers
 
         var detail = context.AuthenticateFailure switch
         {
+            null => "Authentication is required to access this resource.",
             AccessTokenRevokedException => "Token has been revoked.",
             TokenRevocationCheckUnavailableException => "The token could not be verified right now. Please try again.",
             SecurityTokenExpiredException => "The access token has expired.",
-            not null => "The access token is invalid.",
-            null => "Authentication is required to access this resource."
+            _ => "The access token is invalid."
         };
 
         response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -107,7 +107,7 @@ internal static class JwtBearerEventHandlers
     }
 }
 
-internal sealed class AccessTokenRevokedException(string message) : Exception(message);
+public sealed class AccessTokenRevokedException(string message) : Exception(message);
 
-internal sealed class TokenRevocationCheckUnavailableException(Exception inner)
+public sealed class TokenRevocationCheckUnavailableException(Exception inner)
     : Exception("The token revocation list is unavailable", inner);

@@ -87,7 +87,7 @@ public sealed class SandboxContainerCleanupService : BackgroundService
             }
         }
 
-        if (removed > 0)
+        if (removed > 0 && _logger.IsEnabled(LogLevel.Information))
         {
             _logger.LogInformation("Removed {Count} stale sandbox containers", removed);
         }

@@ -16,29 +16,29 @@ public static class TextSanitizer
         }
 
         var builder = new StringBuilder(value.Length);
+        var i = 0;
 
-        for (var i = 0; i < value.Length; i++)
+        while (i < value.Length)
         {
             var c = value[i];
 
-            if (c == '\0')
+            if (IsSurrogatePairAt(value, i))
             {
+                builder.Append(c).Append(value[i + 1]);
+                i += 2;
                 continue;
             }
 
-            if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
-            {
-                builder.Append(c).Append(value[i + 1]);
-                i++;
-            }
-            else if (char.IsSurrogate(c))
+            if (char.IsSurrogate(c))
             {
                 builder.Append(ReplacementCharacter);
             }
-            else
+            else if (c != '\0')
             {
                 builder.Append(c);
             }
+
+            i++;
         }
 
         return builder.ToString();
@@ -46,25 +46,27 @@ public static class TextSanitizer
 
     private static bool NeedsSanitizing(string value)
     {
-        for (var i = 0; i < value.Length; i++)
+        var i = 0;
+
+        while (i < value.Length)
         {
-            var c = value[i];
+            if (IsSurrogatePairAt(value, i))
+            {
+                i += 2;
+                continue;
+            }
 
-            if (c == '\0')
+            if (value[i] == '\0' || char.IsSurrogate(value[i]))
             {
                 return true;
             }
 
-            if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
-            {
-                i++;
-            }
-            else if (char.IsSurrogate(c))
-            {
-                return true;
-            }
+            i++;
         }
 
         return false;
     }
+
+    private static bool IsSurrogatePairAt(string value, int index) =>
+        char.IsHighSurrogate(value[index]) && index + 1 < value.Length && char.IsLowSurrogate(value[index + 1]);
 }

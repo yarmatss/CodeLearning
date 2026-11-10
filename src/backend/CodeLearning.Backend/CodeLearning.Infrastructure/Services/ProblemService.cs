@@ -393,7 +393,7 @@ public class ProblemService(ApplicationDbContext context, IConfiguration configu
                 b.Subchapter.Chapter.Course.Status == CourseStatus.Published &&
                 b.Subchapter.Chapter.Course.StudentProgress.Any(sp => sp.StudentId == userId)));
 
-    private async Task<PagedResult<ProblemListDto>> GetProblemPageAsync(IQueryable<Problem> query, ProblemListQuery listQuery)
+    private static async Task<PagedResult<ProblemListDto>> GetProblemPageAsync(IQueryable<Problem> query, ProblemListQuery listQuery)
     {
         if (!string.IsNullOrEmpty(listQuery.Difficulty) &&
             Enum.TryParse<DifficultyLevel>(listQuery.Difficulty, out var difficultyLevel))
@@ -429,14 +429,17 @@ public class ProblemService(ApplicationDbContext context, IConfiguration configu
             {
                 p.Id,
                 p.Title,
+                // Translated to SQL substring(); the span-based alternative CA1845 suggests cannot be translated
+#pragma warning disable CA1845
                 Description = p.Description.Length > previewLength
                     ? p.Description.Substring(0, previewLength) + "..."
                     : p.Description,
+#pragma warning restore CA1845
                 p.Difficulty,
                 p.AuthorId,
                 AuthorName = p.Author.FirstName + " " + p.Author.LastName,
-                TestCasesCount = p.TestCases.Count(),
-                LanguagesCount = p.StarterCodes.Count(),
+                TestCasesCount = p.TestCases.Count,
+                LanguagesCount = p.StarterCodes.Count,
                 IsUsedByPublishedCourse = p.Blocks.Any(b =>
                     b.Subchapter.Chapter.Course.Status == CourseStatus.Published),
                 Tags = p.ProblemTags
