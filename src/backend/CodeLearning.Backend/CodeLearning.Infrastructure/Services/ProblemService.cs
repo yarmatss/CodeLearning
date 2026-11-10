@@ -410,8 +410,10 @@ public class ProblemService(ApplicationDbContext context, IConfiguration configu
         if (!string.IsNullOrWhiteSpace(listQuery.Search))
         {
             var pattern = $"%{EscapeLikePattern(listQuery.Search.Trim())}%";
-            query = query.Where(p => EF.Functions.ILike(p.Title, pattern) ||
-                                     EF.Functions.ILike(p.Description, pattern));
+            // The escape character has to be named: without it the provider emits ESCAPE '', so the
+            // backslashes added by EscapeLikePattern would be matched as text
+            query = query.Where(p => EF.Functions.ILike(p.Title, pattern, LikeEscapeCharacter) ||
+                                     EF.Functions.ILike(p.Description, pattern, LikeEscapeCharacter));
         }
 
         var totalCount = await query.CountAsync();
@@ -606,6 +608,8 @@ public class ProblemService(ApplicationDbContext context, IConfiguration configu
     }
 
     // ILIKE treats % and _ as wildcards; backslash is the default escape character in PostgreSQL
+    private const string LikeEscapeCharacter = @"\";
+
     private static string EscapeLikePattern(string value) =>
         value.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
 

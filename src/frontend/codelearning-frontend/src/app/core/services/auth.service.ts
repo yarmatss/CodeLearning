@@ -18,6 +18,7 @@ import { User, RegisterRequest, LoginRequest, AuthResponse, CurrentUserResponse 
 import { CourseService } from './course.service';
 import { LanguageService } from './language.service';
 import { DialogService } from './dialog.service';
+import { SubmissionEventsService } from './submission-events.service';
 
 /**
  * Marks a request the auth interceptor must pass through untouched: the refresh call itself and
@@ -41,6 +42,7 @@ export class AuthService {
   private readonly courseService = inject(CourseService);
   private readonly languageService = inject(LanguageService);
   private readonly dialogService = inject(DialogService);
+  private readonly submissionEvents = inject(SubmissionEventsService);
 
   private readonly API_URL = '/api/auth';
   private refreshTimer?: ReturnType<typeof setTimeout>;
@@ -134,6 +136,7 @@ export class AuthService {
     this.courseService.reset();
     this.languageService.reset();
     this.dialogService.reset();
+    void this.submissionEvents.disconnect();
   }
 
   private startSession(response: AuthResponse): void {

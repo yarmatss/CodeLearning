@@ -651,6 +651,39 @@ public class ProblemsControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
+    public async Task GetProblems_WithSearchFilter_ShouldIgnoreCase()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        await CreateProblemWithCurrentToken(NewProblemDto("Array Sum Problem"));
+        await CreateProblemWithCurrentToken(NewProblemDto("String Reverse Problem"));
+
+        // Act
+        var page = await GetPageAsync("/api/problems?search=aRRay%20sUM");
+
+        // Assert
+        page.Items.Should().ContainSingle().Which.Title.Should().Be("Array Sum Problem");
+    }
+
+    [Fact]
+    public async Task GetProblems_WithSearchFilter_ShouldTreatWildcardsAsText()
+    {
+        // Arrange
+        UseToken(await GetTeacherToken());
+        await CreateProblemWithCurrentToken(NewProblemDto("100% Coverage"));
+        await CreateProblemWithCurrentToken(NewProblemDto("Snake_case Names"));
+        await CreateProblemWithCurrentToken(NewProblemDto("Plain Problem"));
+
+        // Act
+        var percent = await GetPageAsync("/api/problems?search=%25");
+        var underscore = await GetPageAsync("/api/problems?search=_");
+
+        // Assert
+        percent.Items.Should().ContainSingle().Which.Title.Should().Be("100% Coverage");
+        underscore.Items.Should().ContainSingle().Which.Title.Should().Be("Snake_case Names");
+    }
+
+    [Fact]
     public async Task GetMyProblems_AsTeacher_ShouldReturnOnlyMyProblems()
     {
         // Arrange

@@ -48,6 +48,60 @@ public class SubmissionConsumerTests(DatabaseFixture fixture) : IClassFixture<Da
     }
 
     [Fact]
+    public async Task Consume_SuccessfulExecution_ShouldAnnounceRunningAndTheFinalStatus()
+    {
+        // Arrange
+        var executor = new FakeCodeExecutor(_ => new ExecutionResult { Status = SubmissionStatus.Completed, Score = 100 });
+        await using var provider = CreateProvider(executor);
+        var harness = await StartHarnessAsync(provider);
+        var submissionId = await SeedSubmissionAsync();
+
+        // Act
+        await harness.Bus.Publish(new SubmissionCreated(submissionId));
+
+        // Assert
+        var studentId = (await WaitForFinalStatusAsync(submissionId)).StudentId;
+
+        (await WasAnnouncedAsync(harness, submissionId, studentId, SubmissionStatus.Running)).Should().BeTrue();
+        (await WasAnnouncedAsync(harness, submissionId, studentId, SubmissionStatus.Completed)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Consume_ExecutionKeepsFailing_ShouldAnnounceTheFailure()
+    {
+        // Arrange
+        var executor = new FakeCodeExecutor(_ => throw new InvalidOperationException("Docker is unavailable"));
+        await using var provider = CreateProvider(executor);
+        var harness = await StartHarnessAsync(provider);
+        var submissionId = await SeedSubmissionAsync();
+
+        // Act
+        await harness.Bus.Publish(new SubmissionCreated(submissionId));
+
+        // Assert
+        var studentId = (await WaitForFinalStatusAsync(submissionId)).StudentId;
+
+        (await WasAnnouncedAsync(harness, submissionId, studentId, SubmissionStatus.RuntimeError)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Consume_AlreadyGradedSubmission_ShouldAnnounceNothing()
+    {
+        // Arrange
+        var executor = new FakeCodeExecutor(AllPassed);
+        await using var provider = CreateProvider(executor);
+        var harness = await StartHarnessAsync(provider);
+        var submissionId = await SeedSubmissionAsync(SubmissionStatus.Completed);
+
+        // Act
+        await harness.Bus.Publish(new SubmissionCreated(submissionId));
+
+        // Assert
+        (await harness.GetConsumerHarness<SubmissionCreatedConsumer>().Consumed.Any<SubmissionCreated>()).Should().BeTrue();
+        harness.Published.Select<SubmissionStatusChanged>().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Consume_ExecutionKeepsFailing_ShouldFailSubmissionAfterMaxAttempts()
     {
         // Arrange
@@ -201,6 +255,8 @@ public class SubmissionConsumerTests(DatabaseFixture fixture) : IClassFixture<Da
         submission.Status.Should().Be(SubmissionStatus.RuntimeError);
         submission.RuntimeError.Should().Contain("no test cases");
         executor.Calls.Should().Be(0);
+
+        (await WasAnnouncedAsync(harness, submissionId, submission.StudentId, SubmissionStatus.RuntimeError)).Should().BeTrue();
     }
 
     [Fact]
@@ -337,6 +393,10 @@ public class SubmissionConsumerTests(DatabaseFixture fixture) : IClassFixture<Da
             ActualOutput = tc.ExpectedOutput
         }).ToList()
     };
+
+    private static Task<bool> WasAnnouncedAsync(ITestHarness harness, Guid submissionId, Guid studentId, SubmissionStatus status) =>
+        harness.Published.Any<SubmissionStatusChanged>(x =>
+            x.Context.Message == new SubmissionStatusChanged(submissionId, studentId, status));
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition)
     {
