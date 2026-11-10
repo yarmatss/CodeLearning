@@ -206,9 +206,9 @@ public class BulkAddTestCasesDtoValidatorTests
     }
 
     [Fact]
-    public void Validate_TestCaseWithEmptyExpectedOutput_ShouldFail()
+    public void Validate_TestCaseWithEmptyExpectedOutput_ShouldPass()
     {
-        // Arrange
+        // Arrange - a program that prints nothing is a valid test
         var dto = new BulkAddTestCasesDto
         {
             TestCases =
@@ -226,8 +226,41 @@ public class BulkAddTestCasesDtoValidatorTests
         var result = _validator.Validate(dto);
 
         // Assert
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_TestCaseWithNullExpectedOutput_ShouldFail()
+    {
+        // Arrange
+        var dto = new BulkAddTestCasesDto
+        {
+            TestCases = [new CreateTestCaseDto { Input = "1", ExpectedOutput = null!, IsPublic = true }]
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.ErrorMessage.Contains("Expected output is required"));
+    }
+
+    [Fact]
+    public void Validate_NullTestCaseElement_ShouldFailWithoutThrowing()
+    {
+        // Arrange
+        var dto = new BulkAddTestCasesDto
+        {
+            TestCases = [new CreateTestCaseDto { Input = "1", ExpectedOutput = "1", IsPublic = true }, null!]
+        };
+
+        // Act
+        var result = _validator.Validate(dto);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.ErrorMessage.Contains("must not be null"));
     }
 
     [Fact]

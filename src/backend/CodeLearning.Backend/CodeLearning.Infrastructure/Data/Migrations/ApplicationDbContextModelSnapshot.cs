@@ -22,50 +22,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("CodeLearning.Core.Entities.Certificate", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CertificateUrl")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("CourseId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("NOW()");
-
-                    b.Property<DateTimeOffset>("IssuedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("StudentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("NOW()");
-
-                    b.Property<Guid>("VerificationCode")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CourseId");
-
-                    b.HasIndex("StudentId");
-
-                    b.HasIndex("VerificationCode")
-                        .IsUnique();
-
-                    b.ToTable("Certificates");
-                });
-
             modelBuilder.Entity("CodeLearning.Core.Entities.Chapter", b =>
                 {
                     b.Property<Guid>("Id")
@@ -97,46 +53,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                     b.HasIndex("CourseId");
 
                     b.ToTable("Chapters");
-                });
-
-            modelBuilder.Entity("CodeLearning.Core.Entities.Comment", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("BlockId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("NOW()");
-
-                    b.Property<Guid?>("ParentCommentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("NOW()");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BlockId");
-
-                    b.HasIndex("ParentCommentId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("Comments");
                 });
 
             modelBuilder.Entity("CodeLearning.Core.Entities.Course", b =>
@@ -552,7 +468,8 @@ namespace CodeLearning.Infrastructure.Data.Migrations
 
                     b.HasIndex("LanguageId");
 
-                    b.HasIndex("ProblemId");
+                    b.HasIndex("ProblemId", "LanguageId")
+                        .IsUnique();
 
                     b.ToTable("StarterCodes");
                 });
@@ -811,9 +728,10 @@ namespace CodeLearning.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SubmissionId");
-
                     b.HasIndex("TestCaseId");
+
+                    b.HasIndex("SubmissionId", "TestCaseId")
+                        .IsUnique();
 
                     b.ToTable("SubmissionTestResults");
                 });
@@ -1375,25 +1293,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                     b.ToTable("UserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("CodeLearning.Core.Entities.Certificate", b =>
-                {
-                    b.HasOne("CodeLearning.Core.Entities.Course", "Course")
-                        .WithMany("Certificates")
-                        .HasForeignKey("CourseId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("CodeLearning.Core.Entities.User", "Student")
-                        .WithMany("Certificates")
-                        .HasForeignKey("StudentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Course");
-
-                    b.Navigation("Student");
-                });
-
             modelBuilder.Entity("CodeLearning.Core.Entities.Chapter", b =>
                 {
                     b.HasOne("CodeLearning.Core.Entities.Course", "Course")
@@ -1403,32 +1302,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Course");
-                });
-
-            modelBuilder.Entity("CodeLearning.Core.Entities.Comment", b =>
-                {
-                    b.HasOne("CodeLearning.Core.Entities.CourseBlock", "Block")
-                        .WithMany("Comments")
-                        .HasForeignKey("BlockId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CodeLearning.Core.Entities.Comment", "ParentComment")
-                        .WithMany("Replies")
-                        .HasForeignKey("ParentCommentId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.HasOne("CodeLearning.Core.Entities.User", "User")
-                        .WithMany("Comments")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Block");
-
-                    b.Navigation("ParentComment");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("CodeLearning.Core.Entities.Course", b =>
@@ -1745,15 +1618,8 @@ namespace CodeLearning.Infrastructure.Data.Migrations
                     b.Navigation("Subchapters");
                 });
 
-            modelBuilder.Entity("CodeLearning.Core.Entities.Comment", b =>
-                {
-                    b.Navigation("Replies");
-                });
-
             modelBuilder.Entity("CodeLearning.Core.Entities.Course", b =>
                 {
-                    b.Navigation("Certificates");
-
                     b.Navigation("Chapters");
 
                     b.Navigation("StudentProgress");
@@ -1761,8 +1627,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("CodeLearning.Core.Entities.CourseBlock", b =>
                 {
-                    b.Navigation("Comments");
-
                     b.Navigation("StudentProgress");
                 });
 
@@ -1830,10 +1694,6 @@ namespace CodeLearning.Infrastructure.Data.Migrations
             modelBuilder.Entity("CodeLearning.Core.Entities.User", b =>
                 {
                     b.Navigation("BlockProgress");
-
-                    b.Navigation("Certificates");
-
-                    b.Navigation("Comments");
 
                     b.Navigation("CourseProgress");
 

@@ -1,0 +1,56 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["src/frontend/codelearning-frontend/**", ".github/workflows/frontend-ci.yml"]
+  pull_request:
+    branches: ["main"]
+    paths: ["src/frontend/codelearning-frontend/**", ".github/workflows/frontend-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ./src/frontend/codelearning-frontend
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: src/frontend/codelearning-frontend/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build
+      run: npx ng build --configuration production
+
+    - name: Test
+      run: npx ng test --watch=false
+
+  docker-image:
+    name: Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Build image
+      run: docker build --target final --tag codelearningfrontend:ci .

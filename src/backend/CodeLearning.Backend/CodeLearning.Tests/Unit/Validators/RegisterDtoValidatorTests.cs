@@ -66,6 +66,7 @@ public class RegisterDtoValidatorTests
     [InlineData("12345678")]
     [InlineData("password")]
     [InlineData("PASSWORD")]
+    [InlineData("PASSWORD123")] // no lowercase letter: Identity requires one too
     public void Validate_WeakPassword_ShouldFail(string password)
     {
         // Arrange

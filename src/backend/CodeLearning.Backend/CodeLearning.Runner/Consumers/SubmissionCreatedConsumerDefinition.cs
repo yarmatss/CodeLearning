@@ -28,7 +28,12 @@ public class SubmissionCreatedConsumerDefinition : ConsumerDefinition<Submission
 
         // The delay keeps a brief outage (Docker, database) from using up every attempt at once.
         // Once the attempts run out the message moves to the error queue and SubmissionFaultConsumer fails the submission
-        endpointConfigurator.UseMessageRetry(r => r.Interval(_maxDeliveryAttempts - 1, _retryDelay));
+        // Errors caused by the data itself (e.g. text PostgreSQL rejects) would fail every attempt, so they fault at once
+        endpointConfigurator.UseMessageRetry(r =>
+        {
+            r.Interval(_maxDeliveryAttempts - 1, _retryDelay);
+            r.Ignore<Exception>(NonRetryableErrors.IsNonRetryable);
+        });
 
         if (endpointConfigurator is IRabbitMqReceiveEndpointConfigurator rabbitMq)
         {

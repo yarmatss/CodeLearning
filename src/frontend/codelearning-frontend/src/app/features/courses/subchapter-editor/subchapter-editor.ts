@@ -1,22 +1,26 @@
-import { ChangeDetectionStrategy, Component, inject, signal, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal, OnInit } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, FormGroup, FormArray, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { 
-  BlockService, 
-  CreateTheoryBlockRequest, 
-  CreateVideoBlockRequest, 
+import {
+  BlockService,
+  CreateTheoryBlockRequest,
+  CreateVideoBlockRequest,
   CreateProblemBlockRequest,
-  CreateQuizBlockRequest,
-  CreateQuizQuestionRequest,
-  CreateQuizAnswerRequest
+  CreateQuizBlockRequest
 } from '../../../core/services/block.service';
-import { ProblemService, ProblemResponse, CreateProblemRequest } from '../../../core/services/problem.service';
-import { Block, BlockType } from '../../../core/models/course.model';
+import { ProblemService, ProblemListItem } from '../../../core/services/problem.service';
+import { ChapterService } from '../../../core/services/chapter.service';
+import { CourseService } from '../../../core/services/course.service';
+import { Block, BlockType, Course, CourseStatus, Subchapter } from '../../../core/models/course.model';
+import { MAX_PAGE_SIZE } from '../../../core/models/paging.model';
+import { DialogService } from '../../../core/services/dialog.service';
+import { extractApiError } from '../../../core/utils/api-error';
+import { CourseLockBannerComponent } from '../../../shared/components/course-lock-banner/course-lock-banner.component';
 
 @Component({
   selector: 'app-subchapter-editor',
-  imports: [ReactiveFormsModule, RouterLink, CommonModule],
+  imports: [ReactiveFormsModule, RouterLink, CommonModule, CourseLockBannerComponent],
   templateUrl: './subchapter-editor.html',
   styleUrl: './subchapter-editor.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -27,6 +31,16 @@ export class SubchapterEditor implements OnInit {
   private readonly fb = inject(FormBuilder);
   private readonly blockService = inject(BlockService);
   private readonly problemService = inject(ProblemService);
+  private readonly chapterService = inject(ChapterService);
+  private readonly courseService = inject(CourseService);
+  private readonly dialogService = inject(DialogService);
+
+  readonly course = signal<Course | null>(null);
+  readonly subchapter = signal<Subchapter | null>(null);
+  readonly isRenaming = signal(false);
+  readonly renameForm: FormGroup;
+  // The API refuses every change to a published course
+  readonly isLocked = computed(() => this.course()?.status === CourseStatus.Published);
 
   readonly blocks = signal<Block[]>([]);
   readonly isLoading = signal(false);
@@ -36,9 +50,9 @@ export class SubchapterEditor implements OnInit {
   readonly isEditingBlock = signal(false);
   readonly editingBlockId = signal<string | null>(null);
   readonly selectedBlockType = signal<BlockType | null>(null);
-  
+
   // Problem-specific signals
-  readonly myProblems = signal<ProblemResponse[]>([]);
+  readonly myProblems = signal<ProblemListItem[]>([]);
   readonly isLoadingProblems = signal(false);
   readonly selectedProblemId = signal<string | null>(null);
 
@@ -66,16 +80,80 @@ export class SubchapterEditor implements OnInit {
       // Quiz fields
       questions: this.fb.array([])
     });
+
+    this.renameForm = this.fb.group({
+      title: ['', [Validators.required, Validators.minLength(3)]]
+    });
   }
 
   ngOnInit(): void {
     this.courseId = this.route.snapshot.paramMap.get('courseId') ?? '';
     this.chapterId = this.route.snapshot.paramMap.get('chapterId') ?? '';
     this.subchapterId = this.route.snapshot.paramMap.get('subchapterId') ?? '';
-    
+
     if (this.subchapterId) {
+      this.loadCourseAndSubchapter();
       this.loadBlocks();
     }
+  }
+
+  /** The subchapter has no endpoint of its own, so it is picked from its chapter's list. */
+  loadCourseAndSubchapter(): void {
+    this.courseService.getCourseById(this.courseId).subscribe({
+      next: (course) => this.course.set(course),
+      error: (error: unknown) => this.errorMessage.set(extractApiError(error, 'Failed to load course'))
+    });
+    this.chapterService.getChapterSubchapters(this.chapterId).subscribe({
+      next: (subchapters) => {
+        const subchapter = subchapters.find(s => s.id === this.subchapterId) ?? null;
+        this.subchapter.set(subchapter);
+        if (!subchapter) {
+          this.errorMessage.set('Subchapter not found');
+        }
+      },
+      error: (error: unknown) => this.errorMessage.set(extractApiError(error, 'Failed to load subchapter'))
+    });
+  }
+
+  onUnpublished(course: Course): void {
+    this.course.set(course);
+  }
+
+  startRename(): void {
+    this.renameForm.reset({ title: this.subchapter()?.title ?? '' });
+    this.isRenaming.set(true);
+  }
+
+  cancelRename(): void {
+    this.isRenaming.set(false);
+  }
+
+  saveRename(): void {
+    if (this.renameForm.invalid) {
+      this.renameForm.markAllAsTouched();
+      return;
+    }
+
+    this.errorMessage.set('');
+    const title = (this.renameForm.value.title as string).trim();
+    this.chapterService.renameSubchapter(this.chapterId, this.subchapterId, { title }).subscribe({
+      next: (subchapter) => {
+        this.subchapter.set(subchapter);
+        this.isRenaming.set(false);
+        this.successMessage.set('Subchapter renamed');
+        setTimeout(() => this.successMessage.set(''), 3000);
+      },
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to rename subchapter'));
+      }
+    });
+  }
+
+  /** Opens the problem's own editor (test cases, starter code), coming back here afterwards. */
+  editProblem(problemId: string): void {
+    this.router.navigate(['/problems', problemId, 'edit'], {
+      queryParams: { returnUrl: this.getCurrentUrl() }
+    });
   }
 
   getCurrentUrl(): string {
@@ -85,8 +163,9 @@ export class SubchapterEditor implements OnInit {
   startEditBlock(block: Block): void {
     this.isEditingBlock.set(true);
     this.editingBlockId.set(block.id);
-    this.selectedBlockType.set(block.type);
     this.isAddingBlock.set(true); // Reuse the same form UI
+    this.blockForm.reset();
+    this.questions.clear();
 
     // Populate form based on block type
     this.blockForm.patchValue({
@@ -94,7 +173,11 @@ export class SubchapterEditor implements OnInit {
       type: block.type
     });
 
-    if (block.type === BlockType.Theory && block.theoryContent) {
+    if (block.type === BlockType.Problem && block.problem) {
+      // The block's title and which problem it shows; the problem itself is edited on its own page
+      this.blockForm.patchValue({ problemId: block.problem.id });
+      this.selectedProblemId.set(block.problem.id);
+    } else if (block.type === BlockType.Theory && block.theoryContent) {
       this.blockForm.patchValue({ theoryContent: block.theoryContent.content });
     } else if (block.type === BlockType.Video && block.videoContent) {
       this.blockForm.patchValue({ videoUrl: block.videoContent.videoUrl });
@@ -116,12 +199,11 @@ export class SubchapterEditor implements OnInit {
         });
         this.questions.push(questionGroup);
       });
-    } else if (block.type === BlockType.Problem && block.problem) {
-      // Redirect to problem edit page instead of showing the form
-      this.router.navigate(['/problems', block.problem.id, 'edit'], {
-        queryParams: { returnUrl: this.getCurrentUrl() }
-      });
     }
+
+    // The form is shared by every block type, so the validators of the type edited before
+    // must be replaced by this block's (called after the questions exist, so no blank one is added)
+    this.onBlockTypeChange(block.type);
   }
 
   cancelEdit(): void {
@@ -137,49 +219,49 @@ export class SubchapterEditor implements OnInit {
         this.blocks.set(blocks);
         this.isLoading.set(false);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to load blocks');
+        this.errorMessage.set(extractApiError(error, 'Failed to load blocks'));
       }
     });
   }
 
   toggleAddBlock(): void {
     this.isAddingBlock.update(v => !v);
-    if (!this.isAddingBlock()) {
-      this.blockForm.reset();
-      this.questions.clear();
-      this.selectedBlockType.set(null);
-      this.selectedProblemId.set(null);
-    }
+    // Start from a clean form either way: closing discards the draft, opening must not inherit
+    // the values or validators of the block edited before
+    this.blockForm.reset();
+    this.questions.clear();
+    this.selectedProblemId.set(null);
+    this.onBlockTypeChange(null);
   }
 
-  onBlockTypeChange(type: BlockType): void {
+  onBlockTypeChange(type: BlockType | null): void {
     this.selectedBlockType.set(type);
     this.blockForm.patchValue({ type });
-    
+
     // Clear validators for all type-specific fields first
     this.blockForm.get('theoryContent')?.clearValidators();
     this.blockForm.get('videoUrl')?.clearValidators();
     this.blockForm.get('problemId')?.clearValidators();
-    
+
     // Set validators based on selected type
     if (type === BlockType.Theory) {
       this.blockForm.get('theoryContent')?.setValidators([Validators.required]);
     } else if (type === BlockType.Video) {
       this.blockForm.get('videoUrl')?.setValidators([Validators.required]);
     }
-    
+
     // Update validity
     this.blockForm.get('theoryContent')?.updateValueAndValidity();
     this.blockForm.get('videoUrl')?.updateValueAndValidity();
     this.blockForm.get('problemId')?.updateValueAndValidity();
-    
+
     // Load teacher's problems when Problem type is selected
     if (type === BlockType.Problem && this.myProblems().length === 0) {
       this.loadMyProblems();
     }
-    
+
     // Add initial question when Quiz type is selected
     if (type === BlockType.Quiz && this.questions.length === 0) {
       this.addQuestion();
@@ -188,14 +270,15 @@ export class SubchapterEditor implements OnInit {
 
   loadMyProblems(): void {
     this.isLoadingProblems.set(true);
-    this.problemService.getMyProblems().subscribe({
-      next: (problems) => {
-        this.myProblems.set(problems);
+    // The largest page the API serves; a teacher with more problems can search on the Problems page
+    this.problemService.getMyProblems({ page: 1, pageSize: MAX_PAGE_SIZE }).subscribe({
+      next: (page) => {
+        this.myProblems.set(page.items);
         this.isLoadingProblems.set(false);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoadingProblems.set(false);
-        this.errorMessage.set(error.error?.detail || 'Failed to load problems');
+        this.errorMessage.set(extractApiError(error, 'Failed to load problems'));
       }
     });
   }
@@ -240,15 +323,12 @@ export class SubchapterEditor implements OnInit {
   onQuestionTypeChange(questionIndex: number, type: string): void {
     const questionGroup = this.questions.at(questionIndex);
     questionGroup.patchValue({ type });
-    
-    console.log(`Question ${questionIndex} type changed to:`, type);
-    console.log('Question form value:', questionGroup.value);
-    
+
     // For TrueFalse, ensure exactly 2 answers (True/False)
     if (type === 'TrueFalse') {
       const answersArray = this.getAnswers(questionIndex);
       answersArray.clear();
-      
+
       const trueAnswer = this.fb.group({
         answerText: ['True'],
         isCorrect: [false]
@@ -260,7 +340,7 @@ export class SubchapterEditor implements OnInit {
       answersArray.push(trueAnswer);
       answersArray.push(falseAnswer);
     }
-    
+
     // For SingleChoice, ensure only one answer is marked correct
     if (type === 'SingleChoice') {
       this.ensureSingleCorrectAnswer(questionIndex);
@@ -269,12 +349,12 @@ export class SubchapterEditor implements OnInit {
 
   onSingleChoiceChange(questionIndex: number, answerIndex: number): void {
     const answersArray = this.getAnswers(questionIndex);
-    
+
     // Uncheck all answers first
     for (let i = 0; i < answersArray.length; i++) {
       answersArray.at(i).patchValue({ isCorrect: false });
     }
-    
+
     // Check only the selected answer
     answersArray.at(answerIndex).patchValue({ isCorrect: true });
   }
@@ -282,7 +362,7 @@ export class SubchapterEditor implements OnInit {
   private ensureSingleCorrectAnswer(questionIndex: number): void {
     const answersArray = this.getAnswers(questionIndex);
     let foundCorrect = false;
-    
+
     for (let i = 0; i < answersArray.length; i++) {
       const isCorrect = answersArray.at(i).get('isCorrect')?.value;
       if (isCorrect && !foundCorrect) {
@@ -301,10 +381,10 @@ export class SubchapterEditor implements OnInit {
   addBlock(): void {
     const isEditing = this.isEditingBlock();
     const blockId = this.editingBlockId();
-    
+
     // For Quiz type, validate questions separately
     const formValue = this.blockForm.value;
-    
+
     if (formValue.type === BlockType.Quiz) {
       // Only validate title and type for Quiz
       if (!formValue.title || formValue.title.length < 3) {
@@ -334,7 +414,7 @@ export class SubchapterEditor implements OnInit {
           ? this.blockService.updateTheoryBlock(this.subchapterId, blockId, theoryRequest)
           : this.blockService.addTheoryBlock(this.subchapterId, theoryRequest);
         break;
-      
+
       case BlockType.Video:
         const videoRequest: CreateVideoBlockRequest = {
           title: formValue.title,
@@ -344,14 +424,14 @@ export class SubchapterEditor implements OnInit {
           ? this.blockService.updateVideoBlock(this.subchapterId, blockId, videoRequest)
           : this.blockService.addVideoBlock(this.subchapterId, videoRequest);
         break;
-      
+
       case BlockType.Quiz:
         // Validate questions
         if (this.questions.length === 0) {
           this.errorMessage.set('At least one question is required');
           return;
         }
-        
+
         // Validate each question has at least one correct answer
         for (let i = 0; i < this.questions.length; i++) {
           const answers = this.getAnswers(i);
@@ -359,14 +439,14 @@ export class SubchapterEditor implements OnInit {
             this.errorMessage.set(`Question ${i + 1} must have at least 2 answers`);
             return;
           }
-          
+
           const hasCorrectAnswer = answers.controls.some(a => a.get('isCorrect')?.value === true);
           if (!hasCorrectAnswer) {
             this.errorMessage.set(`Question ${i + 1} must have at least one correct answer`);
             return;
           }
         }
-        
+
         const quizRequest: CreateQuizBlockRequest = {
           title: formValue.title,
           questions: this.questions.value.map((q: any) => ({
@@ -384,14 +464,14 @@ export class SubchapterEditor implements OnInit {
           ? this.blockService.updateQuizBlock(this.subchapterId, blockId, quizRequest)
           : this.blockService.addQuizBlock(this.subchapterId, quizRequest);
         break;
-      
+
       case BlockType.Problem:
         const problemId = this.selectedProblemId() || formValue.problemId;
         if (!problemId) {
           this.errorMessage.set('Please select a problem');
           return;
         }
-        
+
         const problemRequest: CreateProblemBlockRequest = {
           title: formValue.title,
           problemId: problemId
@@ -400,14 +480,14 @@ export class SubchapterEditor implements OnInit {
           ? this.blockService.updateProblemBlock(this.subchapterId, blockId, problemRequest)
           : this.blockService.addProblemBlock(this.subchapterId, problemRequest);
         break;
-      
+
       default:
         this.errorMessage.set('Invalid block type');
         return;
     }
 
     request$.subscribe({
-      next: (block) => {
+      next: () => {
         this.blockForm.reset();
         this.questions.clear();
         this.isAddingBlock.set(false);
@@ -419,8 +499,8 @@ export class SubchapterEditor implements OnInit {
         // Reload blocks to get complete data from server
         this.loadBlocks();
       },
-      error: (error: any) => {
-        this.errorMessage.set(this.extractErrorMessage(error));
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to save block'));
       }
     });
   }
@@ -433,8 +513,8 @@ export class SubchapterEditor implements OnInit {
       next: () => {
         this.loadBlocks();
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder block');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to reorder block'));
       }
     });
   }
@@ -448,14 +528,21 @@ export class SubchapterEditor implements OnInit {
       next: () => {
         this.loadBlocks();
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to reorder block');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to reorder block'));
       }
     });
   }
 
-  deleteBlock(blockId: string): void {
-    if (!confirm('Are you sure you want to delete this block?')) {
+  async deleteBlock(blockId: string): Promise<void> {
+    const { confirmed } = await this.dialogService.confirm({
+      title: 'Delete block?',
+      message: 'Are you sure you want to delete this block? This cannot be undone.',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      type: 'warning'
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -465,8 +552,8 @@ export class SubchapterEditor implements OnInit {
         this.successMessage.set('Block deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to delete block');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to delete block'));
       }
     });
   }
@@ -494,49 +581,5 @@ export class SubchapterEditor implements OnInit {
   getTotalQuizPoints(quiz: any): number {
     if (!quiz || !quiz.questions) return 0;
     return quiz.questions.reduce((sum: number, q: any) => sum + (q.points || 0), 0);
-  }
-
-  private extractErrorMessage(error: any): string {
-    // Check for detailed validation errors
-    if (error.error?.errors) {
-      const errorMessages: string[] = [];
-      Object.keys(error.error.errors).forEach(key => {
-        const messages = error.error.errors[key];
-        if (Array.isArray(messages)) {
-          // Parse field path to make it more readable
-          const fieldPath = this.formatFieldPath(key);
-          messages.forEach(msg => {
-            errorMessages.push(`${fieldPath}: ${msg}`);
-          });
-        }
-      });
-      if (errorMessages.length > 0) {
-        return errorMessages.join('\n');
-      }
-    }
-    // Fallback to generic message
-    return error.error?.detail || error.error?.message || 'An error occurred';
-  }
-
-  private formatFieldPath(path: string): string {
-    // Convert "questions[0].Answers[1].AnswerText" to "Question 1, Answer 2"
-    const questionMatch = path.match(/questions\[(\d+)\]/);
-    const answerMatch = path.match(/Answers\[(\d+)\]/);
-    const fieldMatch = path.match(/\.([^.\[]+)$/);
-
-    let result = '';
-    if (questionMatch) {
-      const questionNum = parseInt(questionMatch[1]) + 1;
-      result += `Question ${questionNum}`;
-    }
-    if (answerMatch) {
-      const answerNum = parseInt(answerMatch[1]) + 1;
-      result += result ? `, Answer ${answerNum}` : `Answer ${answerNum}`;
-    }
-    if (fieldMatch && !answerMatch && !questionMatch) {
-      result = fieldMatch[1];
-    }
-
-    return result || path;
   }
 }

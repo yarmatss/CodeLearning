@@ -11,34 +11,30 @@ namespace CodeLearning.Api.Controllers;
 public class EnrollmentController(IEnrollmentService enrollmentService) : ControllerBase
 {
     [HttpGet("my-courses")]
-    public async Task<IActionResult> GetMyCourses()
+    public async Task<IActionResult> GetMyCourses([FromQuery] int? page, [FromQuery] int? pageSize)
     {
-        var studentId = User.GetRequiredUserId();
-        var courses = await enrollmentService.GetEnrolledCoursesAsync(studentId);
+        var courses = await enrollmentService.GetEnrolledCoursesAsync(User.GetRequiredUserId(), page, pageSize);
         return Ok(courses);
     }
 
-    [HttpPost("courses/{courseId}")]
+    [HttpPost("courses/{courseId:guid}")]
     public async Task<IActionResult> Enroll(Guid courseId)
     {
-        var studentId = User.GetRequiredUserId();
-        var result = await enrollmentService.EnrollAsync(courseId, studentId);
+        var result = await enrollmentService.EnrollAsync(courseId, User.GetRequiredUserId());
         return Ok(result);
     }
 
-    [HttpDelete("courses/{courseId}")]
+    [HttpDelete("courses/{courseId:guid}")]
     public async Task<IActionResult> Unenroll(Guid courseId)
     {
-        var studentId = User.GetRequiredUserId();
-        await enrollmentService.UnenrollAsync(courseId, studentId);
+        await enrollmentService.UnenrollAsync(courseId, User.GetRequiredUserId());
         return Ok(new { message = "Successfully unenrolled from course" });
     }
 
-    [HttpGet("courses/{courseId}/status")]
+    [HttpGet("courses/{courseId:guid}/status")]
     public async Task<IActionResult> GetEnrollmentStatus(Guid courseId)
     {
-        var studentId = User.GetRequiredUserId();
-        var isEnrolled = await enrollmentService.IsEnrolledAsync(courseId, studentId);
+        var isEnrolled = await enrollmentService.IsEnrolledAsync(courseId, User.GetRequiredUserId());
         return Ok(new { isEnrolled });
     }
 }

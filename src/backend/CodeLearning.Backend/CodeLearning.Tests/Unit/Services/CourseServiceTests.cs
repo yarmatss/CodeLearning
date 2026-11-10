@@ -67,8 +67,9 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         result.ChaptersCount.Should().Be(0);
         result.TotalBlocks.Should().Be(0);
 
-        // Verify in database
-        var courseInDb = await _fixture.DbContext.Courses.FindAsync(result.Id);
+        // Verify in database through a fresh context, not the tracked entities
+        await using var verifyContext = _fixture.CreateDbContext();
+        var courseInDb = await verifyContext.Courses.FindAsync(result.Id);
         courseInDb.Should().NotBeNull();
         courseInDb!.Title.Should().Be(dto.Title);
     }
@@ -179,8 +180,9 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         result.Title.Should().Be(updateDto.Title);
         result.Description.Should().Be(updateDto.Description);
 
-        // Verify in database
-        var updatedCourse = await _fixture.DbContext.Courses.FindAsync(course.Id);
+        // Verify in database through a fresh context, not the tracked entities
+        await using var verifyContext = _fixture.CreateDbContext();
+        var updatedCourse = await verifyContext.Courses.FindAsync(course.Id);
         updatedCourse!.Title.Should().Be(updateDto.Title);
     }
 
@@ -301,7 +303,8 @@ public class CourseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
         await _courseService.DeleteCourseAsync(course.Id, _testInstructor.Id);
 
         // Assert
-        var deletedCourse = await _fixture.DbContext.Courses.FindAsync(course.Id);
+        await using var verifyContext = _fixture.CreateDbContext();
+        var deletedCourse = await verifyContext.Courses.FindAsync(course.Id);
         deletedCourse.Should().BeNull();
     }
 

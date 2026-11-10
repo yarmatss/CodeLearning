@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -15,13 +16,28 @@ public static class ContainerCreateValidator
 {
     private static readonly HashSet<string> TopLevelFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Image", "Cmd", "WorkingDir", "User", "Labels", "HostConfig"
+        "Image", "Cmd", "WorkingDir", "User", "Labels", "HostConfig",
+        // The Runner streams the job archive on stdin
+        "AttachStdin", "OpenStdin", "StdinOnce"
     };
 
     private static readonly HashSet<string> HostConfigFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "NetworkMode", "Memory", "MemorySwap", "NanoCpus", "PidsLimit", "Tmpfs",
-        "CapDrop", "SecurityOpt", "Ulimits", "AutoRemove", "Runtime"
+        "CapDrop", "CapAdd", "SecurityOpt", "Ulimits", "AutoRemove", "Runtime", "ReadonlyRootfs"
+    };
+
+    // What a uid 0 sandbox may add back after dropping ALL: switching to the student user (SETUID, SETGID) and
+    // signalling its processes (KILL). None of them reaches past the container's own namespaces
+    private static readonly HashSet<string> RootCapabilities = new(StringComparer.Ordinal)
+    {
+        "SETUID", "SETGID", "KILL"
+    };
+
+    // Mount options a tmpfs may carry: a size cap is required, the rest only restrict
+    private static readonly HashSet<string> AllowedTmpfsOptions = new(StringComparer.Ordinal)
+    {
+        "size", "mode", "uid", "gid", "noexec", "nosuid", "nodev", "rw"
     };
 
     private static readonly HashSet<string> AllowedSecurityOptions = new(StringComparer.Ordinal)
@@ -102,7 +118,7 @@ public static class ContainerCreateValidator
         }
 
         return request.HostConfig is { } host
-            ? CheckIsolation(host, options) ?? CheckLimits(host, options)
+            ? CheckUser(request.User, host, options) ?? CheckIsolation(host, options) ?? CheckLimits(host, options)
             : "HostConfig is required";
     }
 
@@ -111,11 +127,6 @@ public static class ContainerCreateValidator
         if (request.Image is null || !options.AllowedImages.Contains(request.Image, StringComparer.Ordinal))
         {
             return "Image is not allowed";
-        }
-
-        if (!IsNonRootUser(request.User))
-        {
-            return "Container must run as a non-root user";
         }
 
         if (request.Labels is null
@@ -151,7 +162,94 @@ public static class ContainerCreateValidator
             return "Runtime is not allowed";
         }
 
+        if (host.ReadonlyRootfs != true)
+        {
+            return "ReadonlyRootfs is required";
+        }
+
         return null;
+    }
+
+    // Exactly the configured sandbox user with no capabilities at all, or uid 0 with every capability dropped
+    // except the ones needed to drop to that user. Uids are compared as numbers ("00" is root), and names are
+    // refused because the image's /etc/passwd decides what they mean
+    private static string? CheckUser(string? user, CreateHostConfig host, GuardOptions options)
+    {
+        if (!TryParseUser(user, out var uid, out var gid))
+        {
+            return "User must be a numeric uid:gid";
+        }
+
+        var capAdd = (host.CapAdd ?? []).Select(NormalizeCapability).ToList();
+
+        if (uid == options.SandboxUid)
+        {
+            if (gid != options.SandboxGid)
+            {
+                return $"User must be {options.SandboxUid}:{options.SandboxGid}";
+            }
+
+            return capAdd.Count == 0 ? null : "CapAdd is not allowed for the sandbox user";
+        }
+
+        if (uid == 0 && gid is null or 0)
+        {
+            if (host.CapDrop is null || !host.CapDrop.Contains("ALL", StringComparer.OrdinalIgnoreCase))
+            {
+                return "Root requires CapDrop ALL";
+            }
+
+            return capAdd.All(RootCapabilities.Contains)
+                ? null
+                : "Root may only add SETUID, SETGID and KILL";
+        }
+
+        return $"User must be {options.SandboxUid}:{options.SandboxGid} or 0:0";
+    }
+
+    public static bool TryParseUser(string? user, out long uid, out long? gid)
+    {
+        uid = -1;
+        gid = null;
+
+        if (string.IsNullOrEmpty(user))
+        {
+            return false;
+        }
+
+        var parts = user.Split(':');
+        if (parts.Length > 2 || !TryParseId(parts[0], out uid))
+        {
+            return false;
+        }
+
+        if (parts.Length == 2)
+        {
+            if (!TryParseId(parts[1], out var parsedGid))
+            {
+                return false;
+            }
+
+            gid = parsedGid;
+        }
+
+        return true;
+    }
+
+    // Digits only: no sign, whitespace or names; leading zeros are allowed and parsed away, as Docker does
+    private static bool TryParseId(string value, out long id)
+    {
+        id = -1;
+        return value.Length is > 0 and <= 10
+               && value.All(char.IsAsciiDigit)
+               && long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id)
+               && id <= uint.MaxValue;
+    }
+
+    private static string NormalizeCapability(string capability)
+    {
+        var upper = capability.Trim().ToUpperInvariant();
+        return upper.StartsWith("CAP_", StringComparison.Ordinal) ? upper["CAP_".Length..] : upper;
     }
 
     // Resource limits, so one submission cannot exhaust the host
@@ -190,9 +288,20 @@ public static class ContainerCreateValidator
     // Each tmpfs is RAM-backed, so it needs an explicit size within the cap
     private static string? CheckTmpfs(Dictionary<string, string>? tmpfs, GuardOptions options)
     {
-        foreach (var mountOptions in tmpfs?.Values ?? Enumerable.Empty<string>())
+        if (tmpfs is null || tmpfs.Count == 0)
         {
-            var size = mountOptions.Split(',', StringSplitOptions.TrimEntries)
+            return "Tmpfs is required for the writable paths of a read-only container";
+        }
+
+        foreach (var mountOptions in tmpfs.Values)
+        {
+            var parsed = mountOptions.Split(',', StringSplitOptions.TrimEntries);
+            if (parsed.Any(o => !AllowedTmpfsOptions.Contains(o.Split('=', 2)[0])))
+            {
+                return "Tmpfs option is not allowed";
+            }
+
+            var size = parsed
                 .FirstOrDefault(o => o.StartsWith("size=", StringComparison.Ordinal))?["size=".Length..];
 
             if (size is null || !TryParseSizeMb(size, out var sizeMb) || sizeMb > options.MaxTmpfsSizeMb)
@@ -228,17 +337,6 @@ public static class ContainerCreateValidator
 
         sizeMb = value / divisor;
         return true;
-    }
-
-    private static bool IsNonRootUser(string? user)
-    {
-        if (string.IsNullOrWhiteSpace(user))
-        {
-            return false;
-        }
-
-        var parts = user.Split(':');
-        return parts.Length <= 2 && parts.All(p => p.Length > 0 && p is not "0" and not "root");
     }
 
     // Recursive, case-insensitive: "Privileged" and "privileged" are the same field to Docker
@@ -307,6 +405,9 @@ public sealed class CreateContainerRequest
     public List<string>? Cmd { get; set; }
     public string? WorkingDir { get; set; }
     public string? User { get; set; }
+    public bool? AttachStdin { get; set; }
+    public bool? OpenStdin { get; set; }
+    public bool? StdinOnce { get; set; }
     public Dictionary<string, string>? Labels { get; set; }
     public CreateHostConfig? HostConfig { get; set; }
 }
@@ -320,6 +421,8 @@ public sealed class CreateHostConfig
     public long? PidsLimit { get; set; }
     public Dictionary<string, string>? Tmpfs { get; set; }
     public List<string>? CapDrop { get; set; }
+    public List<string>? CapAdd { get; set; }
+    public bool? ReadonlyRootfs { get; set; }
     public List<string>? SecurityOpt { get; set; }
     public List<CreateUlimit>? Ulimits { get; set; }
     public bool? AutoRemove { get; set; }

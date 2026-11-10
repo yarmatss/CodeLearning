@@ -1,3 +1,4 @@
+using CodeLearning.Api.Middleware;
 using CodeLearning.Application.Settings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -12,6 +13,7 @@ public static class RateLimitingExtensions
 {
     public const string SubmissionsPolicy = "submissions";
     public const string AuthPolicy = "auth";
+    public const string LoginPolicy = "login";
 
     extension(IServiceCollection services)
     {
@@ -37,41 +39,53 @@ public static class RateLimitingExtensions
                     var settings = httpContext.RequestServices
                         .GetRequiredService<IOptions<SubmissionRateLimitSettings>>().Value;
 
-                    return RateLimitPartition.GetFixedWindowLimiter(
-                        partitionKey: httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous",
-                        factory: _ => new FixedWindowRateLimiterOptions
-                        {
-                            PermitLimit = settings.PermitLimit,
-                            Window = TimeSpan.FromSeconds(settings.WindowSeconds),
-                            QueueLimit = 0
-                        });
+                    return FixedWindow(
+                        httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous",
+                        settings.PermitLimit,
+                        settings.WindowSeconds);
                 });
 
-                // Partition per client IP: these requests are anonymous, and this slows down password
-                // guessing and credential stuffing across many accounts
+                // Registration, per client IP (the real one when behind a trusted proxy, see ForwardedHeaders)
                 options.AddPolicy(AuthPolicy, httpContext =>
                 {
-                    var settings = httpContext.RequestServices
-                        .GetRequiredService<IOptions<AuthRateLimitSettings>>().Value;
+                    var settings = GetAuthSettings(httpContext);
+                    return FixedWindow(ClientIp(httpContext), settings.PermitLimit, settings.WindowSeconds);
+                });
 
-                    return RateLimitPartition.GetFixedWindowLimiter(
-                        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                        factory: _ => new FixedWindowRateLimiterOptions
-                        {
-                            PermitLimit = settings.PermitLimit,
-                            Window = TimeSpan.FromSeconds(settings.WindowSeconds),
-                            QueueLimit = 0
-                        });
+                // Login, per client IP and normalized email: guessing one account's password is slowed down
+                // without letting one noisy address lock everyone behind a shared IP out of their accounts
+                options.AddPolicy(LoginPolicy, httpContext =>
+                {
+                    var settings = GetAuthSettings(httpContext);
+                    var email = httpContext.Items[LoginRateLimitKeyMiddleware.EmailItemKey] as string ?? string.Empty;
+
+                    return FixedWindow($"{ClientIp(httpContext)}|{email}", settings.PermitLimit, settings.WindowSeconds);
+                });
+
+                // Plus a looser per-IP ceiling on login across all emails, against password spraying.
+                // The global limiter runs before endpoint policies; every other endpoint is unlimited here
+                options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+                {
+                    if (PolicyName(httpContext) != LoginPolicy)
+                    {
+                        return RateLimitPartition.GetNoLimiter(string.Empty);
+                    }
+
+                    var settings = GetAuthSettings(httpContext);
+                    return FixedWindow(ClientIp(httpContext), settings.EffectiveLoginPerIpPermitLimit, settings.WindowSeconds);
                 });
 
                 options.OnRejected = async (context, _) =>
                 {
                     var httpContext = context.HttpContext;
 
-                    var policy = httpContext.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
-                    var detail = policy == AuthPolicy
-                        ? "Too many attempts. Please wait a moment and try again."
-                        : "Too many submissions. Please wait a moment before submitting again.";
+                    var detail = PolicyName(httpContext) switch
+                    {
+                        LoginPolicy => "Too many login attempts. Please wait a moment and try again.",
+                        AuthPolicy => "Too many registration attempts. Please wait a moment and try again.",
+                        SubmissionsPolicy => "Too many submissions. Please wait a moment before submitting again.",
+                        _ => "Too many requests. Please wait a moment and try again."
+                    };
 
                     if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
                     {
@@ -99,4 +113,21 @@ public static class RateLimitingExtensions
             return services;
         }
     }
+
+    private static RateLimitPartition<string> FixedWindow(string key, int permitLimit, int windowSeconds) =>
+        RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = permitLimit,
+            Window = TimeSpan.FromSeconds(windowSeconds),
+            QueueLimit = 0
+        });
+
+    private static AuthRateLimitSettings GetAuthSettings(HttpContext httpContext) =>
+        httpContext.RequestServices.GetRequiredService<IOptions<AuthRateLimitSettings>>().Value;
+
+    private static string ClientIp(HttpContext httpContext) =>
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    private static string? PolicyName(HttpContext httpContext) =>
+        httpContext.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
 }

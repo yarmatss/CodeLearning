@@ -14,8 +14,11 @@ public class GuardOptions
     // Extra OCI runtimes (e.g. "runsc" for gVisor); the daemon's default runtime is always allowed
     public string[] AllowedRuntimes { get; set; } = [];
 
-    // The only directory the Runner may upload the workspace to
-    public string WorkspacePath { get; set; } = "/app";
+    // The unprivileged user submitted code runs as. A container is created either as exactly this user,
+    // or as uid 0 with all capabilities dropped except those needed to switch to it (see ContainerCreateValidator)
+    public long SandboxUid { get; set; } = 65534;
+
+    public long SandboxGid { get; set; } = 65534;
 
     // Ceilings for a sandbox's resources, above the largest per-language limit the Runner requests
     public long MaxMemoryBytes { get; set; } = 1024L * 1024 * 1024;

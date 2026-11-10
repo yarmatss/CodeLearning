@@ -68,22 +68,39 @@ public static class DependencyInjection
         // listed here (none by default), so clients cannot pick their own address to dodge the limit
         public IServiceCollection AddTrustedForwardedHeaders(IConfiguration configuration)
         {
-            var knownProxies = configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
-            var knownNetworks = configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [];
+            var knownProxies = ReadList(configuration, "ForwardedHeaders:KnownProxies");
+            var knownNetworks = ReadList(configuration, "ForwardedHeaders:KnownNetworks");
 
-            services.Configure<ForwardedHeadersOptions>(options =>
+            services.AddOptions<ForwardedHeadersOptions>().Configure<ILoggerFactory>((options, loggerFactory) =>
             {
+                var logger = loggerFactory.CreateLogger("CodeLearning.Api.ForwardedHeaders");
+
+                // One trusted hop: the nginx frontend proxying /api
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
                 options.ForwardLimit = 1;
 
                 foreach (var proxy in knownProxies)
                 {
-                    options.KnownProxies.Add(IPAddress.Parse(proxy));
+                    if (IPAddress.TryParse(proxy, out var address))
+                    {
+                        options.KnownProxies.Add(address);
+                    }
+                    else
+                    {
+                        logger.LogWarning("Ignoring invalid ForwardedHeaders:KnownProxies entry {Entry}", proxy);
+                    }
                 }
 
                 foreach (var network in knownNetworks)
                 {
-                    options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+                    if (System.Net.IPNetwork.TryParse(network, out var parsed))
+                    {
+                        options.KnownIPNetworks.Add(parsed);
+                    }
+                    else
+                    {
+                        logger.LogWarning("Ignoring invalid ForwardedHeaders:KnownNetworks entry {Entry} (expected CIDR, e.g. 172.28.0.0/24)", network);
+                    }
                 }
             });
 
@@ -104,21 +121,8 @@ public static class DependencyInjection
             })
             .AddJwtBearer(options =>
             {
-                options.Events = new JwtBearerEvents
-                {
-                    OnMessageReceived = context =>
-                    {
-                        var authHeader = context.Request.Headers.Authorization.ToString();
-                        if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
-                        {
-                            context.Token = authHeader.Substring("Bearer ".Length).Trim();
-                            return Task.CompletedTask;
-                        }
-
-                        context.Token = context.Request.Cookies["access_token"];
-                        return Task.CompletedTask;
-                    }
-                };
+                // Token selection and the revocation check both live in these events
+                options.Events = JwtBearerEventHandlers.Create();
             });
 
             services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -224,6 +228,21 @@ public static class DependencyInjection
         }
     }
 
+    // Accepts a JSON array or indexed keys (Section__0, Section__1) as well as one comma-separated
+    // value, which is the convenient form for a single environment variable in docker compose
+    private static string[] ReadList(IConfiguration configuration, string key)
+    {
+        var section = configuration.GetSection(key);
+        var values = section.GetChildren().Any()
+            ? section.Get<string[]>() ?? []
+            : section.Value?.Split(',') ?? [];
+
+        return values
+            .Select(v => v.Trim())
+            .Where(v => v.Length > 0)
+            .ToArray();
+    }
+
     extension(WebApplication app)
     {
         public WebApplication UseApiPipeline()
@@ -258,18 +277,21 @@ public static class DependencyInjection
 
             app.UseExceptionHandler();
 
-            if (!app.Environment.IsDevelopment())
+            // Off when TLS ends at a proxy that talks plain http to the API (compose sets Https:RedirectEnabled=false)
+            if (app.Configuration.GetValue("Https:RedirectEnabled", !app.Environment.IsDevelopment()))
             {
                 app.UseHttpsRedirection();
             }
 
             app.UseCors(FrontendCorsPolicy);
 
+            // Revoked access tokens are rejected inside authentication (JwtBearerEvents.OnTokenValidated)
             app.UseAuthentication();
-            app.UseMiddleware<JwtBlacklistMiddleware>();
             app.UseAuthorization();
 
-            // After authentication so the submissions policy can partition by user
+            // After authentication so the submissions policy can partition by user; the login policy
+            // partitions by IP and email, which this middleware reads from the body first
+            app.UseMiddleware<LoginRateLimitKeyMiddleware>();
             app.UseRateLimiter();
 
             app.MapHealthChecks("/health");

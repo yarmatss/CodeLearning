@@ -9,13 +9,13 @@ export interface Submission {
   score: number;
   totalTestCases: number;
   passedTestCases: number;
-  executionTimeMs: number;
-  memoryUsedKB: number;
+  executionTimeMs?: number | null;
+  memoryUsedKB?: number | null;
   compilationError?: string;
   runtimeError?: string;
   createdAt: Date;
   completedAt?: Date;
-  testResults: TestResult[];
+  testResults?: TestResult[] | null;
 }
 
 export enum SubmissionStatus {
@@ -31,22 +31,36 @@ export enum SubmissionStatus {
 export interface TestResult {
   testCaseId: string;
   status: TestResultStatus;
-  input: string;
-  expectedOutput: string;
-  actualOutput: string;
-  errorMessage?: string;
-  executionTimeMs: number;
-  memoryUsedKB: number;
+  input?: string | null;
+  expectedOutput?: string | null;
+  actualOutput?: string | null;
+  errorMessage?: string | null;
+  executionTimeMs?: number | null;
+  memoryUsedKB?: number | null;
   isPublic: boolean;
 }
 
+// Mirrors CodeLearning.Core.Enums.TestResultStatus (serialized as its number)
 export enum TestResultStatus {
-  Accepted = 1,
-  WrongAnswer = 2,
+  Passed = 1,
+  Failed = 2,
   RuntimeError = 3,
   TimeLimitExceeded = 4,
-  MemoryLimitExceeded = 5,
-  CompilationError = 6
+  MemoryLimitExceeded = 5
+}
+
+/** Statuses after which a submission no longer changes. */
+export const FINAL_SUBMISSION_STATUSES: readonly SubmissionStatus[] = [
+  SubmissionStatus.Completed,
+  SubmissionStatus.CompilationError,
+  SubmissionStatus.RuntimeError,
+  SubmissionStatus.TimeLimitExceeded,
+  SubmissionStatus.MemoryLimitExceeded
+];
+
+/** A submission that passed every test, which is what completes a problem block. */
+export function isAcceptedSubmission(submission: Pick<Submission, 'status' | 'score'>): boolean {
+  return submission.status === SubmissionStatus.Completed && submission.score === 100;
 }
 
 export interface SubmitCodeRequest {

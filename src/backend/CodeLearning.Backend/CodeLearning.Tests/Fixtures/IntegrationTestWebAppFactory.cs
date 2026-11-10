@@ -3,6 +3,9 @@ using MassTransit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using StackExchange.Redis;
 using System.Security.Cryptography;
@@ -15,6 +18,7 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
 {
     private readonly PostgreSqlContainer _postgresContainer;
     private readonly RedisContainer _redisContainer;
+    private string? _truncateSql;
 
     public IntegrationTestWebAppFactory()
     {
@@ -96,7 +100,24 @@ public class IntegrationTestWebAppFactory : WebApplicationFactory<Program>, IAsy
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Courses\", \"Chapters\", \"Subchapters\" CASCADE");
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Users\", \"UserRoles\", \"UserClaims\" CASCADE");
+        _truncateSql ??= BuildTruncateSql(db);
+
+        await db.Database.ExecuteSqlRawAsync(_truncateSql);
+    }
+
+    // Truncates every table in the EF model except those holding HasData seed rows (languages, tags),
+    // so new entities are reset without editing a hard-coded list
+    private static string BuildTruncateSql(ApplicationDbContext db)
+    {
+        var designTimeModel = db.GetService<IDesignTimeModel>().Model;
+        var sqlHelper = db.GetService<ISqlGenerationHelper>();
+
+        var tables = designTimeModel.GetEntityTypes()
+            .Where(e => e.GetTableName() is not null && !e.GetSeedData().Any())
+            .Select(e => sqlHelper.DelimitIdentifier(e.GetTableName()!, e.GetSchema()))
+            .Distinct()
+            .ToList();
+
+        return $"TRUNCATE TABLE {string.Join(", ", tables)} CASCADE";
     }
 }

@@ -16,19 +16,34 @@ services:
 
   runner:
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_ENVIRONMENT: Development
       Serilog__MinimumLevel__Default: "Debug"
 
   api:
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_HTTP_PORTS=8080
-      - ASPNETCORE_HTTPS_PORTS=8081
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ASPNETCORE_HTTPS_PORTS: "8081"
+    # Dev-only HTTPS with the user's ASP.NET dev certificate, loopback only
     ports:
-      - "8080"
-      - "8081"
+      - "127.0.0.1:5001:8081"
     volumes:
       - ${APPDATA}/Microsoft/UserSecrets:/home/app/.microsoft/usersecrets:ro
       - ${APPDATA}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro
       - ${APPDATA}/ASP.NET/Https:/home/app/.aspnet/https:ro
       - ${APPDATA}/ASP.NET/Https:/root/.aspnet/https:ro
+
+  # Angular dev server with live reload instead of the nginx image.
+  # Polling, because file events do not cross the bind mount from Windows/macOS hosts
+  frontend:
+    build:
+      target: dev
+    command: ["npx", "ng", "serve", "--host", "0.0.0.0", "--port", "4200", "--proxy-config", "proxy.conf.docker.json", "--poll", "2000"]
+    ports: !override
+      - "${FRONTEND_PORT:-4200}:4200"
+    volumes:
+      - ../../frontend/codelearning-frontend:/app
+      - /app/node_modules
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4200/"]
+      start_period: 120s

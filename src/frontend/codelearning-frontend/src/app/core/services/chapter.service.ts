@@ -1,7 +1,14 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Chapter, CreateChapterRequest, Subchapter, CreateSubchapterRequest } from '../models/course.model';
+import {
+  Chapter,
+  CreateChapterRequest,
+  RenameChapterRequest,
+  Subchapter,
+  CreateSubchapterRequest,
+  RenameSubchapterRequest
+} from '../models/course.model';
 
 @Injectable({
   providedIn: 'root'
@@ -16,6 +23,10 @@ export class ChapterService {
 
   addChapter(courseId: string, data: CreateChapterRequest): Observable<Chapter> {
     return this.http.post<Chapter>(`/api/courses/${courseId}/chapters`, data);
+  }
+
+  renameChapter(courseId: string, chapterId: string, data: RenameChapterRequest): Observable<Chapter> {
+    return this.http.put<Chapter>(`/api/courses/${courseId}/chapters/${chapterId}`, data);
   }
 
   updateChapterOrder(courseId: string, chapterId: string, newOrderIndex: number): Observable<Chapter> {
@@ -33,6 +44,10 @@ export class ChapterService {
 
   addSubchapter(chapterId: string, data: CreateSubchapterRequest): Observable<Subchapter> {
     return this.http.post<Subchapter>(`/api/chapters/${chapterId}/subchapters`, data);
+  }
+
+  renameSubchapter(chapterId: string, subchapterId: string, data: RenameSubchapterRequest): Observable<Subchapter> {
+    return this.http.put<Subchapter>(`/api/chapters/${chapterId}/subchapters/${subchapterId}`, data);
   }
 
   updateSubchapterOrder(chapterId: string, subchapterId: string, newOrderIndex: number): Observable<Subchapter> {

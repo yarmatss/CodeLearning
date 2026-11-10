@@ -3,7 +3,9 @@
   <div class="mb-6 flex items-center justify-between">
     <div>
       <h1 class="text-3xl font-bold text-gray-900">Coding Problems</h1>
-      <p class="mt-1 text-sm text-gray-600">Browse and manage programming challenges</p>
+      <p class="mt-1 text-sm text-gray-600">
+        Your problems, plus problems from published courses you are enrolled in
+      </p>
     </div>
     @if (isTeacher()) {
       <a
@@ -18,7 +20,7 @@
   <!-- Messages -->
   @if (errorMessage()) {
     <div class="mb-4 rounded-md bg-red-50 p-4">
-      <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+      <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
     </div>
   }
   @if (successMessage()) {
@@ -107,22 +109,25 @@
                   <span [class]="'rounded-full px-3 py-1 text-xs font-semibold ' + getDifficultyClass(problem.difficulty)">
                     {{ problem.difficulty }}
                   </span>
+                  @if (problem.isUsedByPublishedCourse) {
+                    <span
+                      class="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800"
+                      title="A published course uses this problem; unpublish the course to edit it"
+                    >
+                      🔒 In a published course
+                    </span>
+                  }
                 </div>
                 @if (problem.description) {
-                  <p class="mt-2 text-sm text-gray-600">
-                    {{ problem.description.length > 200 ? problem.description.substring(0, 200) + '...' : problem.description }}
-                  </p>
+                  <!-- The API already shortens the description to a preview -->
+                  <p class="mt-2 text-sm text-gray-600">{{ problem.description }}</p>
                 }
                 <div class="mt-3 flex items-center gap-4 text-xs text-gray-500">
                   @if (problem.authorName) {
                     <span>👤 {{ problem.authorName }}</span>
                   }
-                  @if (problem.testCases && problem.testCases.length > 0) {
-                    <span>🧪 {{ problem.testCases.length }} test case{{ problem.testCases.length !== 1 ? 's' : '' }}</span>
-                  }
-                  @if (problem.starterCodes && problem.starterCodes.length > 0) {
-                    <span>💻 {{ problem.starterCodes.length }} language{{ problem.starterCodes.length !== 1 ? 's' : '' }}</span>
-                  }
+                  <span>🧪 {{ problem.testCasesCount }} test case{{ problem.testCasesCount !== 1 ? 's' : '' }}</span>
+                  <span>💻 {{ problem.languagesCount }} language{{ problem.languagesCount !== 1 ? 's' : '' }}</span>
                   @if (problem.tags && problem.tags.length > 0) {
                     <span>🏷️ {{ problem.tags.length }} tag{{ problem.tags.length !== 1 ? 's' : '' }}</span>
                   }
@@ -137,25 +142,27 @@
               </div>
               @if (isTeacher()) {
                 <div class="ml-4 flex gap-2">
-                  @if (canEditProblem(problem.id)) {
+                  @if (canEditProblem(problem)) {
                     <a
                       [routerLink]="['/problems', problem.id]"
                       class="rounded-md bg-gray-600 px-3 py-1 text-sm text-white hover:bg-gray-700"
                     >
                       View
                     </a>
-                    <button
-                      (click)="editProblem(problem.id)"
-                      class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      (click)="deleteProblem(problem.id, problem.title)"
-                      class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
+                    @if (!problem.isUsedByPublishedCourse) {
+                      <button
+                        (click)="editProblem(problem.id)"
+                        class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        (click)="deleteProblem(problem.id, problem.title)"
+                        class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    }
                   } @else {
                     <a
                       [routerLink]="['/problems', problem.id]"
@@ -171,5 +178,13 @@
         }
       </div>
     }
+
+    <app-pagination
+      [page]="page()"
+      [totalPages]="totalPages()"
+      [totalCount]="totalCount()"
+      [disabled]="isLoading()"
+      (pageChange)="onPageChange($event)"
+    />
   }
 </div>

@@ -8,10 +8,11 @@ using Microsoft.AspNetCore.Mvc;
 namespace CodeLearning.Api.Controllers;
 
 [ApiController]
-[Route("api/chapters/{chapterId}/[controller]")]
+[Route("api/chapters/{chapterId:guid}/[controller]")]
 public class SubchaptersController(
     ISubchapterService subchapterService,
-    IValidator<CreateSubchapterDto> createSubchapterValidator) : ControllerBase
+    IValidator<CreateSubchapterDto> createSubchapterValidator,
+    IValidator<UpdateSubchapterDto> updateSubchapterValidator) : ControllerBase
 {
     [HttpPost]
     [Authorize(Roles = "Teacher")]
@@ -19,8 +20,7 @@ public class SubchaptersController(
     {
         await createSubchapterValidator.ValidateAndThrowAsync(dto);
 
-        var userId = User.GetRequiredUserId();
-        var subchapter = await subchapterService.AddSubchapterAsync(chapterId, dto, userId);
+        var subchapter = await subchapterService.AddSubchapterAsync(chapterId, dto, User.GetRequiredUserId());
         return CreatedAtAction(nameof(GetChapterSubchapters), new { chapterId }, subchapter);
     }
 
@@ -32,21 +32,29 @@ public class SubchaptersController(
         return Ok(subchapters);
     }
 
-    [HttpPatch("{subchapterId}/order")]
+    [HttpPut("{subchapterId:guid}")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> UpdateSubchapterOrder(Guid subchapterId, [FromBody] int newOrderIndex)
+    public async Task<IActionResult> RenameSubchapter(Guid chapterId, Guid subchapterId, [FromBody] UpdateSubchapterDto dto)
     {
-        var userId = User.GetRequiredUserId();
-        var subchapter = await subchapterService.UpdateSubchapterOrderAsync(subchapterId, newOrderIndex, userId);
+        await updateSubchapterValidator.ValidateAndThrowAsync(dto);
+
+        var subchapter = await subchapterService.RenameSubchapterAsync(chapterId, subchapterId, dto, User.GetRequiredUserId());
         return Ok(subchapter);
     }
 
-    [HttpDelete("{subchapterId}")]
+    [HttpPatch("{subchapterId:guid}/order")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> DeleteSubchapter(Guid subchapterId)
+    public async Task<IActionResult> UpdateSubchapterOrder(Guid chapterId, Guid subchapterId, [FromBody] int newOrderIndex)
     {
-        var userId = User.GetRequiredUserId();
-        await subchapterService.DeleteSubchapterAsync(subchapterId, userId);
+        var subchapter = await subchapterService.UpdateSubchapterOrderAsync(chapterId, subchapterId, newOrderIndex, User.GetRequiredUserId());
+        return Ok(subchapter);
+    }
+
+    [HttpDelete("{subchapterId:guid}")]
+    [Authorize(Roles = "Teacher")]
+    public async Task<IActionResult> DeleteSubchapter(Guid chapterId, Guid subchapterId)
+    {
+        await subchapterService.DeleteSubchapterAsync(chapterId, subchapterId, User.GetRequiredUserId());
         return Ok(new { message = "Subchapter deleted successfully" });
     }
 }

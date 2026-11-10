@@ -8,6 +8,10 @@ public class SubmissionTestResultConfiguration : IEntityTypeConfiguration<Submis
 {
     public void Configure(EntityTypeBuilder<SubmissionTestResult> builder)
     {
+        // One result per test case per submission, so a redelivered result message can't add duplicates
+        builder.HasIndex(r => new { r.SubmissionId, r.TestCaseId })
+            .IsUnique();
+
         builder.HasOne(r => r.Submission)
             .WithMany(s => s.TestResults)
             .HasForeignKey(r => r.SubmissionId)

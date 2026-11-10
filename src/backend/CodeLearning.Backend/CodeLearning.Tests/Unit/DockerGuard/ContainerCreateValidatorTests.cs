@@ -10,12 +10,15 @@ namespace CodeLearning.Tests.Unit.DockerGuard;
 
 public class ContainerCreateValidatorTests
 {
-    // Captured from Docker.DotNet 3.125 for the parameters DockerRunner builds
+    // The shape Docker.DotNet 3.125 sends for the parameters DockerRunner builds
     private const string RunnerBody = """
-        {"User":"65534:65534","Cmd":["/app/runner"],"Image":"codelearning/python:3.12-slim","WorkingDir":"/app",
+        {"User":"0:0","Cmd":["/bin/bash","-c","bootstrap"],"Image":"codelearning/python:3.12-slim","WorkingDir":"/",
+         "AttachStdin":true,"OpenStdin":true,"StdinOnce":true,"AttachStdout":false,"Tty":false,
          "Labels":{"submission-id":"x","codelearning.sandbox":"true"},
-         "HostConfig":{"NetworkMode":"none","CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],
-           "Tmpfs":{"/tmp":"size=50m,mode=1777"},"Memory":268435456,"NanoCpus":1000000000,"MemorySwap":268435456,
+         "HostConfig":{"NetworkMode":"none","CapDrop":["ALL"],"CapAdd":["SETUID","SETGID","KILL"],
+           "SecurityOpt":["no-new-privileges"],"ReadonlyRootfs":true,
+           "Tmpfs":{"/sandbox":"size=64m,uid=65534,gid=65534,mode=0755","/tmp":"size=32m,uid=65534,gid=65534,mode=0700","/app/out":"size=32m,mode=0700"},
+           "Memory":268435456,"NanoCpus":1000000000,"MemorySwap":268435456,
            "PidsLimit":100,"Ulimits":[{"Name":"fsize","Hard":67108864,"Soft":67108864}]}}
         """;
 
@@ -121,7 +124,7 @@ public class ContainerCreateValidatorTests
     [Fact]
     public void Validate_ExactDuplicate_ShouldReject()
     {
-        var body = RunnerBody.Replace("\"User\":\"65534:65534\"", "\"User\":\"65534:65534\",\"User\":\"0\"");
+        var body = RunnerBody.Replace("\"User\":\"0:0\"", "\"User\":\"0:0\",\"User\":\"65534:65534\"");
 
         Validate(body).IsValid.Should().BeFalse();
     }
@@ -143,13 +146,129 @@ public class ContainerCreateValidatorTests
 
     [Theory]
     [InlineData("0")]
-    [InlineData("root")]
     [InlineData("0:0")]
+    [InlineData("00")]
+    [InlineData("000:0")]
+    public void Validate_NumericRootWithOnlyDropCapabilities_ShouldAccept(string user)
+    {
+        Validate(Modify(body => body["User"] = user)).IsValid.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("00")]
+    [InlineData("0:0")]
+    public void Validate_RootWithExtraCapability_ShouldReject(string user)
+    {
+        var result = Validate(Modify(body =>
+        {
+            body["User"] = user;
+            body["HostConfig"]!["CapAdd"] = new JsonArray("SETUID", "SYS_ADMIN");
+        }));
+
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Contain("SETUID, SETGID and KILL");
+    }
+
+    [Fact]
+    public void Validate_RootWithCapPrefixedCapabilities_ShouldAccept()
+    {
+        Validate(Modify(body => body["HostConfig"]!["CapAdd"] = new JsonArray("CAP_SETUID", "cap_setgid")))
+            .IsValid.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("-0")]
+    [InlineData("+0")]
+    [InlineData(" 0")]
+    [InlineData("0x0")]
+    [InlineData("root")]
+    [InlineData("root:root")]
+    [InlineData("nobody")]
+    [InlineData("65534:00")]
     [InlineData("65534:0")]
+    [InlineData("65534")]
+    [InlineData("0:65534")]
+    [InlineData("1000:1000")]
+    [InlineData("0:0:0")]
+    [InlineData("99999999999999999999")]
     [InlineData("")]
-    public void Validate_RootOrMissingUser_ShouldReject(string user)
+    public void Validate_UnexpectedUser_ShouldReject(string user)
     {
         Validate(Modify(body => body["User"] = user)).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_MissingUser_ShouldReject()
+    {
+        Validate(Modify(body => body.AsObject().Remove("User"))).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_SandboxUserWithoutCapabilities_ShouldAccept()
+    {
+        Validate(Modify(body =>
+        {
+            body["User"] = "65534:65534";
+            body["HostConfig"]!.AsObject().Remove("CapAdd");
+        })).IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_SandboxUserWithCapabilities_ShouldReject()
+    {
+        Validate(Modify(body => body["User"] = "65534:65534")).IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void Validate_WritableRootfs_ShouldReject(bool? readonlyRootfs)
+    {
+        var result = Validate(Modify(body =>
+        {
+            if (readonlyRootfs is { } value)
+                body["HostConfig"]!["ReadonlyRootfs"] = value;
+            else
+                body["HostConfig"]!.AsObject().Remove("ReadonlyRootfs");
+        }));
+
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Contain("ReadonlyRootfs");
+    }
+
+    [Fact]
+    public void Validate_NoTmpfs_ShouldReject()
+    {
+        Validate(Modify(body => body["HostConfig"]!.AsObject().Remove("Tmpfs"))).IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("size=32m,exec")]
+    [InlineData("size=32m,suid")]
+    [InlineData("size=32m,nr_inodes=0")]
+    public void Validate_TmpfsWithUnexpectedOption_ShouldReject(string tmpfsOptions)
+    {
+        Validate(Modify(body => body["HostConfig"]!["Tmpfs"] = new JsonObject { ["/tmp"] = tmpfsOptions }))
+            .IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_Tty_ShouldReject()
+    {
+        Validate(Modify(body => body["Tty"] = true)).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Validate_RunnerBody_ShouldForwardStdinAndRootfsSettings()
+    {
+        var forwarded = JsonNode.Parse(Validate(RunnerBody).Body)!;
+
+        forwarded["OpenStdin"]!.GetValue<bool>().Should().BeTrue();
+        forwarded["StdinOnce"]!.GetValue<bool>().Should().BeTrue();
+        forwarded["HostConfig"]!["ReadonlyRootfs"]!.GetValue<bool>().Should().BeTrue();
+        forwarded["HostConfig"]!["CapAdd"]!.AsArray().Select(c => c!.GetValue<string>())
+            .Should().BeEquivalentTo("SETUID", "SETGID", "KILL");
     }
 
     [Fact]

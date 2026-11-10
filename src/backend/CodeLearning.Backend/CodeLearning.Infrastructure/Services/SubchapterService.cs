@@ -5,6 +5,7 @@ using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Infrastructure.Extensions;
+using CodeLearning.Infrastructure.Services.Learning;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -13,23 +14,19 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
 {
     public async Task<SubchapterResponseDto> AddSubchapterAsync(Guid chapterId, CreateSubchapterDto dto, Guid instructorId)
     {
+        await using var scope = await BeginEditAsync(chapterId);
+
         var chapter = await context.Chapters
             .Include(c => c.Course)
-            .Include(c => c.Subchapters)
             .FirstOrDefaultAsync(c => c.Id == chapterId)
             ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
 
-        if (chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only add subchapters to your own courses");
-        }
+        EnsureEditable(chapter.Course, instructorId, "You can only add subchapters to your own courses");
 
-        if (chapter.Course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot modify a published course");
-        }
-
-        var maxOrder = chapter.Subchapters.Count > 0 ? chapter.Subchapters.Max(s => s.OrderIndex) : 0;
+        // Read under the course lock, so two concurrent adds cannot both take the same index
+        var maxOrder = await context.Subchapters
+            .Where(s => s.ChapterId == chapterId)
+            .MaxAsync(s => (int?)s.OrderIndex) ?? 0;
 
         var subchapter = new Subchapter
         {
@@ -41,8 +38,9 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
 
         context.Subchapters.Add(subchapter);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
 
-        return MapToSubchapterResponseDto(subchapter);
+        return MapToSubchapterResponseDto(subchapter, blocksCount: 0);
     }
 
     public async Task<IEnumerable<SubchapterResponseDto>> GetChapterSubchaptersAsync(Guid chapterId, Guid? viewerId = null)
@@ -52,108 +50,123 @@ public class SubchapterService(ApplicationDbContext context) : ISubchapterServic
             throw new NotFoundException($"Chapter with ID {chapterId} not found");
         }
 
-        var subchapters = await context.Subchapters
-            .Include(s => s.Blocks)
+        return await context.Subchapters
             .Where(s => s.ChapterId == chapterId)
             .OrderBy(s => s.OrderIndex)
+            .Select(s => new SubchapterResponseDto
+            {
+                Id = s.Id,
+                Title = s.Title,
+                OrderIndex = s.OrderIndex,
+                ChapterId = s.ChapterId,
+                BlocksCount = s.Blocks.Count
+            })
+            .ToListAsync();
+    }
+
+    public async Task<SubchapterResponseDto> RenameSubchapterAsync(Guid chapterId, Guid subchapterId, UpdateSubchapterDto dto, Guid instructorId)
+    {
+        await using var scope = await BeginEditAsync(chapterId);
+
+        var subchapter = await LoadEditableSubchapterAsync(chapterId, subchapterId, instructorId);
+        subchapter.Title = dto.Title;
+
+        await context.SaveChangesAsync();
+        await scope.CommitAsync();
+
+        return await GetResponseAsync(subchapter);
+    }
+
+    public async Task<SubchapterResponseDto> UpdateSubchapterOrderAsync(Guid chapterId, Guid subchapterId, int newOrderIndex, Guid instructorId)
+    {
+        await using var scope = await BeginEditAsync(chapterId);
+
+        var subchapter = await LoadEditableSubchapterAsync(chapterId, subchapterId, instructorId);
+
+        var siblings = await context.Subchapters
+            .Where(s => s.ChapterId == chapterId && s.Id != subchapterId)
             .ToListAsync();
 
-        return subchapters.Select(MapToSubchapterResponseDto);
-    }
+        OrderIndexRules.EnsureWithinRange(newOrderIndex, siblings.Count + 1);
+        OrderIndexRules.Move(subchapter, siblings, s => s.OrderIndex, (s, index) => s.OrderIndex = index, newOrderIndex);
 
-    public async Task<SubchapterResponseDto> UpdateSubchapterOrderAsync(Guid subchapterId, int newOrderIndex, Guid instructorId)
-    {
-        var subchapter = await context.Subchapters
-            .Include(s => s.Chapter.Course)
-            .Include(s => s.Blocks)
-            .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
-
-        if (subchapter.Chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only modify your own course subchapters");
-        }
-
-        if (subchapter.Chapter.Course.Status == CourseStatus.Published)
-        {
-            throw new BusinessRuleException("Cannot modify a published course");
-        }
-
-        var subchapterCount = await context.Subchapters.CountAsync(s => s.ChapterId == subchapter.ChapterId);
-        OrderIndexRules.EnsureWithinRange(newOrderIndex, subchapterCount);
-
-        await ReorderSubchapters(subchapter, newOrderIndex);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
 
-        return MapToSubchapterResponseDto(subchapter);
+        return await GetResponseAsync(subchapter);
     }
 
-    public async Task DeleteSubchapterAsync(Guid subchapterId, Guid instructorId)
+    public async Task DeleteSubchapterAsync(Guid chapterId, Guid subchapterId, Guid instructorId)
     {
-        var subchapter = await context.Subchapters
-            .Include(s => s.Chapter.Course)
-            .FirstOrDefaultAsync(s => s.Id == subchapterId)
-            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
+        await using var scope = await BeginEditAsync(chapterId);
 
-        if (subchapter.Chapter.Course.InstructorId != instructorId)
-        {
-            throw new ForbiddenException("You can only delete subchapters from your own courses");
-        }
+        var subchapter = await LoadEditableSubchapterAsync(chapterId, subchapterId, instructorId);
 
-        if (subchapter.Chapter.Course.Status == CourseStatus.Published)
+        await BlockContentCleanup.RemoveForBlocksAsync(context, b => b.SubchapterId == subchapterId);
+
+        var following = await context.Subchapters
+            .Where(s => s.ChapterId == chapterId && s.OrderIndex > subchapter.OrderIndex)
+            .ToListAsync();
+
+        foreach (var sibling in following)
         {
-            throw new BusinessRuleException("Cannot delete subchapters from a published course");
+            sibling.OrderIndex--;
         }
 
         context.Subchapters.Remove(subchapter);
-
-        await ReorderAfterDeletion(subchapter);
         await context.SaveChangesAsync();
+        await scope.CommitAsync();
     }
 
-    private async Task ReorderSubchapters(Subchapter subchapter, int newOrderIndex)
+    private async Task<CourseEditScope> BeginEditAsync(Guid chapterId)
     {
-        var oldOrderIndex = subchapter.OrderIndex;
-        subchapter.OrderIndex = newOrderIndex;
+        var courseId = await context.Chapters
+            .Where(c => c.Id == chapterId)
+            .Select(c => (Guid?)c.CourseId)
+            .FirstOrDefaultAsync()
+            ?? throw new NotFoundException($"Chapter with ID {chapterId} not found");
 
-        var otherSubchapters = await context.Subchapters
-            .Where(s => s.ChapterId == subchapter.ChapterId && s.Id != subchapter.Id)
-            .ToListAsync();
-
-        if (newOrderIndex < oldOrderIndex)
-        {
-            foreach (var other in otherSubchapters.Where(o => o.OrderIndex >= newOrderIndex && o.OrderIndex < oldOrderIndex))
-            {
-                other.OrderIndex++;
-            }
-        }
-        else
-        {
-            foreach (var other in otherSubchapters.Where(o => o.OrderIndex > oldOrderIndex && o.OrderIndex <= newOrderIndex))
-            {
-                other.OrderIndex--;
-            }
-        }
+        return await CourseEditScope.BeginAsync(context, courseId);
     }
 
-    private async Task ReorderAfterDeletion(Subchapter deletedSubchapter)
+    // A subchapter id under another chapter's route is answered as not found
+    private async Task<Subchapter> LoadEditableSubchapterAsync(Guid chapterId, Guid subchapterId, Guid instructorId)
     {
-        var remainingSubchapters = await context.Subchapters
-            .Where(s => s.ChapterId == deletedSubchapter.ChapterId && s.OrderIndex > deletedSubchapter.OrderIndex)
-            .ToListAsync();
+        var subchapter = await context.Subchapters
+            .Include(s => s.Chapter.Course)
+            .FirstOrDefaultAsync(s => s.Id == subchapterId && s.ChapterId == chapterId)
+            ?? throw new NotFoundException($"Subchapter with ID {subchapterId} not found");
 
-        foreach (var subchapter in remainingSubchapters)
+        EnsureEditable(subchapter.Chapter.Course, instructorId, "You can only modify subchapters of your own courses");
+
+        return subchapter;
+    }
+
+    private static void EnsureEditable(Course course, Guid instructorId, string forbiddenMessage)
+    {
+        if (course.InstructorId != instructorId)
         {
-            subchapter.OrderIndex--;
+            throw new ForbiddenException(forbiddenMessage);
+        }
+
+        if (course.Status == CourseStatus.Published)
+        {
+            throw new BusinessRuleException("Cannot modify a published course");
         }
     }
 
-    private static SubchapterResponseDto MapToSubchapterResponseDto(Subchapter subchapter) => new()
+    private async Task<SubchapterResponseDto> GetResponseAsync(Subchapter subchapter)
+    {
+        var blocksCount = await context.CourseBlocks.CountAsync(b => b.SubchapterId == subchapter.Id);
+        return MapToSubchapterResponseDto(subchapter, blocksCount);
+    }
+
+    private static SubchapterResponseDto MapToSubchapterResponseDto(Subchapter subchapter, int blocksCount) => new()
     {
         Id = subchapter.Id,
         Title = subchapter.Title,
         OrderIndex = subchapter.OrderIndex,
         ChapterId = subchapter.ChapterId,
-        BlocksCount = subchapter.Blocks?.Count ?? 0
+        BlocksCount = blocksCount
     };
 }

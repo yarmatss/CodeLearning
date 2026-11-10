@@ -13,8 +13,15 @@ public class UpdateVideoBlockDtoValidator : AbstractValidator<UpdateVideoBlockDt
             .MaximumLength(200).WithMessage("Title must not exceed 200 characters");
 
         RuleFor(x => x.VideoUrl)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty().WithMessage("Video URL is required")
-            .Must(url => url.IsValidYouTubeUrl())
-            .WithMessage("Invalid YouTube URL format. Supported: youtube.com/watch?v=... or youtu.be/...");
+            .MaximumLength(2000).WithMessage("Video URL must not exceed 2000 characters")
+            .Must(url => url.IsValidYouTubeUrl()).WithMessage(YouTubeUrlRules.InvalidUrlMessage);
     }
+}
+
+internal static class YouTubeUrlRules
+{
+    public const string InvalidUrlMessage =
+        "Invalid YouTube URL format. Supported: youtube.com/watch?v=... or youtu.be/...";
 }

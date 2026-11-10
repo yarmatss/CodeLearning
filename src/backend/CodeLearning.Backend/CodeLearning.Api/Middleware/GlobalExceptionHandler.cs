@@ -1,6 +1,7 @@
 using CodeLearning.Application.Exceptions;
 using CodeLearning.Infrastructure.Extensions;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
@@ -17,6 +18,22 @@ internal sealed class GlobalExceptionHandler(
         CancellationToken cancellationToken)
     {
         var traceId = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+
+        // The client went away: nobody will read a response, and it is not a server fault
+        if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+        {
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                logger.LogDebug("Request was aborted by the client | TraceId: {TraceId}", traceId);
+            }
+
+            if (!httpContext.Response.HasStarted)
+            {
+                httpContext.Response.StatusCode = StatusCodes.Status499ClientClosedRequest;
+            }
+
+            return true;
+        }
 
         var (statusCode, type, title, detail) = MapException(exception);
 
@@ -70,6 +87,26 @@ internal sealed class GlobalExceptionHandler(
     {
         return exception switch
         {
+            // Malformed request, body too large, etc.: Kestrel already chose the right 4xx
+            BadHttpRequestException ex => (
+                ex.StatusCode,
+                "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5",
+                ReasonPhrases.GetReasonPhrase(ex.StatusCode) is { Length: > 0 } phrase ? phrase : "Bad Request",
+                ex.Message
+            ),
+            // Before the DbUpdateException case: it is a subtype
+            DbUpdateConcurrencyException => (
+                StatusCodes.Status409Conflict,
+                "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.10",
+                "Conflict",
+                "The resource was modified by another request. Please refresh and try again."
+            ),
+            ProblemConflictException ex => (
+                StatusCodes.Status409Conflict,
+                "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.10",
+                "Conflict",
+                ex.Message
+            ),
             NotFoundException ex => (
                 StatusCodes.Status404NotFound,
                 "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.5",

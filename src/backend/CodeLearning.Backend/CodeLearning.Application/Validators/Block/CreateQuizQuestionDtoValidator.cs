@@ -19,37 +19,42 @@ public class CreateQuizQuestionDtoValidator : AbstractValidator<CreateQuizQuesti
             .GreaterThan(0).WithMessage("Points must be greater than 0")
             .LessThanOrEqualTo(100).WithMessage("Points must not exceed 100");
 
+        RuleFor(x => x.Explanation)
+            .MaximumLength(2000).WithMessage("Explanation must not exceed 2000 characters");
+
         RuleFor(x => x.Answers)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty().WithMessage("Question must have at least one answer")
             .Must(answers => answers.Count >= 2).WithMessage("Question must have at least 2 answers")
             .Must(answers => answers.Count <= 10).WithMessage("Question cannot have more than 10 answers");
 
+        RuleFor(x => x.Answers)
+            .Must(answers => answers.Count == 2).WithMessage("TrueFalse question must have exactly 2 answers")
+            .When(x => x.Type == "TrueFalse" && x.Answers is { Count: >= 2 });
+
         RuleForEach(x => x.Answers)
+            .NotNull().WithMessage("Answer must not be null")
             .SetValidator(new CreateQuizAnswerDtoValidator());
 
         RuleFor(x => x)
             .Must(HaveAtLeastOneCorrectAnswer).WithMessage("Question must have at least one correct answer");
 
         RuleFor(x => x)
-            .Must(HaveExactlyOneCorrectAnswer).WithMessage("SingleChoice question must have exactly one correct answer")
-            .When(x => x.Type == "SingleChoice" || x.Type == "TrueFalse");
+            .Must(HaveExactlyOneCorrectAnswer)
+            .WithMessage(x => $"{x.Type} question must have exactly one correct answer")
+            .When(x => x.Type is "SingleChoice" or "TrueFalse");
     }
 
-    private static bool BeValidQuestionType(string? type)
-    {
-        if (string.IsNullOrWhiteSpace(type))
-            return false;
+    private static bool BeValidQuestionType(string? type) =>
+        type is "SingleChoice" or "MultipleChoice" or "TrueFalse";
 
-        return type is "SingleChoice" or "MultipleChoice" or "TrueFalse";
-    }
+    // Null-safe: a null list or null entries are reported by the rules above, not thrown here
+    private static int CorrectAnswerCount(CreateQuizQuestionDto question) =>
+        question.Answers?.Count(a => a?.IsCorrect == true) ?? 0;
 
-    private static bool HaveAtLeastOneCorrectAnswer(CreateQuizQuestionDto question)
-    {
-        return question.Answers.Any(a => a.IsCorrect);
-    }
+    private static bool HaveAtLeastOneCorrectAnswer(CreateQuizQuestionDto question) =>
+        CorrectAnswerCount(question) >= 1;
 
-    private static bool HaveExactlyOneCorrectAnswer(CreateQuizQuestionDto question)
-    {
-        return question.Answers.Count(a => a.IsCorrect) == 1;
-    }
+    private static bool HaveExactlyOneCorrectAnswer(CreateQuizQuestionDto question) =>
+        CorrectAnswerCount(question) == 1;
 }

@@ -18,6 +18,7 @@ public static class DependencyInjection
             services.AddSingleton<ICodeExecutor, UniversalExecutor>();
 
             services.AddHostedService<StuckSubmissionSweeper>();
+            services.AddHostedService<SandboxContainerCleanupService>();
 
             services.AddOptions<RabbitMqTransportOptions>().BindConfiguration("RabbitMqTransport");
 

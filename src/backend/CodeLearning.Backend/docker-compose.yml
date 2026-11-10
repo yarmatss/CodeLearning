@@ -3,15 +3,15 @@ services:
     image: postgres:18-alpine
     container_name: codelearning-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
     volumes:
       - postgres-data:/var/lib/postgresql
     networks:
       - codelearning-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:?POSTGRES_USER is required} -d $${POSTGRES_DB:?POSTGRES_DB is required}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     container_name: codelearning-redis
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
       - redis-data:/data
     networks:
@@ -39,8 +39,8 @@ services:
     container_name: codelearning-rabbitmq
     hostname: rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     networks:
@@ -53,10 +53,14 @@ services:
     restart: unless-stopped
 
   # DockerGuard - the only way the Runner reaches the Docker daemon
-  # Allows just the calls DockerRunner makes. Container creation is checked field by field
-  # (allowed executor images, network none, non-root user, every capability dropped, no host
-  # mounts, no privileged mode) and only the checked fields are forwarded. Start, kill, logs,
-  # archive and remove work only on containers labelled codelearning.sandbox=true
+  # Allows just the calls DockerRunner and the sandbox cleanup make. Container creation is checked field
+  # by field and rebuilt from the checked fields only: allowed executor images, network none, no host
+  # mounts, no privileged mode, no-new-privileges, a read-only root filesystem with size-capped tmpfs
+  # mounts, and either the sandbox user 65534 with no capabilities or uid 0 with CapDrop ALL adding back
+  # only SETUID/SETGID/KILL (to drop to the student user and signal its processes).
+  # Start, wait, kill, logs, inspect, attach and remove work only on containers labelled
+  # codelearning.sandbox=true; the stdin attach (the job is streamed in) is tunnelled by the guard.
+  # The archive API (copying files in or out) is denied
   docker-guard:
     image: ${DOCKER_REGISTRY-}codelearningdockerguard
     container_name: codelearning-docker-guard
@@ -68,7 +72,7 @@ services:
     # The image runs as a non-root user; this group grants it the socket.
     # Docker Desktop's socket belongs to group 0, Docker Engine's to the "docker" group (stat -c %g /var/run/docker.sock)
     group_add:
-      - "${DOCKER_SOCKET_GID:-0}"
+      - "${DOCKER_SOCKET_GID:?DOCKER_SOCKET_GID is required (group id that owns /var/run/docker.sock)}"
     # Only the Runner can reach the guard
     networks:
       - sandbox-control
@@ -80,6 +84,14 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # GET /_ping goes through the guard to the daemon, so healthy means guard up and socket reachable.
+    # The aspnet image has no curl or wget, so bash speaks HTTP over /dev/tcp
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/2375 && printf 'GET /_ping HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   api:
     image: ${DOCKER_REGISTRY-}codelearningapi
@@ -87,24 +99,31 @@ services:
     build:
       context: .
       dockerfile: CodeLearning.Api/Dockerfile
+    # Loopback only: in production the API is reached through the frontend's nginx (or a TLS proxy
+    # on the host). No HTTPS port: TLS is terminated at the proxy
     ports:
-      - "5000:8080"
-      - "5001:8081"
+      - "127.0.0.1:5000:8080"
     volumes:
       - dataprotection-keys:/app/keys
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
-      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB:?POSTGRES_DB is required};Username=${POSTGRES_USER:?POSTGRES_USER is required};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
       RabbitMqTransport__Host: rabbitmq
-      RabbitMqTransport__User: ${RABBITMQ_USER}
-      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
+      RabbitMqTransport__User: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
       Database__AutoMigrate: "true"
-      JwtSettings__SecretKey: ${JWT_SECRET_KEY}
+      JwtSettings__SecretKey: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       JwtSettings__Issuer: "CodeLearningApi"
       JwtSettings__Audience: "CodeLearningClient"
       JwtSettings__AccessTokenExpirationMinutes: "5"
       JwtSettings__RefreshTokenExpirationDays: "7"
+      # TLS ends at the reverse proxy; the proxy, not the API, redirects HTTP to HTTPS
+      Https__RedirectEnabled: "false"
+      # Trust X-Forwarded-For / X-Forwarded-Proto only from the compose network (the nginx frontend)
+      ForwardedHeaders__KnownNetworks__0: "${CODELEARNING_SUBNET:-172.28.0.0/24}"
+      # Must match the runner's value: problems whose tests could outlast it are rejected here
+      ExecutionSettings__MaxContainerRuntimeSeconds: "${MAX_CONTAINER_RUNTIME_SECONDS:-300}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,26 +149,34 @@ services:
       dockerfile: CodeLearning.Runner/Dockerfile
     volumes:
       - runner-workspace:/tmp/submissions
+    # Generic host (Host.CreateApplicationBuilder) reads DOTNET_ENVIRONMENT, not ASPNETCORE_ENVIRONMENT
     environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB:?POSTGRES_DB is required};Username=${POSTGRES_USER:?POSTGRES_USER is required};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       RabbitMqTransport__Host: rabbitmq
-      RabbitMqTransport__User: ${RABBITMQ_USER}
-      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD}
+      RabbitMqTransport__User: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RabbitMqTransport__Pass: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
       ExecutionSettings__DockerHost: "tcp://docker-guard:2375"
       ExecutionSettings__WorkspaceBasePath: "/tmp/submissions"
       ExecutionSettings__MaxConcurrentExecutions: "5"
+      # Must match the api's value (see the api service)
+      ExecutionSettings__MaxContainerRuntimeSeconds: "${MAX_CONTAINER_RUNTIME_SECONDS:-300}"
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
       docker-guard:
-        condition: service_started
+        condition: service_healthy
     networks:
       - codelearning-network
       - sandbox-control
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true  # Prevent privilege escalation
     deploy:
@@ -158,25 +185,28 @@ services:
           cpus: '2'      # Limit CPU usage
           memory: 2G     # Limit memory usage
 
+  # nginx serving the built SPA and proxying /api to the API (see nginx.conf).
+  # The dev server with live reload lives in docker-compose.override.yml
   frontend:
     image: ${DOCKER_REGISTRY-}codelearningfrontend
     container_name: codelearning-frontend
     build:
       context: ../../frontend/codelearning-frontend
       dockerfile: Dockerfile
+      target: final
     ports:
-      - "4200:4200"
-    volumes:
-      - ../../frontend/codelearning-frontend:/app
-      - /app/node_modules
-    environment:
-      WATCHPACK_POLLING: "true"
+      - "${FRONTEND_PORT:-4200}:80"
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - codelearning-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Executor Images (build-only, not running)
   # These images are used by Runner to execute student code
@@ -217,6 +247,10 @@ services:
 networks:
   codelearning-network:
     driver: bridge
+    # Fixed subnet so the API can trust X-Forwarded-* from it (ForwardedHeaders__KnownNetworks__0)
+    ipam:
+      config:
+        - subnet: ${CODELEARNING_SUBNET:-172.28.0.0/24}
   # Runner <-> DockerGuard only; internal, so it has no route outside the host either
   sandbox-control:
     driver: bridge

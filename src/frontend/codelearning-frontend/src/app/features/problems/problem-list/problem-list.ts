@@ -3,12 +3,22 @@ import { Router, RouterLink, NavigationEnd } from '@angular/router';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { filter, Subscription } from 'rxjs';
-import { ProblemService, ProblemResponse, TagResponse } from '../../../core/services/problem.service';
+import {
+  ProblemService,
+  ProblemDifficulty,
+  ProblemListItem,
+  TagResponse
+} from '../../../core/services/problem.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { DialogService } from '../../../core/services/dialog.service';
+import { extractApiError } from '../../../core/utils/api-error';
+import { PaginationComponent } from '../../../shared/components/pagination/pagination.component';
+
+const PROBLEMS_PAGE_SIZE = 20;
 
 @Component({
   selector: 'app-problem-list',
-  imports: [CommonModule, RouterLink, ReactiveFormsModule],
+  imports: [CommonModule, RouterLink, ReactiveFormsModule, PaginationComponent],
   templateUrl: './problem-list.html',
   styleUrl: './problem-list.css',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -17,38 +27,39 @@ export class ProblemList implements OnInit, OnDestroy {
   private readonly problemService = inject(ProblemService);
   readonly authService = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly dialogService = inject(DialogService);
 
-  readonly problems = signal<ProblemResponse[]>([]);
+  readonly problems = signal<ProblemListItem[]>([]);
   readonly availableTags = signal<TagResponse[]>([]);
-  readonly myProblemIds = signal<Set<string>>(new Set());
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string>('');
   readonly successMessage = signal<string>('');
 
+  readonly page = signal(1);
+  readonly totalPages = signal(0);
+  readonly totalCount = signal(0);
+
   readonly searchControl = new FormControl('');
-  readonly difficultyControl = new FormControl('');
+  readonly difficultyControl = new FormControl<ProblemDifficulty | ''>('');
   readonly tagControl = new FormControl('');
 
   readonly isTeacher = computed(() => this.authService.currentUser()?.role === 'Teacher');
-  
+
   private routerSubscription?: Subscription;
 
   ngOnInit(): void {
     this.loadTags();
-    if (this.isTeacher()) {
-      this.loadMyProblems();
-    }
     this.loadProblems();
-    
+
     // Reload list when navigating back to /problems (e.g., from problem editor)
     this.routerSubscription = this.router.events.pipe(
-      filter(event => event instanceof NavigationEnd),
-      filter((event: any) => event.url === '/problems')
+      filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      filter(event => event.url === '/problems')
     ).subscribe(() => {
-      this.loadProblems();
+      this.loadProblems(this.page());
     });
   }
-  
+
   ngOnDestroy(): void {
     this.routerSubscription?.unsubscribe();
   }
@@ -60,40 +71,37 @@ export class ProblemList implements OnInit, OnDestroy {
     });
   }
 
-  loadMyProblems(): void {
-    this.problemService.getMyProblems().subscribe({
-      next: (problems) => {
-        const ids = new Set(problems.map(p => p.id));
-        this.myProblemIds.set(ids);
-      },
-      error: () => this.myProblemIds.set(new Set())
-    });
+  /** Only the author may change a problem. */
+  canEditProblem(problem: ProblemListItem): boolean {
+    return problem.authorId === this.authService.currentUser()?.userId;
   }
 
-  canEditProblem(problemId: string): boolean {
-    return this.myProblemIds().has(problemId);
-  }
-
-  loadProblems(): void {
+  loadProblems(page = 1): void {
     this.isLoading.set(true);
     this.errorMessage.set('');
 
-    const search = this.searchControl.value || undefined;
-    const difficulty = this.difficultyControl.value || undefined;
-    const tagId = this.tagControl.value || undefined;
-
-    this.problemService.getProblems(difficulty, tagId, search).subscribe({
-      next: (problems) => {
-        this.problems.set(problems);
+    this.problemService.getProblems({
+      page,
+      pageSize: PROBLEMS_PAGE_SIZE,
+      search: this.searchControl.value?.trim() || undefined,
+      difficulty: this.difficultyControl.value || undefined,
+      tagId: this.tagControl.value || undefined
+    }).subscribe({
+      next: (result) => {
+        this.problems.set(result.items);
+        this.page.set(result.page);
+        this.totalPages.set(result.totalPages);
+        this.totalCount.set(result.totalCount);
         this.isLoading.set(false);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.detail || 'Failed to load problems');
+        this.errorMessage.set(extractApiError(error, 'Failed to load problems'));
       }
     });
   }
 
+  // Changing a filter starts again from the first page
   onSearch(): void {
     this.loadProblems();
   }
@@ -104,6 +112,10 @@ export class ProblemList implements OnInit, OnDestroy {
 
   onTagChange(): void {
     this.loadProblems();
+  }
+
+  onPageChange(page: number): void {
+    this.loadProblems(page);
   }
 
   clearFilters(): void {
@@ -117,8 +129,15 @@ export class ProblemList implements OnInit, OnDestroy {
     this.router.navigate(['/problems', id, 'edit']);
   }
 
-  deleteProblem(id: string, title: string): void {
-    if (!confirm(`Are you sure you want to delete "${title}"? This will also remove it from all courses.`)) {
+  async deleteProblem(id: string, title: string): Promise<void> {
+    const { confirmed } = await this.dialogService.confirm({
+      title: 'Delete problem?',
+      message: `Are you sure you want to delete "${title}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      type: 'warning'
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -126,10 +145,12 @@ export class ProblemList implements OnInit, OnDestroy {
       next: () => {
         this.successMessage.set('Problem deleted successfully');
         setTimeout(() => this.successMessage.set(''), 3000);
-        this.loadProblems();
+        // Stay on this page unless its last row was just removed
+        const page = this.problems().length === 1 && this.page() > 1 ? this.page() - 1 : this.page();
+        this.loadProblems(page);
       },
-      error: (error: any) => {
-        this.errorMessage.set(error.error?.detail || 'Failed to delete problem');
+      error: (error: unknown) => {
+        this.errorMessage.set(extractApiError(error, 'Failed to delete problem'));
       }
     });
   }

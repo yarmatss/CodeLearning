@@ -13,5 +13,4 @@ public class Course : BaseEntity
     public required User Instructor { get; set; }
     public ICollection<Chapter> Chapters { get; init; } = [];
     public ICollection<StudentCourseProgress> StudentProgress { get; init; } = [];
-    public ICollection<Certificate> Certificates { get; init; } = [];
 }

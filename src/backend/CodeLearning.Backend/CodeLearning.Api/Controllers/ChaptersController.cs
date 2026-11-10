@@ -8,10 +8,11 @@ using Microsoft.AspNetCore.Mvc;
 namespace CodeLearning.Api.Controllers;
 
 [ApiController]
-[Route("api/courses/{courseId}/[controller]")]
+[Route("api/courses/{courseId:guid}/[controller]")]
 public class ChaptersController(
     IChapterService chapterService,
-    IValidator<CreateChapterDto> createChapterValidator) : ControllerBase
+    IValidator<CreateChapterDto> createChapterValidator,
+    IValidator<UpdateChapterDto> updateChapterValidator) : ControllerBase
 {
     [HttpPost]
     [Authorize(Roles = "Teacher")]
@@ -19,8 +20,7 @@ public class ChaptersController(
     {
         await createChapterValidator.ValidateAndThrowAsync(dto);
 
-        var userId = User.GetRequiredUserId();
-        var chapter = await chapterService.AddChapterAsync(courseId, dto, userId);
+        var chapter = await chapterService.AddChapterAsync(courseId, dto, User.GetRequiredUserId());
         return CreatedAtAction(nameof(GetCourseChapters), new { courseId }, chapter);
     }
 
@@ -32,21 +32,29 @@ public class ChaptersController(
         return Ok(chapters);
     }
 
-    [HttpPatch("{chapterId}/order")]
+    [HttpPut("{chapterId:guid}")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> UpdateChapterOrder(Guid chapterId, [FromBody] int newOrderIndex)
+    public async Task<IActionResult> RenameChapter(Guid courseId, Guid chapterId, [FromBody] UpdateChapterDto dto)
     {
-        var userId = User.GetRequiredUserId();
-        var chapter = await chapterService.UpdateChapterOrderAsync(chapterId, newOrderIndex, userId);
+        await updateChapterValidator.ValidateAndThrowAsync(dto);
+
+        var chapter = await chapterService.RenameChapterAsync(courseId, chapterId, dto, User.GetRequiredUserId());
         return Ok(chapter);
     }
 
-    [HttpDelete("{chapterId}")]
+    [HttpPatch("{chapterId:guid}/order")]
     [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> DeleteChapter(Guid chapterId)
+    public async Task<IActionResult> UpdateChapterOrder(Guid courseId, Guid chapterId, [FromBody] int newOrderIndex)
     {
-        var userId = User.GetRequiredUserId();
-        await chapterService.DeleteChapterAsync(chapterId, userId);
+        var chapter = await chapterService.UpdateChapterOrderAsync(courseId, chapterId, newOrderIndex, User.GetRequiredUserId());
+        return Ok(chapter);
+    }
+
+    [HttpDelete("{chapterId:guid}")]
+    [Authorize(Roles = "Teacher")]
+    public async Task<IActionResult> DeleteChapter(Guid courseId, Guid chapterId)
+    {
+        await chapterService.DeleteChapterAsync(courseId, chapterId, User.GetRequiredUserId());
         return Ok(new { message = "Chapter deleted successfully" });
     }
 }

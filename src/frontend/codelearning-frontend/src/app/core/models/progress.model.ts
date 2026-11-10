@@ -56,4 +56,13 @@ export interface SubchapterStructure {
   title: string;
   orderIndex: number;
   blocksCount: number;
+  // Outline only: titles and types, never block content
+  blocks: BlockStructure[];
+}
+
+export interface BlockStructure {
+  blockId: string;
+  title: string;
+  type: BlockType;
+  orderIndex: number;
 }

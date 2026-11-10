@@ -1,7 +1,6 @@
 using CodeLearning.Application.DTOs.Auth;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
-using Microsoft.AspNetCore.Mvc.Testing;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -16,7 +15,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public AuthControllerTests(IntegrationTestWebAppFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _client = factory.CreateAnonymousClient();
     }
 
     public Task InitializeAsync() => _factory.ResetDatabaseAsync();
@@ -67,6 +66,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     [InlineData("password", "Password must contain at least one uppercase")]
     [InlineData("PASSWORD", "Password must contain at least one digit")]
     [InlineData("Pass123", "Password must be at least 8 characters")]
+    [InlineData("PASSWORD123", "Password must contain at least one lowercase letter")]
     public async Task Register_WithWeakPassword_ShouldReturn400WithValidationError(string password, string expectedError)
     {
         // Arrange
@@ -196,6 +196,47 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Login_ToLockedAccount_ShouldReturnSameGeneric401AsWrongPassword()
+    {
+        // Arrange - Identity locks the account after 5 failed attempts
+        var email = "locked@test.com";
+        await _client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email, "WrongPassword123"));
+        }
+
+        // Act - the correct password, but the account is locked
+        var response = await _client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+
+        // Assert - nothing tells an attacker the account exists or is locked
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Invalid email or password", content);
+        Assert.DoesNotContain("lock", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Login_AccessCookieShouldExpireWithAccessToken_NotWithRefreshToken()
+    {
+        // Arrange
+        var email = "cookie-expiry@test.com";
+        await _client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+
+        // Assert
+        var body = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
+        var accessExpires = ParseCookieExpires(response.GetSetCookie("access_token").Attributes);
+        var refreshExpires = ParseCookieExpires(response.GetSetCookie("refresh_token").Attributes);
+
+        Assert.Equal(body!.AccessTokenExpiresAt.ToUnixTimeSeconds(), accessExpires.ToUnixTimeSeconds());
+        Assert.True(refreshExpires - accessExpires > TimeSpan.FromDays(6), "refresh cookie should outlive the access cookie by days");
+    }
+
     #endregion
 
     #region GetMe Tests
@@ -241,6 +282,32 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.Equal(registerDto.LastName, content.LastName);
     }
 
+    [Fact]
+    public async Task GetMe_ShouldReturnTheAccessTokenExpiryFromLogin()
+    {
+        // Arrange
+        var email = "me-expiry@test.com";
+        await _client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
+        var loginResponse = await _client.PostAsJsonAsync("/api/auth/login", TestDataBuilder.CreateValidLoginDto(email));
+        var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", loginResponse.GetAccessToken());
+
+        // Act
+        var response = await _client.GetAsync("/api/auth/me");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"accessTokenExpiresAt\":", json);
+
+        var content = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
+        Assert.NotNull(content?.AccessTokenExpiresAt);
+        Assert.Equal(login!.AccessTokenExpiresAt, content.AccessTokenExpiresAt);
+        Assert.Equal(TimeSpan.Zero, content.AccessTokenExpiresAt!.Value.Offset);
+        Assert.True(content.AccessTokenExpiresAt > DateTimeOffset.UtcNow);
+    }
+
     #endregion
 
     #region Logout Tests
@@ -260,7 +327,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Logout_WithOnlyRefreshCookie_ShouldRevokeRefreshToken()
     {
         // Arrange - the access token has expired, so only the refresh cookie identifies the session
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "logout-expired@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -307,7 +374,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Logout_WithoutRefreshCookie_ShouldStillRevokeTokens()
     {
         // Arrange - only the bearer header is sent, as by a client that lost its refresh cookie
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "logout-no-cookie@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -338,7 +405,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Refresh_WithValidRefreshToken_ShouldRotateCookiesWithoutExposingTokensInBody()
     {
         // Arrange - cookies are sent by hand, so the client must not manage them itself
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "refresh@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -371,7 +438,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Refresh_WithInvalidRefreshToken_ShouldReturn401()
     {
         // Arrange
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "refresh-invalid@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -393,7 +460,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Refresh_WithoutAccessToken_ShouldSucceed()
     {
         // Arrange - the browser may no longer send an access token at all
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "refresh-no-access@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -410,7 +477,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Refresh_ReusingRotatedRefreshToken_ShouldReturn401()
     {
         // Arrange
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var email = "refresh-replay@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -430,7 +497,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
     public async Task Refresh_ShouldIssueTokensForRefreshTokenOwner_IgnoringAccessTokenIdentity()
     {
         // Arrange - another user's access token must not decide whose tokens are issued
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = _factory.CreateAnonymousClient();
 
         var ownerEmail = "refresh-owner@test.com";
         await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: ownerEmail));
@@ -465,7 +532,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         // Arrange - a host with a low limit, so the test does not depend on the configured value
         await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
             builder.UseSetting("AuthRateLimit:PermitLimit", "3"));
-        var client = limitedFactory.CreateClient();
+        var client = limitedFactory.CreateAnonymousClient();
         var loginDto = TestDataBuilder.CreateValidLoginDto("rate-limit@test.com");
 
         for (var i = 0; i < 3; i++)
@@ -478,7 +545,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
 
         // Assert
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
-        Assert.Contains("Too many attempts", await response.Content.ReadAsStringAsync());
+        Assert.Contains("Too many login attempts", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -487,7 +554,7 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         // Arrange - every signed-in client refreshes periodically, so a shared limit must not block it
         await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
             builder.UseSetting("AuthRateLimit:PermitLimit", "2"));
-        var client = limitedFactory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var client = limitedFactory.CreateAnonymousClient();
 
         var email = "refresh-unthrottled@test.com";
         var registerResponse = await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto(email: email));
@@ -509,7 +576,85 @@ public class AuthControllerTests : IClassFixture<IntegrationTestWebAppFactory>, 
         Assert.All(statuses, status => Assert.Equal(HttpStatusCode.OK, status));
     }
 
+    [Fact]
+    public async Task Login_RateLimit_ShouldBePerEmail_SoOtherAccountsFromSameIpAreNotBlocked()
+    {
+        // Arrange
+        await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("AuthRateLimit:PermitLimit", "2"));
+        var client = limitedFactory.CreateAnonymousClient();
+
+        var targeted = TestDataBuilder.CreateValidLoginDto("targeted@test.com", "WrongPassword123");
+        for (var i = 0; i < 2; i++)
+        {
+            await client.PostAsJsonAsync("/api/auth/login", targeted);
+        }
+
+        // Act - same email, differently cased, then a different account from the same IP
+        var sameAccount = await client.PostAsJsonAsync("/api/auth/login",
+            TestDataBuilder.CreateValidLoginDto(" TARGETED@test.com", "WrongPassword123"));
+        var otherAccount = await client.PostAsJsonAsync("/api/auth/login",
+            TestDataBuilder.CreateValidLoginDto("someone-else@test.com", "WrongPassword123"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.TooManyRequests, sameAccount.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, otherAccount.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_ManyEmailsFromOneIp_ShouldHitPerIpCeiling()
+    {
+        // Arrange - password spraying: one attempt per account, many accounts
+        await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("AuthRateLimit:PermitLimit", "5");
+            builder.UseSetting("AuthRateLimit:LoginPerIpPermitLimit", "3");
+        });
+        var client = limitedFactory.CreateAnonymousClient();
+
+        for (var i = 0; i < 3; i++)
+        {
+            await client.PostAsJsonAsync("/api/auth/login",
+                TestDataBuilder.CreateValidLoginDto($"spray{i}@test.com", "WrongPassword123"));
+        }
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/login",
+            TestDataBuilder.CreateValidLoginDto("spray-last@test.com", "WrongPassword123"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Contains("Too many login attempts", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Register_ExceedingAuthRateLimit_ShouldReturn429WithRegistrationMessage()
+    {
+        // Arrange
+        await using var limitedFactory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("AuthRateLimit:PermitLimit", "1"));
+        var client = limitedFactory.CreateAnonymousClient();
+
+        await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto());
+
+        // Act
+        var response = await client.PostAsJsonAsync("/api/auth/register", TestDataBuilder.CreateValidRegisterDto());
+
+        // Assert
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Contains("Too many registration attempts", await response.Content.ReadAsStringAsync());
+    }
+
     #endregion
+
+    private static DateTimeOffset ParseCookieExpires(string attributes)
+    {
+        var expires = attributes.Split(';')
+            .Select(a => a.Trim())
+            .Single(a => a.StartsWith("expires=", StringComparison.OrdinalIgnoreCase));
+
+        return DateTimeOffset.Parse(expires["expires=".Length..], System.Globalization.CultureInfo.InvariantCulture);
+    }
 
     private static async Task<HttpResponseMessage> SendRefreshAsync(HttpClient client, string refreshToken)
     {

@@ -69,6 +69,45 @@ public class StuckSubmissionSweeperTests(DatabaseFixture fixture) : IClassFixtur
         stored.Status.Should().Be(SubmissionStatus.Running);
     }
 
+    [Fact]
+    public async Task Sweep_ShouldNotOverwriteASubmissionCompletedAfterItWentStale()
+    {
+        // Arrange: Running past its timeout, then graded by the consumer just before the sweep.
+        // The grade is written with a guarded update that keeps the old UpdatedAt here, so only the
+        // status in the sweeper's WHERE clause protects it
+        var submissionId = await SeedSubmissionAsync(SubmissionStatus.Running, TimeSpan.FromHours(1));
+        await using (var dbContext = fixture.CreateDbContext())
+        {
+            await dbContext.Submissions
+                .Where(s => s.Id == submissionId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.Status, SubmissionStatus.Completed)
+                    .SetProperty(x => x.Score, 100));
+        }
+
+        // Act
+        var failed = await CreateSweeper().SweepAsync(CancellationToken.None);
+
+        // Assert
+        failed.Should().Be(0);
+        var stored = await GetSubmissionAsync(submissionId);
+        stored.Status.Should().Be(SubmissionStatus.Completed);
+        stored.Score.Should().Be(100);
+        stored.RuntimeError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Sweep_ShouldStampUpdatedAtOnFailedSubmissions()
+    {
+        var submissionId = await SeedSubmissionAsync(SubmissionStatus.Running, TimeSpan.FromHours(2));
+
+        await CreateSweeper().SweepAsync(CancellationToken.None);
+
+        var stored = await GetSubmissionAsync(submissionId);
+        stored.Status.Should().Be(SubmissionStatus.RuntimeError);
+        stored.UpdatedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1));
+    }
+
     private StuckSubmissionSweeper CreateSweeper()
     {
         var provider = new ServiceCollection()

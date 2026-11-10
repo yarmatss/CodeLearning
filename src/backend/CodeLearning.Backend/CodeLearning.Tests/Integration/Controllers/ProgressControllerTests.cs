@@ -1,6 +1,9 @@
 using CodeLearning.Application.DTOs.Progress;
+using CodeLearning.Application.DTOs.Quiz;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
+using CodeLearning.Infrastructure.Services.Learning;
+using System.Text.Json;
 using CodeLearning.Tests.Fixtures;
 using CodeLearning.Tests.Helpers;
 using FluentAssertions;
@@ -62,7 +65,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
         var result = await response.Content.ReadFromJsonAsync<CompleteBlockResponseDto>();
         result.Should().NotBeNull();
         result!.BlockId.Should().Be(_block1Id);
-        result.NextBlockId.Should().NotBeNull(); // Should be block2
+        result.NextBlockId.Should().Be(_block2Id);
         result.Message.Should().Contain("completed successfully");
         result.CourseCompleted.Should().BeFalse();
 
@@ -116,7 +119,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
-    public async Task CompleteBlock_NotEnrolled_ShouldReturn400()
+    public async Task CompleteBlock_NotEnrolled_ShouldReturn403()
     {
         // Create new student
         var newStudentToken = await GetStudentTokenAsync();
@@ -124,7 +127,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
         var response = await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var content = await response.Content.ReadAsStringAsync();
         content.Should().Contain("must be enrolled");
     }
@@ -142,9 +145,7 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
     [Fact]
     public async Task CompleteBlock_WithoutAuth_ShouldReturn401()
     {
-        _client.DefaultRequestHeaders.Authorization = null;
-
-        var response = await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
+        var response = await _factory.CreateAnonymousClient().PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -244,14 +245,14 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
     }
 
     [Fact]
-    public async Task GetCourseProgress_NotEnrolled_ShouldReturn400()
+    public async Task GetCourseProgress_NotEnrolled_ShouldReturn403()
     {
         var newStudentToken = await GetStudentTokenAsync();
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", newStudentToken);
 
         var response = await _client.GetAsync($"/api/progress/courses/{_courseId}");
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     #endregion
@@ -306,7 +307,178 @@ public class ProgressControllerTests : IClassFixture<IntegrationTestWebAppFactor
 
     #endregion
 
+    #region Access, CurrentBlockId And Server-Side Completion Tests
+
+    [Fact]
+    public async Task GetNextBlock_NotEnrolled_ShouldReturn403()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await GetStudentTokenAsync());
+
+        var response = await _client.GetAsync($"/api/progress/courses/{_courseId}/next-block");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CompleteBlock_UnpublishedCourse_ShouldReturn403()
+    {
+        await using (var db = NewDbContext())
+        {
+            await db.Courses.Where(c => c.Id == _courseId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CourseStatus.Draft));
+        }
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetCourseProgress_BlockType_ShouldUseBlockTypeEnumLikeBlockResponse()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await _client.GetAsync($"/api/progress/courses/{_courseId}");
+        var json = await response.Content.ReadAsStringAsync();
+        var progress = JsonSerializer.Deserialize<CourseProgressDto>(json, JsonSerializerOptions.Web);
+
+        var blocks = progress!.Chapters.SelectMany(c => c.Subchapters).SelectMany(s => s.Blocks).ToList();
+        blocks.Single(b => b.BlockId == _block1Id).Type.Should().Be(BlockType.Theory);
+        blocks.Single(b => b.BlockId == _block3Id).Type.Should().Be(BlockType.Video);
+        // No global string enum converter: BlockType is serialized as its number, as in BlockResponseDto
+        json.Should().Contain("\"type\":1");
+    }
+
+    [Fact]
+    public async Task SubmitQuiz_BeforeEarlierBlocks_ShouldPointCurrentBlockAtFirstIncompleteBlock()
+    {
+        var (quizId, questionId, correctAnswerId) = await AddAnsweredQuizBlockAsync(orderIndex: 4);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+
+        var response = await SubmitQuizAsync(quizId, questionId, correctAnswerId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var progress = await _client.GetFromJsonAsync<CourseProgressDto>($"/api/progress/courses/{_courseId}");
+        progress!.CurrentBlockId.Should().Be(_block1Id);
+        progress.CompletedBlocksCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SubmitQuiz_AsLastIncompleteBlock_ShouldClearCurrentBlockAndCompleteCourse()
+    {
+        var (quizId, questionId, correctAnswerId) = await AddAnsweredQuizBlockAsync(orderIndex: 4);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+        await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null);
+        await _client.PostAsync($"/api/progress/blocks/{_block2Id}/complete", null);
+        await _client.PostAsync($"/api/progress/blocks/{_block3Id}/complete", null);
+
+        var response = await SubmitQuizAsync(quizId, questionId, correctAnswerId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var progress = await _client.GetFromJsonAsync<CourseProgressDto>($"/api/progress/courses/{_courseId}");
+        progress!.CurrentBlockId.Should().BeNull();
+        progress.ProgressPercentage.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task CompleteBlock_ShouldMoveCurrentBlockToNextIncomplete()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+        await _client.PostAsync($"/api/progress/blocks/{_block2Id}/complete", null);
+
+        await using var db = NewDbContext();
+        var studentId = await GetCurrentStudentIdAsync(db);
+        var enrollment = await db.StudentCourseProgresses.SingleAsync(p => p.CourseId == _courseId && p.StudentId == studentId);
+        enrollment.CurrentBlockId.Should().Be(_block1Id);
+    }
+
+    [Fact]
+    public async Task Reenroll_ShouldRestoreSolvedProblemBlocks()
+    {
+        var (problemBlockId, problemId) = await AddProblemBlockAsync();
+        await AddSubmissionAsync(problemId, SubmissionStatus.Completed, score: 100);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+        (await _client.PostAsync($"/api/progress/blocks/{problemBlockId}/complete", null)).EnsureSuccessStatusCode();
+        (await _client.PostAsync($"/api/progress/blocks/{_block1Id}/complete", null)).EnsureSuccessStatusCode();
+
+        (await _client.DeleteAsync($"/api/enrollments/courses/{_courseId}")).EnsureSuccessStatusCode();
+        (await _client.PostAsync($"/api/enrollments/courses/{_courseId}", null)).EnsureSuccessStatusCode();
+
+        var progress = await _client.GetFromJsonAsync<CourseProgressDto>($"/api/progress/courses/{_courseId}");
+        var blocks = progress!.Chapters.SelectMany(c => c.Subchapters).SelectMany(s => s.Blocks).ToList();
+        blocks.Single(b => b.BlockId == problemBlockId).IsCompleted.Should().BeTrue();
+        blocks.Single(b => b.BlockId == _block1Id).IsCompleted.Should().BeFalse(); // viewing is not restored
+        progress.CurrentBlockId.Should().Be(_block1Id);
+    }
+
+    [Fact]
+    public async Task CompleteSolvedProblemBlocks_ShouldCompleteBlocksOfEnrolledCoursesOnly()
+    {
+        var (problemBlockId, problemId) = await AddProblemBlockAsync();
+        await AddSubmissionAsync(problemId, SubmissionStatus.Completed, score: 100);
+
+        int completed;
+        Guid studentId;
+        await using (var db = NewDbContext())
+        {
+            studentId = await GetCurrentStudentIdAsync(db);
+            completed = await ProgressWriter.CompleteSolvedProblemBlocksAsync(db, studentId, problemId);
+        }
+
+        completed.Should().Be(1);
+        await using var verify = NewDbContext();
+        (await verify.StudentBlockProgresses.SingleAsync(bp => bp.BlockId == problemBlockId && bp.StudentId == studentId))
+            .IsCompleted.Should().BeTrue();
+
+        // Calling again is a no-op, and a user who is not enrolled gets nothing
+        await using var again = NewDbContext();
+        (await ProgressWriter.CompleteSolvedProblemBlocksAsync(again, studentId, problemId)).Should().Be(0);
+        (await ProgressWriter.CompleteSolvedProblemBlocksAsync(again, Guid.NewGuid(), problemId)).Should().Be(0);
+    }
+
+    #endregion
+
     #region Helper Methods
+
+    private CodeLearning.Infrastructure.Data.ApplicationDbContext NewDbContext()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var connectionString = scope.ServiceProvider
+            .GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>().Database.GetConnectionString();
+        return new CodeLearning.Infrastructure.Data.ApplicationDbContext(
+            new DbContextOptionsBuilder<CodeLearning.Infrastructure.Data.ApplicationDbContext>().UseNpgsql(connectionString).Options);
+    }
+
+    private Task<HttpResponseMessage> SubmitQuizAsync(Guid quizId, Guid questionId, Guid answerId) =>
+        _client.PostAsJsonAsync($"/api/quizzes/{quizId}/submit", new SubmitQuizDto
+        {
+            Answers = [new QuizAnswerSubmissionDto { QuestionId = questionId, SelectedAnswerIds = [answerId] }]
+        });
+
+    private async Task<(Guid QuizId, Guid QuestionId, Guid CorrectAnswerId)> AddAnsweredQuizBlockAsync(int orderIndex)
+    {
+        await using var db = NewDbContext();
+        var subchapterId = await db.CourseBlocks.Where(b => b.Id == _block1Id).Select(b => b.SubchapterId).FirstAsync();
+
+        var quiz = new Quiz { Block = null! };
+        var question = new QuizQuestion { Content = "2+2?", Type = QuestionType.SingleChoice, OrderIndex = 1, Quiz = quiz };
+        var correct = new QuizAnswer { Text = "4", IsCorrect = true, OrderIndex = 1, Question = question };
+        var wrong = new QuizAnswer { Text = "5", IsCorrect = false, OrderIndex = 2, Question = question };
+        question.Answers.Add(correct);
+        question.Answers.Add(wrong);
+        quiz.Questions.Add(question);
+
+        db.CourseBlocks.Add(new CourseBlock
+        {
+            Title = "Quiz", Type = BlockType.Quiz, OrderIndex = orderIndex,
+            SubchapterId = subchapterId, Subchapter = null!, Quiz = quiz
+        });
+        await db.SaveChangesAsync();
+
+        return (quiz.Id, question.Id, correct.Id);
+    }
 
     private async Task<string> GetStudentTokenAsync()
     {

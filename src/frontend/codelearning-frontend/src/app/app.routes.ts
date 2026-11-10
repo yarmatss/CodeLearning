@@ -1,14 +1,14 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/guards/auth.guard';
-import { teacherGuard } from './core/guards/role.guard';
+import { authGuard, guestGuard } from './core/guards/auth.guard';
+import { studentGuard, teacherGuard } from './core/guards/role.guard';
 
 // Lazy routes: each page, and heavy dependencies such as the Monaco editor on the learn page,
 // load only when visited instead of in the initial bundle
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
-  { path: 'login', loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent) },
-  { path: 'register', loadComponent: () => import('./features/auth/register/register.component').then(m => m.RegisterComponent) },
+  { path: 'login', loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent), canActivate: [guestGuard] },
+  { path: 'register', loadComponent: () => import('./features/auth/register/register.component').then(m => m.RegisterComponent), canActivate: [guestGuard] },
   { 
     path: 'dashboard', 
     loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent),
@@ -32,7 +32,7 @@ export const routes: Routes = [
   {
     path: 'learn/:courseId',
     loadComponent: () => import('./features/learn/learn').then(m => m.Learn),
-    canActivate: [authGuard]
+    canActivate: [authGuard, studentGuard]
   },
   {
     path: 'courses/:id/edit',

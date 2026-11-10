@@ -1,15 +1,42 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, catchError, switchMap, throwError } from 'rxjs';
+import { PagedResult, PageRequest, toQueryParams } from '../models/paging.model';
+
+export type ProblemDifficulty = 'Easy' | 'Medium' | 'Hard';
+
+/** Row of GET /api/problems and /api/problems/my: counts instead of test cases and starter codes. */
+export interface ProblemListItem {
+  id: string;
+  title: string;
+  // At most 200 characters, ending with "..." when the full description is longer
+  description: string;
+  difficulty: ProblemDifficulty;
+  authorId: string;
+  authorName: string;
+  testCasesCount: number;
+  languagesCount: number;
+  isUsedByPublishedCourse: boolean;
+  tags: TagResponse[];
+  createdAt: Date;
+}
+
+export interface ProblemListQuery extends PageRequest {
+  difficulty?: ProblemDifficulty | '';
+  tagId?: string;
+  search?: string;
+}
 
 export interface ProblemResponse {
   id: string;
   title: string;
   description: string;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
+  difficulty: ProblemDifficulty;
   authorId: string;
   authorName?: string;
   createdAt: Date;
+  // A published course uses the problem: every edit answers 409 until that course is unpublished
+  isUsedByPublishedCourse: boolean;
   testCases: TestCaseResponse[];
   starterCodes: StarterCodeResponse[];
   tags: TagResponse[];
@@ -38,7 +65,7 @@ export interface TagResponse {
 export interface CreateProblemRequest {
   title: string;
   description: string;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
+  difficulty: ProblemDifficulty;
   testCases?: CreateTestCaseRequest[];
   starterCodes?: CreateStarterCodeRequest[];
   tagIds?: string[];
@@ -47,7 +74,7 @@ export interface CreateProblemRequest {
 export interface UpdateProblemRequest {
   title: string;
   description: string;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
+  difficulty: ProblemDifficulty;
   tagIds?: string[];
 }
 
@@ -83,17 +110,14 @@ export class ProblemService {
   private readonly http = inject(HttpClient);
 
   // Problem CRUD
-  getProblems(difficulty?: string, tagId?: string, search?: string): Observable<ProblemResponse[]> {
-    let params: any = {};
-    if (difficulty) params.difficulty = difficulty;
-    if (tagId) params.tagId = tagId;
-    if (search) params.search = search;
-    
-    return this.http.get<ProblemResponse[]>('/api/problems', { params });
+  /** Problems the caller authored or that a published course they are enrolled in uses. */
+  getProblems(query: ProblemListQuery = {}): Observable<PagedResult<ProblemListItem>> {
+    return this.http.get<PagedResult<ProblemListItem>>('/api/problems', { params: toQueryParams(query) });
   }
 
-  getMyProblems(): Observable<ProblemResponse[]> {
-    return this.http.get<ProblemResponse[]>('/api/problems/my');
+  /** The teacher's own problems. */
+  getMyProblems(query: ProblemListQuery = {}): Observable<PagedResult<ProblemListItem>> {
+    return this.http.get<PagedResult<ProblemListItem>>('/api/problems/my', { params: toQueryParams(query) });
   }
 
   getProblem(id: string): Observable<ProblemResponse> {
@@ -144,5 +168,27 @@ export class ProblemService {
 
   deleteStarterCode(starterCodeId: string): Observable<{ message: string }> {
     return this.http.delete<{ message: string }>(`/api/problems/startercodes/${starterCodeId}`);
+  }
+
+  /**
+   * Replaces a starter code's code. The API has no update endpoint, so this deletes the starter
+   * code and adds it again; if the add fails, the original code is put back and the add's error is
+   * rethrown. Deleting the last starter code is refused by the API, so a problem's only language
+   * cannot be edited this way.
+   */
+  replaceStarterCode(problemId: string, existing: StarterCodeResponse, code: string): Observable<StarterCodeResponse> {
+    const add = (body: string) => this.addStarterCode(problemId, { languageId: existing.languageId, code: body });
+    return this.deleteStarterCode(existing.id).pipe(
+      switchMap(() =>
+        add(code).pipe(
+          catchError((error: unknown) =>
+            add(existing.code).pipe(
+              catchError(() => throwError(() => error)),
+              switchMap(() => throwError(() => error))
+            )
+          )
+        )
+      )
+    );
   }
 }

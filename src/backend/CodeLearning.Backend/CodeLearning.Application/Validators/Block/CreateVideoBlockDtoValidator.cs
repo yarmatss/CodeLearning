@@ -1,14 +1,11 @@
 using CodeLearning.Application.DTOs.Block;
+using CodeLearning.Application.Extensions;
 using FluentValidation;
-using System.Text.RegularExpressions;
 
 namespace CodeLearning.Application.Validators.Block;
 
-public partial class CreateVideoBlockDtoValidator : AbstractValidator<CreateVideoBlockDto>
+public class CreateVideoBlockDtoValidator : AbstractValidator<CreateVideoBlockDto>
 {
-    [GeneratedRegex(@"^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11}).*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex YouTubeUrlRegex();
-
     public CreateVideoBlockDtoValidator()
     {
         RuleFor(x => x.Title)
@@ -16,15 +13,9 @@ public partial class CreateVideoBlockDtoValidator : AbstractValidator<CreateVide
             .MaximumLength(200).WithMessage("Title must not exceed 200 characters");
 
         RuleFor(x => x.VideoUrl)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty().WithMessage("Video URL is required")
-            .Must(BeValidYouTubeUrl).WithMessage("Invalid YouTube URL format. Supported: youtube.com/watch?v=... or youtu.be/...");
-    }
-
-    private static bool BeValidYouTubeUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            return false;
-
-        return YouTubeUrlRegex().IsMatch(url);
+            .MaximumLength(2000).WithMessage("Video URL must not exceed 2000 characters")
+            .Must(url => url.IsValidYouTubeUrl()).WithMessage(YouTubeUrlRules.InvalidUrlMessage);
     }
 }

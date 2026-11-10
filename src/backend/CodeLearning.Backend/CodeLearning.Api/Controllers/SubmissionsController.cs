@@ -22,6 +22,8 @@ public class SubmissionsController(
     [ProducesResponseType(typeof(SubmissionResponseDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> SubmitCode([FromBody] SubmitCodeDto dto)
     {
@@ -45,7 +47,7 @@ public class SubmissionsController(
         return Accepted(submission);
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(SubmissionResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -68,7 +70,7 @@ public class SubmissionsController(
         return Ok(submission);
     }
 
-    [HttpGet("problem/{problemId}")]
+    [HttpGet("problem/{problemId:guid}")]
     [ProducesResponseType(typeof(List<SubmissionResponseDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetMySubmissions(Guid problemId)

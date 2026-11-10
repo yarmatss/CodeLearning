@@ -1,3 +1,4 @@
+using CodeLearning.Application.DTOs.Common;
 using CodeLearning.Application.DTOs.Enrollment;
 using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
@@ -106,7 +107,7 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
     [Fact]
     public async Task Enroll_WithoutAuth_ShouldReturn401()
     {
-        var response = await _client.PostAsync($"/api/enrollments/courses/{_publishedCourseId}", null);
+        var response = await _factory.CreateAnonymousClient().PostAsync($"/api/enrollments/courses/{_publishedCourseId}", null);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -169,11 +170,13 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var courses = await response.Content.ReadFromJsonAsync<List<EnrolledCourseDto>>();
-        courses.Should().NotBeNull();
-        courses!.Should().HaveCount(1);
+        var page = await response.Content.ReadFromJsonAsync<PagedResult<EnrolledCourseDto>>();
+        page.Should().NotBeNull();
+        page!.TotalCount.Should().Be(1);
+        page.Items.Should().HaveCount(1);
 
-        var course = courses.First();
+        var course = page.Items.First();
+        course.CourseStatus.Should().Be(CourseStatus.Published);
         course.CourseId.Should().Be(_publishedCourseId);
         course.CompletedBlocksCount.Should().Be(0);
         course.TotalBlocksCount.Should().BeGreaterThan(0);
@@ -188,15 +191,46 @@ public class EnrollmentControllerTests : IClassFixture<IntegrationTestWebAppFact
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var courses = await response.Content.ReadFromJsonAsync<List<EnrolledCourseDto>>();
-        courses.Should().NotBeNull();
-        courses!.Should().BeEmpty();
+        var page = await response.Content.ReadFromJsonAsync<PagedResult<EnrolledCourseDto>>();
+        page.Should().NotBeNull();
+        page!.Items.Should().BeEmpty();
+        page.TotalCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetMyCourses_ShouldCountCompletedBlocksAndPage()
+    {
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _studentToken);
+        await _client.PostAsync($"/api/enrollments/courses/{_publishedCourseId}", null);
+
+        Guid blockId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<CodeLearning.Infrastructure.Data.ApplicationDbContext>();
+            blockId = await dbContext.CourseBlocks
+                .Where(b => b.Subchapter.Chapter.CourseId == _publishedCourseId)
+                .Select(b => b.Id)
+                .FirstAsync();
+        }
+
+        (await _client.PostAsync($"/api/progress/blocks/{blockId}/complete", null)).EnsureSuccessStatusCode();
+
+        var page = await _client.GetFromJsonAsync<PagedResult<EnrolledCourseDto>>("/api/enrollments/my-courses?page=1&pageSize=1");
+        var beyond = await _client.GetFromJsonAsync<PagedResult<EnrolledCourseDto>>("/api/enrollments/my-courses?page=2&pageSize=1");
+
+        page!.Items.Should().ContainSingle();
+        var course = page.Items.Single();
+        course.CompletedBlocksCount.Should().Be(1);
+        course.ProgressPercentage.Should().Be(Math.Round(100.0 / course.TotalBlocksCount, 2));
+        course.CurrentBlockId.Should().NotBe(blockId);
+        beyond!.Items.Should().BeEmpty();
+        beyond.TotalCount.Should().Be(1);
     }
 
     [Fact]
     public async Task GetMyCourses_WithoutAuth_ShouldReturn401()
     {
-        var response = await _client.GetAsync("/api/enrollments/my-courses");
+        var response = await _factory.CreateAnonymousClient().GetAsync("/api/enrollments/my-courses");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }

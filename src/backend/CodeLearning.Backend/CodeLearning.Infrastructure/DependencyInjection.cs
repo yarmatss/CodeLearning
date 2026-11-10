@@ -27,9 +27,18 @@ public static class DependencyInjection
         {
             services.AddPersistence(configuration);
 
-            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(
-                ConfigurationOptions.Parse(configuration.GetConnectionString("Redis")
-                    ?? throw new InvalidOperationException("Redis connection string not configured"))));
+            services.AddSingleton<IConnectionMultiplexer>(_ =>
+            {
+                var options = ConfigurationOptions.Parse(configuration.GetConnectionString("Redis")
+                    ?? throw new InvalidOperationException("Redis connection string not configured"));
+
+                // Start even while Redis is down and keep reconnecting in the background, instead of
+                // failing the first resolve and every request after it. Token checks fail closed meanwhile
+                options.AbortOnConnectFail = false;
+                options.ConnectRetry = 3;
+
+                return ConnectionMultiplexer.Connect(options);
+            });
 
             // Identity core only: authentication is the JWT, so Identity's cookie schemes are not registered
             services.AddIdentityCore<User>(options =>

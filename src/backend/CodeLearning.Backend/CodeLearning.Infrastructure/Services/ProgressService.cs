@@ -5,6 +5,7 @@ using CodeLearning.Core.Entities;
 using CodeLearning.Core.Enums;
 using CodeLearning.Infrastructure.Data;
 using CodeLearning.Infrastructure.Extensions;
+using CodeLearning.Infrastructure.Services.Learning;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodeLearning.Infrastructure.Services;
@@ -18,50 +19,23 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             .FirstOrDefaultAsync(b => b.Id == blockId)
             ?? throw new NotFoundException($"Block with ID {blockId} not found");
 
-        var courseId = block.Subchapter.Chapter.CourseId;
+        var course = block.Subchapter.Chapter.Course;
+        await EnsureEnrolledAsync(course.Id, studentId, "You must be enrolled in this course to mark blocks as completed");
 
-        var enrollment = await context.StudentCourseProgresses
-            .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
-            ?? throw new BusinessRuleException("You must be enrolled in this course to mark blocks as completed");
-
-        var existingProgress = await context.StudentBlockProgresses
-            .FirstOrDefaultAsync(bp => bp.BlockId == blockId && bp.StudentId == studentId);
-
-        if (existingProgress?.IsCompleted == true)
+        if (course.Status != CourseStatus.Published)
         {
-            var nextBlock = await GetNextBlockAsync(courseId, studentId);
-            return new CompleteBlockResponseDto
-            {
-                BlockId = blockId,
-                CompletedAt = existingProgress.CompletedAt ?? DateTimeOffset.UtcNow,
-                NextBlockId = nextBlock,
-                Message = "Block already completed",
-                CourseCompleted = nextBlock == null
-            };
+            throw new ForbiddenException("This course is not published at the moment");
         }
 
-        await EnsureBlockRequirementsMetAsync(block, studentId);
+        var isAlreadyCompleted = await context.StudentBlockProgresses
+            .AnyAsync(bp => bp.BlockId == blockId && bp.StudentId == studentId && bp.IsCompleted);
 
-        if (existingProgress == null)
+        if (!isAlreadyCompleted)
         {
-            existingProgress = new StudentBlockProgress
-            {
-                StudentId = studentId,
-                BlockId = blockId,
-                IsCompleted = true,
-                CompletedAt = DateTimeOffset.UtcNow,
-                Student = null!,
-                Block = null!
-            };
-            context.StudentBlockProgresses.Add(existingProgress);
-        }
-        else
-        {
-            existingProgress.IsCompleted = true;
-            existingProgress.CompletedAt = DateTimeOffset.UtcNow;
+            await EnsureBlockRequirementsMetAsync(block, studentId);
         }
 
-        enrollment.LastActivityAt = DateTimeOffset.UtcNow;
+        var completion = await ProgressWriter.MarkBlockCompletedAsync(context, studentId, course.Id, blockId);
 
         try
         {
@@ -75,31 +49,33 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             return await CompleteBlockAsync(blockId, studentId);
         }
 
-        var nextBlockId = await GetNextBlockAsync(courseId, studentId);
-        enrollment.CurrentBlockId = nextBlockId;
-        await context.SaveChangesAsync();
-
-        var (totalBlocks, completedBlocks) = await GetBlockCounts(courseId, studentId);
-        var courseCompleted = totalBlocks > 0 && completedBlocks == totalBlocks;
+        var message = completion switch
+        {
+            { WasAlreadyCompleted: true } => "Block already completed",
+            { CourseCompleted: true } => "Congratulations! You completed the course!",
+            _ => "Block completed successfully"
+        };
 
         return new CompleteBlockResponseDto
         {
             BlockId = blockId,
-            CompletedAt = existingProgress.CompletedAt ?? DateTimeOffset.UtcNow,
-            NextBlockId = nextBlockId,
-            Message = courseCompleted ? "Congratulations! You completed the course!" : "Block completed successfully",
-            CourseCompleted = courseCompleted
+            CompletedAt = completion.CompletedAt,
+            NextBlockId = completion.NextBlockId,
+            Message = message,
+            CourseCompleted = completion.CourseCompleted
         };
     }
 
     public async Task<CourseProgressDto> GetCourseProgressAsync(Guid courseId, Guid studentId)
     {
         var enrollment = await context.StudentCourseProgresses
+            .AsNoTracking()
             .Include(p => p.Course)
             .FirstOrDefaultAsync(p => p.CourseId == courseId && p.StudentId == studentId)
-            ?? throw new BusinessRuleException("You are not enrolled in this course");
+            ?? throw new ForbiddenException("You are not enrolled in this course");
 
         var blocks = await context.CourseBlocks
+            .AsNoTracking()
             .Include(b => b.Subchapter.Chapter)
             .Where(b => b.Subchapter.Chapter.CourseId == courseId)
             .OrderBy(b => b.Subchapter.Chapter.OrderIndex)
@@ -108,13 +84,13 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             .ToListAsync();
 
         var blockProgress = await context.StudentBlockProgresses
+            .AsNoTracking()
             .Where(bp => bp.StudentId == studentId &&
                          bp.Block.Subchapter.Chapter.CourseId == courseId)
-            .ToListAsync();
+            .ToDictionaryAsync(bp => bp.BlockId);
 
-        var chapters = BuildChapterProgress(blocks, blockProgress);
-        var (totalBlocks, completedCount) = CalculateProgress(blocks, blockProgress);
-        var progressPercentage = totalBlocks > 0 ? (double)completedCount / totalBlocks * 100 : 0;
+        var completedCount = blocks.Count(b => blockProgress.TryGetValue(b.Id, out var p) && p.IsCompleted);
+        var progressPercentage = blocks.Count > 0 ? (double)completedCount / blocks.Count * 100 : 0;
 
         return new CourseProgressDto
         {
@@ -124,30 +100,29 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
             LastActivityAt = enrollment.LastActivityAt,
             CurrentBlockId = enrollment.CurrentBlockId,
             CompletedBlocksCount = completedCount,
-            TotalBlocksCount = totalBlocks,
+            TotalBlocksCount = blocks.Count,
             ProgressPercentage = Math.Round(progressPercentage, 2),
-            Chapters = chapters
+            Chapters = BuildChapterProgress(blocks, blockProgress)
         };
     }
 
     public async Task<Guid?> GetNextBlockAsync(Guid courseId, Guid studentId)
     {
-        var blocks = await context.CourseBlocks
-            .Include(b => b.Subchapter.Chapter)
-            .Where(b => b.Subchapter.Chapter.CourseId == courseId)
-            .OrderBy(b => b.Subchapter.Chapter.OrderIndex)
-                .ThenBy(b => b.Subchapter.OrderIndex)
-                .ThenBy(b => b.OrderIndex)
-            .ToListAsync();
+        await EnsureEnrolledAsync(courseId, studentId, "You are not enrolled in this course");
 
-        var completedBlockIds = await context.StudentBlockProgresses
-            .Where(bp => bp.StudentId == studentId &&
-                         bp.IsCompleted &&
-                         bp.Block.Subchapter.Chapter.CourseId == courseId)
-            .Select(bp => bp.BlockId)
-            .ToListAsync();
+        var snapshot = await ProgressWriter.GetProgressSnapshotAsync(context, studentId, courseId);
+        return snapshot.NextBlockId;
+    }
 
-        return blocks.FirstOrDefault(b => !completedBlockIds.Contains(b.Id))?.Id;
+    private async Task EnsureEnrolledAsync(Guid courseId, Guid studentId, string message)
+    {
+        var isEnrolled = await context.StudentCourseProgresses
+            .AnyAsync(p => p.CourseId == courseId && p.StudentId == studentId);
+
+        if (!isEnrolled)
+        {
+            throw new ForbiddenException(message);
+        }
     }
 
     // Theory and video blocks complete on viewing; quiz and problem blocks need evidence of the work
@@ -180,64 +155,50 @@ public class ProgressService(ApplicationDbContext context) : IProgressService
         }
     }
 
-    private async Task<(int TotalBlocks, int CompletedBlocks)> GetBlockCounts(Guid courseId, Guid studentId)
-    {
-        var totalBlocks = await context.CourseBlocks
-            .Where(b => b.Subchapter.Chapter.CourseId == courseId)
-            .CountAsync();
-
-        var completedBlocks = await context.StudentBlockProgresses
-            .Where(bp => bp.StudentId == studentId &&
-                         bp.IsCompleted &&
-                         bp.Block.Subchapter.Chapter.CourseId == courseId)
-            .CountAsync();
-
-        return (totalBlocks, completedBlocks);
-    }
-
     private static List<ChapterProgressDto> BuildChapterProgress(
         List<CourseBlock> blocks,
-        List<StudentBlockProgress> blockProgress)
+        Dictionary<Guid, StudentBlockProgress> blockProgress)
     {
         return blocks
-            .GroupBy(b => b.Subchapter.Chapter)
-            .Select(chGroup => new ChapterProgressDto
+            .GroupBy(b => b.Subchapter.Chapter.Id)
+            .Select(chGroup =>
             {
-                ChapterId = chGroup.Key.Id,
-                Title = chGroup.Key.Title,
-                OrderIndex = chGroup.Key.OrderIndex,
-                Subchapters = chGroup
-                    .GroupBy(b => b.Subchapter)
-                    .Select(subGroup => new SubchapterProgressDto
-                    {
-                        SubchapterId = subGroup.Key.Id,
-                        Title = subGroup.Key.Title,
-                        OrderIndex = subGroup.Key.OrderIndex,
-                        Blocks = subGroup.Select(b =>
+                var chapter = chGroup.First().Subchapter.Chapter;
+                return new ChapterProgressDto
+                {
+                    ChapterId = chapter.Id,
+                    Title = chapter.Title,
+                    OrderIndex = chapter.OrderIndex,
+                    Subchapters = chGroup
+                        .GroupBy(b => b.SubchapterId)
+                        .Select(subGroup =>
                         {
-                            var progress = blockProgress.FirstOrDefault(bp => bp.BlockId == b.Id);
-                            return new BlockProgressDto
+                            var subchapter = subGroup.First().Subchapter;
+                            return new SubchapterProgressDto
                             {
-                                BlockId = b.Id,
-                                Title = b.Title,
-                                Type = b.Type.ToString(),
-                                OrderIndex = b.OrderIndex,
-                                IsCompleted = progress?.IsCompleted ?? false,
-                                CompletedAt = progress?.CompletedAt
+                                SubchapterId = subchapter.Id,
+                                Title = subchapter.Title,
+                                OrderIndex = subchapter.OrderIndex,
+                                Blocks = subGroup.Select(b =>
+                                {
+                                    blockProgress.TryGetValue(b.Id, out var progress);
+                                    return new BlockProgressDto
+                                    {
+                                        BlockId = b.Id,
+                                        Title = b.Title,
+                                        Type = b.Type,
+                                        OrderIndex = b.OrderIndex,
+                                        IsCompleted = progress?.IsCompleted ?? false,
+                                        CompletedAt = progress?.CompletedAt
+                                    };
+                                }).ToList()
                             };
-                        }).ToList()
-                    })
-                    .OrderBy(s => s.OrderIndex)
-                    .ToList()
+                        })
+                        .OrderBy(s => s.OrderIndex)
+                        .ToList()
+                };
             })
             .OrderBy(ch => ch.OrderIndex)
             .ToList();
-    }
-
-    private static (int TotalBlocks, int CompletedCount) CalculateProgress(
-        List<CourseBlock> blocks,
-        List<StudentBlockProgress> blockProgress)
-    {
-        return (blocks.Count, blockProgress.Count(bp => bp.IsCompleted));
     }
 }

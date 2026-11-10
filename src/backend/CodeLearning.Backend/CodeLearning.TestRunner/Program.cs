@@ -1,8 +1,8 @@
 ﻿using CodeLearning.Core.Enums;
+using CodeLearning.Core.Grading;
 using CodeLearning.Core.Models;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -11,63 +11,52 @@ namespace CodeLearning.TestRunner;
 [JsonSerializable(typeof(ExecutionResult))]
 internal partial class AppJsonContext : JsonSerializerContext { }
 
+// Usage:
+//   runner --run "<command>" --input <dir with input_N.txt> --out <result.json>
+//          [--timelimit <ms per test, default 2000>] [--memorylimitkb <kb, 0 = unknown>]
+//          [--totaltimelimit <ms for all tests, 0 = none>] [--workdir <dir, default: current directory>]
+// The per-test statistics of /usr/bin/time go to time-<n>.txt next to --out, so that directory
+// must not be writable by the submission
 static partial class Program
 {
-    const int MAX_OUTPUT_CHARS = 10000;
+    // Expected outputs are capped at 10,000 characters, so this always fits a correct answer
+    const int MaxStdoutBytes = 32 * 1024;
+    const int MaxStderrBytes = 8 * 1024;
 
-    // Lines that /usr/bin/time -v appends to stderr; everything else is the program's own error output
-    static readonly string[] TimeOutputMarkers =
-    [
-        "Command being timed:",
-        "User time (seconds):",
-        "System time (seconds):",
-        "Percent of CPU this job got:",
-        "Elapsed (wall clock) time",
-        "Average shared text size",
-        "Average unshared data size",
-        "Average stack size",
-        "Average total size",
-        "Average resident set size",
-        "Major (requiring I/O) page faults",
-        "Minor (reclaiming a frame) page faults",
-        "Voluntary context switches",
-        "Involuntary context switches",
-        "Swaps",
-        "File system inputs",
-        "File system outputs",
-        "Socket messages sent",
-        "Socket messages received",
-        "Signals delivered",
-        "Page size (bytes)",
-        "Exit status:",
-        "Command terminated by signal"
-    ];
-
-    const string PeakMemoryMarker = "Maximum resident set size (kbytes):";
-
-    // Printed by /usr/bin/time when the command was killed by SIGKILL
-    const string KilledBySigKillMarker = "Command terminated by signal 9";
+    // How long the pipes may stay open after the process exited (or was killed) before the reads are abandoned
+    static readonly TimeSpan PipeDrainTimeout = TimeSpan.FromSeconds(2);
 
     static async Task<int> Main(string[] args)
     {
         var options = ParseArgs(args);
-        if (string.IsNullOrEmpty(options.RunCommand)) return 1;
+        if (options == null)
+        {
+            await Console.Error.WriteLineAsync("Usage: runner --run <command> --input <dir> --out <file> [--timelimit <ms>] "
+                                    + "[--memorylimitkb <kb>] [--totaltimelimit <ms>] [--workdir <dir>]");
+            return 1;
+        }
 
-        // The submission runs as the same user as this agent. Non-dumpable keeps it from reading this
-        // process's memory or file descriptors through /proc, where the test inputs are held
+        // Non-dumpable keeps the submission from reading this process's memory or file descriptors
+        // through /proc, where the test inputs are held
         MakeNonDumpable();
 
         var result = await RunAllTestsAsync(options);
-
-        var json = JsonSerializer.Serialize(result, AppJsonContext.Default.ExecutionResult);
-        await File.WriteAllTextAsync(options.OutputFile, json);
+        await WriteResultAsync(options.OutputFile, result);
 
         return 0;
     }
 
-    sealed record RunnerOptions(string RunCommand, string InputDir, string OutputFile, int TimeLimitMs, long MemoryLimitKb);
+    sealed record RunnerOptions(
+        string RunCommand,
+        string InputDir,
+        string OutputFile,
+        string StatsDir,
+        string? WorkDir,
+        int TimeLimitMs,
+        long MemoryLimitKb,
+        int TotalTimeLimitMs);
 
-    static RunnerOptions ParseArgs(string[] args)
+    static RunnerOptions? ParseArgs(string[] args)
     {
         var values = new Dictionary<string, string>();
         var i = 0;
@@ -84,7 +73,14 @@ static partial class Program
             }
         }
 
-        var timeLimitMs = values.TryGetValue("--timelimit", out var limit) && int.TryParse(limit, out var parsed)
+        if (!values.TryGetValue("--run", out var run) || string.IsNullOrWhiteSpace(run)
+            || !values.TryGetValue("--input", out var input) || string.IsNullOrWhiteSpace(input)
+            || !values.TryGetValue("--out", out var output) || string.IsNullOrWhiteSpace(output))
+        {
+            return null;
+        }
+
+        var timeLimitMs = values.TryGetValue("--timelimit", out var limit) && int.TryParse(limit, out var parsed) && parsed > 0
             ? parsed
             : 2000;
 
@@ -93,20 +89,26 @@ static partial class Program
             ? parsedMemory
             : 0;
 
+        // 0 means no budget for the whole run; the container-level timeout is then the only cap
+        var totalTimeLimitMs = values.TryGetValue("--totaltimelimit", out var total) && int.TryParse(total, out var parsedTotal)
+            ? Math.Max(0, parsedTotal)
+            : 0;
+
+        var outputFile = Path.GetFullPath(output);
+
         return new RunnerOptions(
-            values.GetValueOrDefault("--run", ""),
-            values.GetValueOrDefault("--input", "/app/io"),
-            values.GetValueOrDefault("--out", "/app/result.json"),
+            run,
+            input,
+            outputFile,
+            Path.GetDirectoryName(outputFile) ?? "/",
+            values.GetValueOrDefault("--workdir"),
             timeLimitMs,
-            memoryLimitKb);
+            memoryLimitKb,
+            totalTimeLimitMs);
     }
 
     static async Task<ExecutionResult> RunAllTestsAsync(RunnerOptions options)
     {
-        var runCommand = options.RunCommand;
-        var inputDir = options.InputDir;
-        var timeLimitMs = options.TimeLimitMs;
-
         var result = new ExecutionResult
         {
             Status = SubmissionStatus.Running,
@@ -117,13 +119,34 @@ static partial class Program
 
         try
         {
-            var inputs = await LoadAndRemoveInputsAsync(inputDir);
+            var inputs = await LoadAndRemoveInputsAsync(options.InputDir);
 
             long maxMemoryUsed = 0;
 
             foreach (var (testIndex, inputContent) in inputs)
             {
-                var testResult = await RunSingleTestAsync(runCommand, inputContent, timeLimitMs, options.MemoryLimitKb);
+                var timeoutMs = options.TimeLimitMs;
+
+                if (options.TotalTimeLimitMs > 0)
+                {
+                    var remainingMs = options.TotalTimeLimitMs - (int)totalSw.ElapsedMilliseconds;
+                    if (remainingMs <= 0)
+                    {
+                        // Out of budget for the whole run: the rest are reported instead of being cut off by the container timeout
+                        result.TestResults.Add(new TestCaseResult
+                        {
+                            TestIndex = testIndex,
+                            Status = TestResultStatus.TimeLimitExceeded,
+                            ExecutionTimeMs = 0
+                        });
+                        continue;
+                    }
+
+                    timeoutMs = Math.Min(timeoutMs, remainingMs);
+                }
+
+                var statsFile = Path.Combine(options.StatsDir, $"time-{testIndex}.txt");
+                var testResult = await RunSingleTestAsync(options, inputContent, timeoutMs, statsFile);
                 testResult.TestIndex = testIndex;
                 KillLeftoverProcesses();
 
@@ -131,6 +154,11 @@ static partial class Program
                     maxMemoryUsed = testResult.MemoryUsedKB.Value;
 
                 result.TestResults.Add(testResult);
+                result.TotalExecutionTimeMs = (int?)totalSw.ElapsedMilliseconds;
+                result.MaxMemoryUsedKB = (int?)maxMemoryUsed;
+
+                // Partial results survive a container-level timeout; the final write replaces them
+                await WriteResultAsync(options.OutputFile, result);
             }
 
             result.Status = SubmissionStatus.Completed;
@@ -146,16 +174,25 @@ static partial class Program
         return result;
     }
 
-    // Every input is read before any submission process starts, then deleted, so the submission
-    // (which can read /app) only ever sees the input of the test it is running, on stdin
-    static async Task<List<(int TestIndex, string Content)>> LoadAndRemoveInputsAsync(string inputDir)
+    // Written to a temporary file first, so a reader never sees a half-written result
+    static async Task WriteResultAsync(string outputFile, ExecutionResult result)
     {
-        var inputs = new List<(int TestIndex, string Content)>();
+        var json = JsonSerializer.Serialize(result, AppJsonContext.Default.ExecutionResult);
+        var tempFile = outputFile + ".tmp";
+        await File.WriteAllTextAsync(tempFile, json);
+        File.Move(tempFile, outputFile, overwrite: true);
+    }
+
+    // Every input is read before any submission process starts, then deleted, so the submission
+    // only ever sees the input of the test it is running, on stdin
+    static async Task<List<(int TestIndex, byte[] Content)>> LoadAndRemoveInputsAsync(string inputDir)
+    {
+        var inputs = new List<(int TestIndex, byte[] Content)>();
 
         foreach (var inputFile in Directory.GetFiles(inputDir, "input_*.txt"))
         {
             var testIndex = int.Parse(Path.GetFileNameWithoutExtension(inputFile).Split('_')[1]);
-            inputs.Add((testIndex, await File.ReadAllTextAsync(inputFile)));
+            inputs.Add((testIndex, await File.ReadAllBytesAsync(inputFile)));
             File.Delete(inputFile);
         }
 
@@ -179,127 +216,161 @@ static partial class Program
     [LibraryImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static partial int Kill(int pid, int sig);
 
+    [LibraryImport("libc", EntryPoint = "geteuid")]
+    private static partial uint Geteuid();
+
     const int SIGKILL = 9;
 
-    // Submission processes that daemonized escape Process.Kill(entireProcessTree).
-    // kill(-1) signals every process this user can reach except PID 1 and the runner itself.
+    // Submission processes that daemonized escape Process.Kill(entireProcessTree)
     static void KillLeftoverProcesses()
     {
-        if (OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsLinux())
         {
-            // Fails with ESRCH when nothing is left to kill, which is the normal case
+            return;
+        }
+
+        if (Geteuid() != 0)
+        {
+            // The submission runs as this agent's user: kill(-1) signals every process this user can reach
+            // except PID 1 and the agent itself. Fails with ESRCH when nothing is left, the normal case
             _ = Kill(-1, SIGKILL);
+            return;
         }
-    }
 
-    static void AppendLimited(StringBuilder builder, string? line, bool markTruncation)
-    {
-        if (line == null) return;
-
-        if (builder.Length < MAX_OUTPUT_CHARS) builder.AppendLine(line);
-        else if (markTruncation && builder.Length == MAX_OUTPUT_CHARS) builder.AppendLine("... [Output Truncated]");
-    }
-
-    static (long PeakMemoryKb, string ProgramErrors) ParseTimeOutput(string stderr)
-    {
-        long peakMemoryKb = 0;
-        var programErrors = new StringBuilder();
-
-        using var reader = new StringReader(stderr);
-        string? line;
-        while ((line = reader.ReadLine()) != null)
+        // As root, kill(-1) would also take down the bootstrap script, so only processes running under
+        // another user (the dropped-privilege submission) are killed. Repeated to catch processes forked meanwhile
+        for (var round = 0; round < 10; round++)
         {
-            if (line.Contains(PeakMemoryMarker))
+            var killedAny = false;
+
+            foreach (var pid in EnumerateNonRootProcesses())
             {
-                var parts = line.Split(':', StringSplitOptions.TrimEntries);
-                if (parts.Length > 1 && long.TryParse(parts[1], out long kb))
-                {
-                    peakMemoryKb = kb;
-                }
+                killedAny |= Kill(pid, SIGKILL) == 0;
             }
-            else if (!TimeOutputMarkers.Any(line.Contains))
+
+            if (!killedAny)
             {
-                programErrors.AppendLine(line);
+                return;
             }
         }
-
-        return (peakMemoryKb, programErrors.ToString().Trim());
     }
 
-    static async Task<TestCaseResult> RunSingleTestAsync(string command, string input, int timeoutMs, long memoryLimitKb)
+    static IEnumerable<int> EnumerateNonRootProcesses()
+    {
+        var self = Environment.ProcessId;
+
+        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(directory), out var pid) || pid == self || pid == 1)
+            {
+                continue;
+            }
+
+            string[] status;
+            try
+            {
+                status = File.ReadAllLines(Path.Combine(directory, "status"));
+            }
+            catch (IOException)
+            {
+                continue; // exited meanwhile
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            // "Uid:\t<real>\t<effective>\t<saved>\t<filesystem>"
+            var uidLine = status.FirstOrDefault(l => l.StartsWith("Uid:", StringComparison.Ordinal));
+            var uids = uidLine?.Split((char[])['\t', ' '], StringSplitOptions.RemoveEmptyEntries).Skip(1);
+
+            if (uids != null && uids.Any(uid => uid != "0"))
+            {
+                yield return pid;
+            }
+        }
+    }
+
+    static async Task<TestCaseResult> RunSingleTestAsync(RunnerOptions options, byte[] input, int timeoutMs, string statsFile)
     {
         var result = new TestCaseResult { ActualOutput = "" };
+
+        TryDelete(statsFile);
 
         var startInfo = new ProcessStartInfo
         {
             FileName = "/usr/bin/time",
-            Arguments = $"-v {command}",
+            // -o keeps the statistics out of the submission's stderr, which it controls and which is capped
+            Arguments = $"-v -o \"{statsFile}\" {options.RunCommand}",
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = "/app"
+            WorkingDirectory = options.WorkDir ?? ""
         };
 
         using var process = new Process { StartInfo = startInfo };
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
-
-        process.OutputDataReceived += (sender, e) => AppendLimited(outputBuilder, e.Data, markTruncation: true);
-        process.ErrorDataReceived += (sender, e) => AppendLimited(errorBuilder, e.Data, markTruncation: false);
-
-        var sw = Stopwatch.StartNew();
+        var stdout = new BoundedOutputCapture(MaxStdoutBytes);
+        var stderr = new BoundedOutputCapture(MaxStderrBytes);
 
         try
         {
             process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
 
-            await process.StandardInput.WriteAsync(input);
-            process.StandardInput.Close();
+            // The time limit starts before any input is written: a program that never reads stdin
+            // must not be able to stall the agent on a full pipe
+            using var timeout = new CancellationTokenSource(timeoutMs);
+            var sw = Stopwatch.StartNew();
 
-            using var cts = new CancellationTokenSource(timeoutMs);
+            var stdoutTask = stdout.CopyFromAsync(process.StandardOutput.BaseStream);
+            var stderrTask = stderr.CopyFromAsync(process.StandardError.BaseStream);
+            var stdinTask = WriteInputAsync(process.StandardInput.BaseStream, input);
+
+            var timedOut = false;
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                await process.WaitForExitAsync(timeout.Token);
             }
             catch (OperationCanceledException)
             {
-                process.Kill(entireProcessTree: true);
+                timedOut = true;
+                TryKillTree(process);
+            }
+
+            sw.Stop();
+
+            // Children left behind may still hold the pipes open
+            KillLeftoverProcesses();
+            await WaitQuietlyAsync(Task.WhenAll(stdoutTask, stderrTask, stdinTask), PipeDrainTimeout);
+
+            if (timedOut)
+            {
+                TryDelete(statsFile);
                 result.Status = TestResultStatus.TimeLimitExceeded;
                 result.ExecutionTimeMs = timeoutMs;
                 return result;
             }
 
-            sw.Stop();
+            var stats = await ReadStatsAsync(statsFile);
+            var errorOutput = stderr.GetText();
+
             result.ExecutionTimeMs = (int?)sw.ElapsedMilliseconds;
+            result.MemoryUsedKB = (int)stats.PeakMemoryKb;
+            result.Status = TestRunVerdict.Classify(process.ExitCode, stats, errorOutput, options.MemoryLimitKb);
 
-            var stderr = errorBuilder.ToString();
-            var (peakMemoryKb, programErrors) = ParseTimeOutput(stderr);
-            result.MemoryUsedKB = (int)peakMemoryKb;
-
-            // The cgroup OOM killer ends the process with SIGKILL; near the limit, that is a memory verdict
-            if (process.ExitCode != 0
-                && stderr.Contains(KilledBySigKillMarker)
-                && memoryLimitKb > 0
-                && peakMemoryKb >= memoryLimitKb * 9 / 10)
+            switch (result.Status)
             {
-                result.Status = TestResultStatus.MemoryLimitExceeded;
-                return result;
+                case TestResultStatus.RuntimeError:
+                    result.ErrorMessage = string.IsNullOrWhiteSpace(errorOutput)
+                        ? DescribeFailure(process.ExitCode, stats)
+                        : errorOutput.Trim();
+                    break;
+                case TestResultStatus.Failed:
+                    // Judged by SubmissionGrader outside the sandbox
+                    result.ActualOutput = stdout.GetText();
+                    break;
             }
-
-            if (process.ExitCode != 0)
-            {
-                result.Status = TestResultStatus.RuntimeError;
-                result.ErrorMessage = programErrors;
-                return result;
-            }
-
-            result.ActualOutput = outputBuilder.ToString().Trim();
-            // Judged by SubmissionGrader outside the sandbox
-            result.Status = TestResultStatus.Failed;
         }
         catch (Exception ex)
         {
@@ -308,5 +379,94 @@ static partial class Program
         }
 
         return result;
+    }
+
+    static string DescribeFailure(int exitCode, TimeStats stats) =>
+        stats.TerminatingSignal is { } signal
+            ? $"Process terminated by signal {signal}"
+            : $"Process exited with code {exitCode}";
+
+    static async Task WriteInputAsync(Stream stdin, byte[] input)
+    {
+        try
+        {
+            await stdin.WriteAsync(input);
+            await stdin.FlushAsync();
+        }
+        catch (IOException)
+        {
+            // EPIPE: the program exited or closed stdin without reading all of it
+        }
+        catch (ObjectDisposedException)
+        {
+            // The process was killed and its stdin pipe disposed while the input was still being written
+        }
+        finally
+        {
+            try
+            {
+                stdin.Close();
+            }
+            catch (IOException)
+            {
+                // EPIPE again on close: the reader is already gone, so there is nothing left to flush
+            }
+        }
+    }
+
+    static async Task WaitQuietlyAsync(Task task, TimeSpan timeout)
+    {
+        try
+        {
+            await task.WaitAsync(timeout);
+        }
+        catch (Exception)
+        {
+            // A read or write that never finished only loses output past what was captured
+        }
+    }
+
+    static async Task<TimeStats> ReadStatsAsync(string statsFile)
+    {
+        try
+        {
+            return TimeStats.Parse(await File.ReadAllTextAsync(statsFile));
+        }
+        catch (IOException)
+        {
+            return TimeStats.Unknown;
+        }
+        finally
+        {
+            TryDelete(statsFile);
+        }
+    }
+
+    static void TryKillTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception)
+        {
+            // Already exited
+        }
+    }
+
+    static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+            // Best effort: a leftover stats file in the agent's private tmpfs is discarded with the container
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Same as above; the file is never read again
+        }
     }
 }

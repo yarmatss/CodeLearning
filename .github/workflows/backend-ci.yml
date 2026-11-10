@@ -6,7 +6,14 @@ on:
     paths: ["src/backend/CodeLearning.Backend/**", ".github/workflows/backend-ci.yml"]
   pull_request:
     branches: ["main"]
-    paths: ["src/backend/CodeLearning.Backend/**"]
+    paths: ["src/backend/CodeLearning.Backend/**", ".github/workflows/backend-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -16,7 +23,9 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
@@ -29,18 +38,20 @@ jobs:
         dotnet-version: '10.0.x'
 
     - name: Setup Java
+      if: env.SONAR_TOKEN != ''
       uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '21'
 
     - name: Install SonarScanner
+      if: env.SONAR_TOKEN != ''
       run: dotnet tool install --global dotnet-sonarscanner
 
     - name: Begin SonarCloud Analysis
+      if: env.SONAR_TOKEN != ''
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       run: |
         dotnet sonarscanner begin \
           /k:"yarmatss_CodeLearning" \
@@ -56,10 +67,73 @@ jobs:
     - name: Build
       run: dotnet build CodeLearning.Backend.slnx --no-restore --configuration Release
 
+    # Sandbox tests need the executor images; they run in the sandbox-tests job
     - name: Run Tests
-      run: dotnet test CodeLearning.Backend.slnx --no-build --configuration Release
+      run: >
+        dotnet test CodeLearning.Backend.slnx --no-build --configuration Release
+        --filter "Category!=Sandbox"
+        --collect:"XPlat Code Coverage"
+        --results-directory ./TestResults
+        --
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs"
+        DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute
 
     - name: End SonarCloud Analysis
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      if: env.SONAR_TOKEN != ''
       run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  docker-images:
+    name: Docker image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: CodeLearning.Api/Dockerfile
+            tag: codelearningapi:ci
+          - name: runner
+            dockerfile: CodeLearning.Runner/Dockerfile
+            tag: codelearningrunner:ci
+          - name: docker-guard
+            dockerfile: CodeLearning.DockerGuard/Dockerfile
+            tag: codelearningdockerguard:ci
+          # The executor images are built (and then exercised) by the sandbox-tests job
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Build image
+      run: docker build --file "${{ matrix.dockerfile }}" --tag "${{ matrix.tag }}" .
+
+  sandbox-tests:
+    name: Sandbox Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+
+    # Same tags the Runner and DockerGuard expect (LanguageConfiguration, DockerGuard appsettings)
+    - name: Build executor images
+      run: |
+        docker build --file docker/python/Dockerfile --tag codelearning/python:3.12-slim .
+        docker build --file docker/node/Dockerfile --tag codelearning/node:22-slim .
+        docker build --file docker/csharp/Dockerfile --tag codelearning/dotnet:10.0 .
+        docker build --file docker/java/Dockerfile --tag codelearning/java:21-jdk .
+
+    - name: Restore dependencies
+      run: dotnet restore CodeLearning.Backend.slnx
+
+    - name: Build
+      run: dotnet build CodeLearning.Backend.slnx --no-restore --configuration Release
+
+    - name: Run Sandbox Tests
+      run: dotnet test CodeLearning.Backend.slnx --no-build --configuration Release --filter "Category=Sandbox"

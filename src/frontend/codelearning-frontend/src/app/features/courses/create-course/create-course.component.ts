@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { Router, RouterLink } from '@angular/router';
 import { CourseService } from '../../../core/services/course.service';
 import { CreateCourseRequest } from '../../../core/models/course.model';
+import { extractApiError } from '../../../core/utils/api-error';
 
 @Component({
   selector: 'app-create-course',
@@ -41,9 +42,9 @@ export class CreateCourseComponent {
         this.isLoading.set(false);
         this.router.navigate(['/courses', course.id, 'edit']);
       },
-      error: (error: any) => {
+      error: (error: unknown) => {
         this.isLoading.set(false);
-        this.errorMessage.set(error.error?.message || error.error?.detail || 'Failed to create course');
+        this.errorMessage.set(extractApiError(error, 'Failed to create course'));
       }
     });
   }

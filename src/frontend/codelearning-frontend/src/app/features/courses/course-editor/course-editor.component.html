@@ -6,14 +6,16 @@
   } @else if (course()) {
     <!-- Header -->
     <div class="mb-6 flex items-center justify-between">
-      <h1 class="text-3xl font-bold text-gray-900">Edit Course</h1>
+      <h1 class="text-3xl font-bold text-gray-900">{{ isLocked() ? 'Course Structure' : 'Edit Course' }}</h1>
       <div class="flex gap-2">
-        <button
-          (click)="publishCourse()"
-          class="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
-        >
-          Publish Course
-        </button>
+        @if (!isLocked()) {
+          <button
+            (click)="publishCourse()"
+            class="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
+          >
+            Publish Course
+          </button>
+        }
         <a
           [routerLink]="['/courses', course()!.id]"
           class="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50"
@@ -23,6 +25,8 @@
       </div>
     </div>
 
+    <app-course-lock-banner [course]="course()" (unpublished)="onUnpublished($event)" />
+
     <!-- Messages -->
     @if (successMessage()) {
       <div class="mb-6 rounded-md bg-green-50 p-4">
@@ -31,7 +35,7 @@
     }
     @if (errorMessage()) {
       <div class="mb-6 rounded-md bg-red-50 p-4">
-        <p class="text-sm text-red-800">{{ errorMessage() }}</p>
+        <p class="whitespace-pre-line text-sm text-red-800">{{ errorMessage() }}</p>
       </div>
     }
 
@@ -39,7 +43,7 @@
     <div class="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-xl font-semibold text-gray-900">Course Information</h2>
-        @if (!isEditingCourse()) {
+        @if (!isEditingCourse() && !isLocked()) {
           <button
             (click)="toggleEditCourse()"
             class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
@@ -49,7 +53,7 @@
         }
       </div>
 
-      @if (isEditingCourse()) {
+      @if (isEditingCourse() && !isLocked()) {
         <form [formGroup]="courseForm" (ngSubmit)="saveCourse()">
           <div class="mb-4">
             <label for="title" class="mb-1 block text-sm font-medium text-gray-700">Title</label>
@@ -96,7 +100,7 @@
       } @else {
         <div>
           <h3 class="mb-2 text-lg font-semibold text-gray-900">{{ course()!.title }}</h3>
-          <div class="text-gray-700 markdown-content" [innerHTML]="renderDescription(course()!.description)"></div>
+          <div class="text-gray-700 markdown-content" [innerHTML]="descriptionHtml()"></div>
         </div>
       }
     </div>
@@ -105,7 +109,7 @@
     <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-xl font-semibold text-gray-900">Course Structure</h2>
-        @if (!isAddingChapter()) {
+        @if (!isAddingChapter() && !isLocked()) {
           <button
             (click)="toggleAddChapter()"
             class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
@@ -116,7 +120,7 @@
       </div>
 
       <!-- Add Chapter Form -->
-      @if (isAddingChapter()) {
+      @if (isAddingChapter() && !isLocked()) {
         <form [formGroup]="chapterForm" (ngSubmit)="addChapter()" class="mb-6 rounded-md bg-gray-50 p-4">
           <div class="mb-3">
             <label for="chapterTitle" class="mb-1 block text-sm font-medium text-gray-700">
@@ -172,6 +176,7 @@
                   </p>
                 </div>
                 <div class="flex gap-2">
+                  @if (!isLocked()) {
                   <button
                     (click)="moveChapterUp(chapter.id, chapter.orderIndex)"
                     [disabled]="chapter.orderIndex === 1"
@@ -192,18 +197,21 @@
                   >
                     ↓
                   </button>
+                  }
                   <a
                     [routerLink]="['/courses', course()!.id, 'chapters', chapter.id, 'edit']"
                     class="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
                   >
-                    Manage
+                    {{ isLocked() ? 'View' : 'Manage' }}
                   </a>
-                  <button
-                    (click)="deleteChapter(chapter.id)"
-                    class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
+                  @if (!isLocked()) {
+                    <button
+                      (click)="deleteChapter(chapter.id)"
+                      class="rounded-md border border-red-300 bg-white px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  }
                 </div>
               </div>
             </div>
@@ -215,8 +223,8 @@
     <!-- Info Box -->
     <div class="mt-6 rounded-md bg-blue-50 p-4">
       <p class="text-sm text-blue-800">
-        💡 <strong>Next steps:</strong> Add chapters to organize your course content. 
-        Each chapter can contain multiple subchapters, and each subchapter can have learning blocks 
+        💡 <strong>Next steps:</strong> Add chapters to organize your course content.
+        Each chapter can contain multiple subchapters, and each subchapter can have learning blocks
         (theory, videos, quizzes, and coding problems).
       </p>
     </div>

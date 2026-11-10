@@ -6,4 +6,5 @@ public class SubchapterStructureDto
     public required string Title { get; set; }
     public int OrderIndex { get; set; }
     public int BlocksCount { get; set; }
+    public List<BlockStructureDto> Blocks { get; set; } = [];
 }

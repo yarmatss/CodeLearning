@@ -16,6 +16,4 @@ public class User : IdentityUser<Guid>
     public ICollection<StudentCourseProgress> CourseProgress { get; init; } = [];
     public ICollection<StudentBlockProgress> BlockProgress { get; init; } = [];
     public ICollection<StudentQuizAttempt> QuizAttempts { get; init; } = [];
-    public ICollection<Comment> Comments { get; init; } = [];
-    public ICollection<Certificate> Certificates { get; init; } = [];
 }
