@@ -46,12 +46,21 @@ public class SubmissionCreatedConsumer(
             .Include(s => s.Problem.TestCases.OrderBy(tc => tc.OrderIndex))
             .SingleAsync(s => s.Id == submissionId, cancellationToken);
 
+        var studentId = submission.StudentId;
+
         if (submission.Problem.TestCases.Count == 0)
         {
             logger.LogWarning("Problem {ProblemId} has no test cases", submission.ProblemId);
-            await FailAsync(dbContext, submissionId, NoTestCasesMessage, cancellationToken);
+            if (await FailAsync(dbContext, submissionId, NoTestCasesMessage, cancellationToken))
+            {
+                await SubmissionStatusEvents.PublishAsync(
+                    context, logger, submissionId, studentId, SubmissionStatus.RuntimeError, cancellationToken);
+            }
             return;
         }
+
+        await SubmissionStatusEvents.PublishAsync(
+            context, logger, submissionId, studentId, SubmissionStatus.Running, cancellationToken);
 
         var executor = executors.Single();
 
@@ -74,6 +83,9 @@ public class SubmissionCreatedConsumer(
         logger.LogInformation(
             "Submission {SubmissionId} completed with status {Status}, score {Score}%",
             submissionId, result.Status, result.Score);
+
+        await SubmissionStatusEvents.PublishAsync(
+            context, logger, submissionId, studentId, result.Status, cancellationToken);
     }
 
     internal static async Task<bool> TryClaimAsync(

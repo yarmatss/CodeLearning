@@ -15,20 +15,18 @@ import {
   EMPTY,
   Subject,
   catchError,
-  exhaustMap,
+  filter,
   finalize,
   switchMap,
-  take,
   takeUntil,
-  takeWhile,
-  tap,
-  timer
+  tap
 } from 'rxjs';
 import { ProgressService } from '../../core/services/progress.service';
 import { BlockService } from '../../core/services/block.service';
 import { MarkdownService } from '../../core/services/markdown.service';
 import { QuizService, QuizSubmission, QuizResult } from '../../core/services/quiz.service';
 import { SubmissionService } from '../../core/services/submission.service';
+import { SubmissionEventsService } from '../../core/services/submission-events.service';
 import { ProblemService } from '../../core/services/problem.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { CourseProgress, BlockProgress } from '../../core/models/progress.model';
@@ -44,10 +42,12 @@ import {
 import { CodeEditorComponent } from '../../shared/components/code-editor/code-editor.component';
 import { EditorLanguage } from '../../shared/components/code-editor/monaco-loader';
 import { extractApiError, isAccessDenied } from '../../core/utils/api-error';
+import { trackSubmission } from '../../core/utils/submission-tracking';
 
-// A submission is polled once a second for at most this many times before the page gives up
-const POLL_INTERVAL_MS = 1000;
-const MAX_POLL_ATTEMPTS = 90;
+// The server pushes status changes; a submission is read on its own only after this long without one
+const SILENCE_CHECK_MS = 60_000;
+// How long the page waits for a result before telling the student to look for it later
+const TRACKING_TIMEOUT_MS = 180_000;
 
 // YouTube video ids are 11 URL-safe base64 characters
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -70,12 +70,13 @@ export class Learn implements OnInit {
   private readonly markdownService = inject(MarkdownService);
   private readonly quizService = inject(QuizService);
   private readonly submissionService = inject(SubmissionService);
+  private readonly submissionEvents = inject(SubmissionEventsService);
   private readonly problemService = inject(ProblemService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly dialogService = inject(DialogService);
 
   // Every block change goes through this subject: loading switches to the newest id, and
-  // everything started for the previous block (problem details, polling) stops when it emits
+  // everything started for the previous block (problem details, submission tracking) stops when it emits
   private readonly blockId$ = new Subject<string>();
 
   courseId = '';
@@ -410,7 +411,7 @@ export class Learn implements OnInit {
       .subscribe({
         next: (submission) => {
           this.currentSubmission.set(submission);
-          this.pollSubmission(submission.id, blockId, problemId);
+          this.followSubmission(submission.id, blockId, problemId);
         },
         error: (error: unknown) => {
           this.isSubmitting.set(false);
@@ -533,6 +534,9 @@ export class Learn implements OnInit {
     }
 
     if (block.problem) {
+      // Opened ahead of the first submit, so its result is pushed rather than fetched late
+      void this.submissionEvents.connect();
+
       const problemId = block.problem.id;
 
       this.problemService.getProblem(problemId)
@@ -568,7 +572,7 @@ export class Learn implements OnInit {
           next: (submissions) => {
             if (!stillCurrent()) return;
             this.previousSubmissions.set(submissions);
-            // Solved before (e.g. on another device, or the page was left mid-poll) but never
+            // Solved before (e.g. on another device, or the page was left while it ran) but never
             // marked complete: complete it now so "Next" and the progress bar agree
             if (!this.isBlockCompleted(block.id) && submissions.some(isAcceptedSubmission)) {
               this.markBlockComplete(block.id);
@@ -579,16 +583,20 @@ export class Learn implements OnInit {
     }
   }
 
-  private pollSubmission(submissionId: string, blockId: string, problemId: string): void {
+  private followSubmission(submissionId: string, blockId: string, problemId: string): void {
     this.isPolling.set(true);
     let finished = false;
 
-    timer(0, POLL_INTERVAL_MS)
+    void this.submissionEvents.connect();
+
+    trackSubmission({
+      fetch: () => this.submissionService.getById(submissionId),
+      statusChanged$: this.submissionEvents.statusChanged$.pipe(filter(event => event.submissionId === submissionId)),
+      reconnected$: this.submissionEvents.reconnected$,
+      silenceCheckMs: SILENCE_CHECK_MS,
+      timeoutMs: TRACKING_TIMEOUT_MS
+    })
       .pipe(
-        take(MAX_POLL_ATTEMPTS),
-        // exhaustMap: a slow status request is not cancelled by the next tick
-        exhaustMap(() => this.submissionService.getById(submissionId)),
-        takeWhile(submission => !FINAL_SUBMISSION_STATUSES.includes(submission.status), true),
         takeUntil(this.blockId$),
         takeUntilDestroyed(this.destroyRef),
         finalize(() => {

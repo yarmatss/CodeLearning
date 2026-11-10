@@ -4,6 +4,7 @@
     "secure": false,
     "changeOrigin": true,
     "xfwd": true,
+    "ws": true,
     "logLevel": "debug"
   }
 }

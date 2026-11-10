@@ -1,5 +1,6 @@
 using CodeLearning.Api.Extensions;
 using CodeLearning.Api.Middleware;
+using CodeLearning.Api.Realtime;
 using CodeLearning.Application.Settings;
 using CodeLearning.Core.Messages;
 using CodeLearning.Infrastructure.Data;
@@ -59,6 +60,7 @@ public static class DependencyInjection
             }
 
             services.AddControllers();
+            services.AddSignalR();
 
             return services;
         }
@@ -159,6 +161,16 @@ public static class DependencyInjection
                     o.UsePostgres();
                     o.UseBusOutbox();
                 });
+
+                // Status events are only worth something while they are fresh, and every API instance has to
+                // see each one to tell the browsers connected to it. So each instance gets its own queue,
+                // which RabbitMQ deletes when the instance disconnects
+                x.AddConsumer<SubmissionStatusChangedConsumer>()
+                    .Endpoint(e =>
+                    {
+                        e.Temporary = true;
+                        e.InstanceId = Guid.NewGuid().ToString("N");
+                    });
 
                 x.UsingRabbitMq((context, cfg) =>
                 {
@@ -297,6 +309,7 @@ public static class DependencyInjection
             app.MapHealthChecks("/health");
 
             app.MapControllers();
+            app.MapHub<SubmissionsHub>(SubmissionsHub.Route);
 
             return app;
         }
