@@ -94,7 +94,8 @@ public sealed class GuardRequestHandler(
     private async Task ForwardAsync(HttpContext context)
     {
         var error = await forwarder.SendAsync(
-            context, DockerSocketClient.BaseAddress, docker.Invoker, RequestConfig, HttpTransformer.Default);
+            context, DockerSocketClient.BaseAddress, docker.Invoker, RequestConfig, HttpTransformer.Default,
+            context.RequestAborted);
 
         if (error != ForwarderError.None)
         {
