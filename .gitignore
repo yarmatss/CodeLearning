@@ -431,3 +431,5 @@ FodyWeavers.xsd
 **/Logs/
 *.log
 log-*.txt
+# Claude Code agent worktrees
+.claude/worktrees/
